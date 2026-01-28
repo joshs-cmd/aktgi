@@ -129,4 +129,4 @@ export const getMockSourcingResponse = (query: string): SourcingResponse => ({
 });
 
 // Helper to check if using mock data
-export const USE_MOCK_DATA = true;
+export const USE_MOCK_DATA = false;
