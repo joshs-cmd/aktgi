@@ -89,6 +89,9 @@ serve(async (req) => {
     const username = Deno.env.get("SS_ACTIVEWEAR_USERNAME");
     const password = Deno.env.get("SS_ACTIVEWEAR_PASSWORD");
 
+    console.log(`[provider-ss-activewear] Username configured: ${username ? 'YES (' + username.substring(0, 3) + '...)' : 'NO'}`);
+    console.log(`[provider-ss-activewear] Password configured: ${password ? 'YES (length: ' + password.length + ')' : 'NO'}`);
+
     if (!username || !password) {
       console.error("[provider-ss-activewear] Missing API credentials");
       return new Response(
@@ -107,6 +110,7 @@ serve(async (req) => {
     const authHeader = "Basic " + btoa(`${username}:${password}`);
 
     // Fetch product info, inventory, and prices in parallel
+    // S&S API uses style parameter for style name lookups
     const [productRes, inventoryRes, pricesRes] = await Promise.all([
       fetch(
         `${SS_API_BASE}/products/?style=${encodeURIComponent(query)}&fields=StyleID,StyleName,BrandName,ColorName,CatDescription,MediaFullUrl`,
@@ -122,7 +126,18 @@ serve(async (req) => {
       ),
     ]);
 
-    // Check for API errors
+    // Handle 404 as "product not found" (not an error)
+    if (productRes.status === 404) {
+      console.log(`[provider-ss-activewear] Product not found for query: ${query}`);
+      return new Response(
+        JSON.stringify({ product: null }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Check for other API errors
     if (!productRes.ok) {
       const errorText = await productRes.text();
       console.error(`[provider-ss-activewear] Product API error: ${productRes.status} - ${errorText}`);
@@ -139,8 +154,13 @@ serve(async (req) => {
     }
 
     const products = await productRes.json();
+    // Consume inventory and prices response bodies
     const inventory = inventoryRes.ok ? await inventoryRes.json() : [];
     const prices = pricesRes.ok ? await pricesRes.json() : [];
+    
+    // Also consume response bodies for non-ok responses to prevent leaks
+    if (!inventoryRes.ok) await inventoryRes.text();
+    if (!pricesRes.ok) await pricesRes.text();
 
     console.log(`[provider-ss-activewear] Found ${products?.length || 0} products, ${inventory?.length || 0} inventory items, ${prices?.length || 0} prices`);
 
