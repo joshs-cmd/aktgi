@@ -9,7 +9,7 @@ interface SearchBarProps {
   placeholder?: string;
 }
 
-export function SearchBar({ onSearch, isLoading, placeholder = "Enter SKU / Style Number (e.g., G500)" }: SearchBarProps) {
+export function SearchBar({ onSearch, isLoading, placeholder = "Style or SKU (e.g., Gildan 5000, 3001, 00760)" }: SearchBarProps) {
   const [query, setQuery] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {

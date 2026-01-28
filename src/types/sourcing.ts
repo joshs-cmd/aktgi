@@ -14,13 +14,23 @@ export interface StandardSize {
   inventory: StandardInventory[];
 }
 
+export interface StandardColor {
+  code: string;           // "00", "01", etc.
+  name: string;           // "White", "Navy", etc.
+  hexCode: string | null; // "#FFFFFF" or null
+  swatchUrl: string | null;
+  imageUrl: string | null;
+  sizes: StandardSize[];
+}
+
 export interface StandardProduct {
   styleNumber: string;
   name: string;
   brand: string;
   category: string;
   imageUrl?: string;
-  sizes: StandardSize[];
+  colors?: StandardColor[];      // Color-specific pricing/inventory
+  sizes?: StandardSize[];        // Backward compat for non-color distributors
 }
 
 export type DistributorStatus = 'success' | 'error' | 'pending';
