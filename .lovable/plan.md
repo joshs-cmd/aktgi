@@ -1,191 +1,264 @@
 
 
-## Phase 1: Foundation & S&S Activewear Integration
+# Fix S&S Provider + Add Color Selection with Fuzzy Matching
 
-### Overview
-Build the complete foundation with a normalized data architecture, S&S Activewear edge function, and a DGI-style comparison UI. Starting with mock data to verify the look and feel before connecting live API.
+## Problem Summary
 
----
+The search function is returning "Product not found" for every query because:
+1. The S&S provider uses incorrect API field names (wrong casing)
+2. It calls separate `/inventory/` and `/prices/` endpoints instead of using the Products endpoint which includes everything
+3. No fallback search strategy for partial/fuzzy matches like "Gildan5000" or "5000"
 
-### 1. Database Schema (Supabase Migrations)
+## Solution Overview
 
-**Tables to Create:**
-
-- **distributors** - Vendor registry with toggle (id, name, code, api_base_url, is_active, created_at)
-- **warehouses** - Location lookup per distributor (id, distributor_id, code, name, city, state)
-- **products** - Unified catalog (id, style_number, name, brand, category, image_url)
-- **product_sizes** - Available sizes per product (id, product_id, size_code, size_order)
-- **inventory** - Stock by distributor + product + size + warehouse (id, distributor_id, product_id, size_code, warehouse_id, quantity, updated_at)
-- **prices** - Per-size pricing (id, distributor_id, product_id, size_code, price, updated_at)
-- **price_history** - Historical tracking (id, distributor_id, product_id, size_code, price, recorded_at)
-- **sync_logs** - Sync timestamps (id, distributor_id, sync_type, status, started_at, completed_at)
-
-**Seed Data:**
-- Pre-populate distributors table with S&S (active), SanMar, AS Colour, ACC, Independent (inactive/pending)
+Completely rewrite the S&S provider with:
+- **Smart query normalization** with fuzzy matching
+- **Single Products endpoint** that returns pricing, inventory, and color data
+- **Fallback Styles search** when direct lookup fails
+- **Color grouping** so users can view inventory/pricing per color
 
 ---
 
-### 2. TypeScript Interfaces (Data Normalization)
+## Technical Implementation
 
-**Core Types:**
+### 1. Query Normalization (Fuzzy Matching)
 
-```typescript
-interface StandardProduct {
-  styleNumber: string;
-  name: string;
-  brand: string;
-  category: string;
-  imageUrl?: string;
-  sizes: StandardSize[];
-}
+Before calling any API, the provider will normalize the query to improve match success:
 
-interface StandardSize {
-  code: string;        // "S", "M", "L", "2XL"
-  order: number;       // For sorting
-  price: number;
-  inventory: StandardInventory[];
-}
+```text
+Input Transformations:
+- "Gildan5000"     → Try "Gildan 5000" (add space between brand and number)
+- "bellacanvas3001" → Try "bella canvas 3001" (common brand patterns)
+- "GILDAN 5000"    → Try "gildan 5000" (case normalization)
+- "G5000"          → Try "G 5000" (letter+number split)
 
-interface StandardInventory {
-  warehouseCode: string;
-  warehouseName: string;
-  quantity: number;
-}
-
-interface DistributorResult {
-  distributorId: string;
-  distributorName: string;
-  status: 'success' | 'error' | 'pending';
-  product: StandardProduct | null;
-  lastSynced: string;
-}
+Algorithm:
+1. Trim and lowercase the query
+2. Detect patterns like "brand+number" without space using regex
+3. Generate alternative queries to try if primary fails
+4. Common brand prefixes to detect: gildan, bella, canvas, port, hanes, next, jerzees, champion, fruit
 ```
 
-Every provider maps its raw API response to `StandardProduct` before returning.
+### 2. Search Strategy (Multi-Step Fallback)
 
----
+```text
+Step 1: Direct Products Lookup
+  GET /v2/products/?style={originalQuery}
+  → If 200 with results: SUCCESS, parse products
 
-### 3. Edge Functions (Provider Pattern)
+Step 2: Try Normalized Query (if Step 1 fails)
+  GET /v2/products/?style={normalizedQuery}
+  → Example: "Gildan5000" becomes "Gildan 5000"
+  → If 200 with results: SUCCESS
 
-**sourcing-engine** (Orchestrator):
-- Receives SKU search query
-- Fetches list of active distributors from database
-- Fans out to each provider function in parallel
-- Merges results into unified response
-- Returns array of `DistributorResult`
+Step 3: Fuzzy Search via Styles Endpoint (if Step 2 fails)
+  GET /v2/styles?search={query}
+  → Returns matching styles with styleID
+  → Pick best match using scoring:
+     - Exact styleName match: +100 points
+     - Exact partNumber match: +100 points
+     - Brand name contained: +50 points
+     - Query contained in title: +25 points
+  → Then: GET /v2/products/?styleid={bestMatch.styleID}
 
-**provider-ss-activewear**:
-- Basic Auth using `SS_ACTIVEWEAR_USERNAME` and `SS_ACTIVEWEAR_PASSWORD` from Supabase secrets
-- Calls `/v2/products/?style={sku}&fields=StyleID,StyleName,BrandName,ColorName`
-- Calls `/v2/inventory/?style={sku}&fields=StyleID,SizeName,Qty,WarehouseAbbr`
-- Calls `/v2/prices/?style={sku}&fields=StyleID,SizeName,CustomerPrice`
-- Maps response to `StandardProduct` format
-- Returns warehouse-level breakdown
-
-**Placeholder providers** (SanMar, AS Colour, ACC, Independent):
-- Return `{ status: 'pending', product: null }` until implemented
-
----
-
-### 4. Frontend: DGI-Style Dashboard
-
-**Layout Structure:**
-- Clean header with app title
-- Prominent search bar (centered, large input)
-- "Search" button triggers manual sync
-- Results grid below
-
-**ComparisonTable Component:**
-
-| Distributor | Status | S | M | L | XL | 2XL | 3XL | Total Stock |
-|-------------|--------|---|---|---|----|----|-----|-------------|
-| S&S Activewear | ● Connected | $4.50 | $4.50 | $4.50 | $4.50 | $5.00 | $5.50 | 1,247 |
-| SanMar | ○ Pending | -- | -- | -- | -- | -- | -- | -- |
-| AS Colour | ○ Pending | -- | -- | -- | -- | -- | -- | -- |
-
-**Price Cell Behavior:**
-- Display price in cell
-- Green background for lowest price in that size column
-- Hover/click shows tooltip with warehouse breakdown:
-  ```
-  TX (Dallas): 500
-  NV (Reno): 400
-  OH (Columbus): 347
-  ```
-
-**Dynamic Size Columns:**
-- Columns generated based on product's available sizes
-- Handles variable ranges (S-3XL, XS-5XL, OSFA, etc.)
-
----
-
-### 5. Components to Build
-
-- **SearchBar** - Large input with search button, loading state
-- **ComparisonTable** - Main grid with dynamic size columns
-- **PriceCell** - Individual price display with lowest-price highlighting
-- **WarehouseTooltip** - Hover popup showing stock by location
-- **DistributorStatusBadge** - Connected (green) / Pending (gray) / Error (red)
-- **SyncIndicator** - Shows "Last synced: 2 min ago" timestamp
-
----
-
-### 6. Mock Data (Initial UI Verification)
-
-Before connecting live API, the UI will render with realistic mock data:
-- S&S Activewear: Full pricing and inventory across 6 sizes, 3 warehouses
-- Other distributors: Show as "Pending" with empty cells
-
-This lets you verify the table layout, tooltip behavior, and price highlighting before we add real API calls.
-
----
-
-### 7. Secrets Required
-
-Before live API connection:
-- `SS_ACTIVEWEAR_USERNAME` → 02990
-- `SS_ACTIVEWEAR_PASSWORD` → (your API key)
-
-I'll prompt you to add these securely when we're ready to go live.
-
----
-
-### 8. File Structure
-
+Step 4: Return null (no matches found)
 ```
-src/
-├── types/
-│   └── sourcing.ts          # StandardProduct, DistributorResult interfaces
-├── components/
-│   ├── SearchBar.tsx
-│   ├── ComparisonTable.tsx
-│   ├── PriceCell.tsx
-│   ├── WarehouseTooltip.tsx
-│   └── DistributorStatusBadge.tsx
-├── hooks/
-│   └── useSourcingEngine.ts  # React Query hook for search
-├── lib/
-│   └── mockData.ts           # Mock S&S response for UI testing
-└── pages/
-    └── Index.tsx             # Main dashboard
 
-supabase/
-├── functions/
-│   ├── sourcing-engine/
-│   └── provider-ss-activewear/
-└── migrations/
-    └── 001_initial_schema.sql
+### 3. S&S Products API Response Structure
+
+Each row from `/v2/products/` is a single SKU containing:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| styleID | number | Unique style identifier |
+| brandName | string | "Gildan", "Bella+Canvas", etc. |
+| styleName | string | "5000", "3001", etc. |
+| colorName | string | "White", "Black", etc. |
+| colorCode | string | Two-digit code |
+| colorSwatchImage | string | Relative URL to swatch |
+| colorFrontImage | string | Relative URL to product image |
+| color1 | string | Hex color code (e.g., "#FFFFFF") |
+| sizeName | string | "S", "M", "L", "XL", etc. |
+| sizeOrder | string | Sort key (e.g., "B1", "B2") |
+| customerPrice | number | Your price for this SKU |
+| warehouses | array | Per-warehouse inventory |
+
+### 4. Data Normalization (Grouping by Color)
+
+The provider will aggregate SKUs into a normalized structure:
+
+```text
+StandardProduct
+├── styleNumber: "5000"
+├── name: "Heavy Cotton T-Shirt"
+├── brand: "Gildan"
+├── category: "T-Shirts"
+├── imageUrl: "https://www.ssactivewear.com/Images/Style/39_fl.jpg"
+└── colors: StandardColor[]
+    ├── code: "00"
+    ├── name: "White"
+    ├── hexCode: "#FFFFFF"
+    ├── swatchUrl: "https://www.ssactivewear.com/Images/ColorSwatch/7229_fm.jpg"
+    ├── imageUrl: "https://www.ssactivewear.com/Images/Color/17130_f_fl.jpg"
+    └── sizes: StandardSize[]
+        ├── code: "M"
+        ├── order: 2
+        ├── price: 4.50
+        └── inventory: StandardInventory[]
+            ├── { warehouseCode: "IL", warehouseName: "Illinois", quantity: 10000 }
+            ├── { warehouseCode: "NV", warehouseName: "Nevada", quantity: 5000 }
+            └── ...
 ```
 
 ---
 
-### Deliverables
+## Files to Modify/Create
 
-| Component | Description |
-|-----------|-------------|
-| Database schema | All tables with distributor seed data |
-| Type definitions | StandardProduct interface for normalization |
-| Mock UI | Fully styled comparison table with fake S&S data |
-| Edge functions | Sourcing engine + S&S provider (ready for secrets) |
-| Search flow | Manual sync button to control API calls |
+### Backend Changes
+
+**supabase/functions/provider-ss-activewear/index.ts** - Complete rewrite:
+- Add `normalizeQuery()` function for fuzzy matching
+- Add `generateQueryVariants()` to create alternative search terms
+- Implement multi-step search strategy with fallbacks
+- Parse products response and group by color
+- Return `StandardProduct` with colors array
+- Fetch style metadata for better product info
+
+**supabase/functions/sourcing-engine/index.ts** - CORS update:
+- Expand `Access-Control-Allow-Headers` to include all Supabase client headers
+
+### Type Definitions
+
+**src/types/sourcing.ts** - Add color support:
+```text
+New interfaces:
+- StandardColor { code, name, hexCode, swatchUrl, imageUrl, sizes[] }
+  
+Modified interfaces:
+- StandardProduct.colors: StandardColor[] (replaces direct sizes)
+- StandardProduct.sizes becomes optional (backward compat for distributors without color data)
+```
+
+### Frontend Components
+
+**src/components/ColorSelector.tsx** - New component:
+- Display clickable color swatches in a horizontal row
+- Show color name on hover/focus
+- Visual indicator for selected color
+- Emit `onColorSelect(colorCode)` callback
+
+**src/pages/Index.tsx** - Add color state management:
+- Track `selectedColor` state (default to first color)
+- Pass selected color to child components
+- Handle "no results found" case with helpful message
+
+**src/components/ProductHeader.tsx** - Update for colors:
+- Display selected color image instead of generic style image
+- Show color name badge
+- Add swatch selector integration
+
+**src/components/ComparisonTable.tsx** - Filter by color:
+- Receive `selectedColor` prop
+- Find matching color's sizes array
+- Render price/inventory for that color only
+
+**src/components/SearchBar.tsx** - Better placeholder:
+- Update to: "Style or SKU (e.g., Gildan 5000, 3001, 00760)"
+
+---
+
+## Query Normalization Details
+
+### Brand Detection Patterns
+
+```text
+Regex patterns to detect brand+number without space:
+
+gildan\d+      → "gildan 5000" from "gildan5000"
+bella\d+       → "bella 3001" from "bella3001"  
+canvas\d+      → "canvas 3001"
+port\d+        → "port 100"
+hanes\d+       → "hanes 5180"
+next\d+        → "next 6210"
+champion\d+    → "champion t425"
+jerzees\d+     → "jerzees 29mr"
+fruit\d+       → "fruit 3930"
+
+Generic pattern:
+([a-z]+)(\d+)  → "\1 \2" (letter group + number group → add space)
+```
+
+### Query Variant Generation
+
+```text
+For input "Gildan5000":
+1. Original: "Gildan5000"
+2. Spaced: "Gildan 5000" (primary variant)
+3. Number only: "5000" (fallback)
+
+For input "5000":
+1. Original: "5000"
+2. Prefixed: "Gildan 5000" (try common brand)
+
+For input "G 500":
+1. Original: "G 500"
+2. Collapsed: "G500"
+```
+
+---
+
+## UI Flow
+
+```text
+1. User types "Gildan5000" and clicks Search
+2. Provider normalizes → tries "Gildan5000", then "Gildan 5000"
+3. API returns ~50 SKUs (different colors/sizes)
+4. Provider groups by color → returns StandardProduct with colors[]
+5. Frontend receives data:
+   a. ProductHeader shows style image and name
+   b. ColorSelector shows all available color swatches
+   c. First color (e.g., "White") auto-selected
+   d. ComparisonTable shows White's pricing/inventory
+6. User clicks "Navy" swatch
+7. Table updates to show Navy's pricing/inventory
+8. ProductHeader updates to show Navy product image
+```
+
+---
+
+## Testing Checklist
+
+| Query | Expected Result |
+|-------|-----------------|
+| "5000" | Gildan 5000 with multiple colors |
+| "Gildan5000" | Gildan 5000 (fuzzy match works) |
+| "Gildan 5000" | Gildan 5000 (exact match) |
+| "3001" | Bella+Canvas 3001 |
+| "00760" | Gildan 2000 (part number lookup) |
+| "bella3001" | Bella+Canvas 3001 (fuzzy match) |
+| "zzzzzz" | "No results found" message |
+
+---
+
+## Error Handling
+
+- **404 from S&S**: Return `product: null` (not an error)
+- **Network timeout**: Return error status with message
+- **Missing credentials**: Return error with "API not configured"
+- **Invalid response shape**: Log details, return null gracefully
+
+---
+
+## Summary of Changes
+
+| Component | Change Type | Description |
+|-----------|-------------|-------------|
+| provider-ss-activewear | Rewrite | Fuzzy matching, color grouping, correct API usage |
+| sourcing-engine | Update | CORS headers expansion |
+| src/types/sourcing.ts | Update | Add StandardColor, update StandardProduct |
+| ColorSelector.tsx | New | Color swatch picker component |
+| Index.tsx | Update | Color state, no-results message |
+| ProductHeader.tsx | Update | Show selected color image |
+| ComparisonTable.tsx | Update | Filter sizes by selected color |
+| SearchBar.tsx | Update | Better placeholder examples |
 
