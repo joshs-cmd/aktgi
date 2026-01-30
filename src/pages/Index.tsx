@@ -8,8 +8,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { DistributorResult } from "@/types/sourcing";
 
 // Group key for de-duplication: styleNumber|brand (normalized)
-function getProductGroupKey(product: { styleNumber: string; brand: string }): string {
-  return `${product.styleNumber.toUpperCase().trim()}|${product.brand.toUpperCase().trim()}`;
+function getProductGroupKey(product: { styleNumber?: unknown; brand?: unknown }): string {
+  const styleNumber = String(product?.styleNumber ?? '').toUpperCase().trim();
+  const brand = String(product?.brand ?? '').toUpperCase().trim();
+  return `${styleNumber || 'UNKNOWN'}|${brand || 'UNKNOWN'}`;
 }
 
 // Group results by unique product (styleNumber + brand) to prevent "Frankenstein" merging
