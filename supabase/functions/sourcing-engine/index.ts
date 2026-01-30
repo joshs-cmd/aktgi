@@ -122,13 +122,51 @@ serve(async (req) => {
       })
     );
 
+    // STRICT SKU CLEANUP: If any provider found exact match, discard non-matching results
+    const normalizedQuery = query.toUpperCase().trim();
+    const queryLastPart = normalizedQuery.split(/\s+/).pop() || normalizedQuery;
+    
+    // Helper to extract styleNumber from product (type-safe)
+    const getStyleNumber = (product: unknown): string => {
+      if (!product || typeof product !== "object") return "";
+      const p = product as Record<string, unknown>;
+      return String(p.styleNumber || "").toUpperCase().trim();
+    };
+    
+    // Check if any provider has an exact styleNumber match
+    const exactMatches = results.filter(r => {
+      if (r.status !== "success" || !r.product) return false;
+      const styleUpper = getStyleNumber(r.product);
+      return styleUpper === normalizedQuery || styleUpper === queryLastPart;
+    });
+    
+    let finalResults = results;
+    
+    if (exactMatches.length > 0) {
+      // We have exact matches - filter out non-matching products but keep pending/error rows
+      finalResults = results.map(r => {
+        if (r.status !== "success" || !r.product) return r;
+        
+        const styleUpper = getStyleNumber(r.product);
+        const isExactMatch = styleUpper === normalizedQuery || styleUpper === queryLastPart;
+        
+        if (!isExactMatch) {
+          console.log(`[sourcing-engine] Discarding non-matching result: ${styleUpper} from ${r.distributorName}`);
+          return { ...r, product: null };
+        }
+        return r;
+      });
+      
+      console.log(`[sourcing-engine] Strict cleanup: kept ${exactMatches.length} exact matches, discarded non-matching`);
+    }
+
     const response: SourcingResponse = {
       query,
-      results,
+      results: finalResults,
       searchedAt: new Date().toISOString(),
     };
 
-    console.log(`[sourcing-engine] Returning ${results.length} results`);
+    console.log(`[sourcing-engine] Returning ${finalResults.length} results`);
 
     return new Response(JSON.stringify(response), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

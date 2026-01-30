@@ -259,23 +259,35 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
     
     // SanMar response has nested structure with productBasicInfo, productPriceInfo, etc.
     // Flatten and merge the nested objects
-    return items.map(item => {
+    return items.map((item, idx) => {
       const basic = item.productBasicInfo || {};
       const price = item.productPriceInfo || {};
       const images = item.productImageInfo || {};
       
+      // Debug: Log price structure for first item
+      if (idx === 0) {
+        console.log(`[provider-sanmar] Price info keys: ${Object.keys(price).join(", ")}`);
+        console.log(`[provider-sanmar] Item keys: ${Object.keys(item).join(", ")}`);
+        console.log(`[provider-sanmar] piecePrice: ${price.piecePrice}, item.customerPrice: ${item.customerPrice}`);
+      }
+      
       // PROGRAM PRICING: Extract the pricingArray and prioritize benefitPrice/contractPrice
       // for account-specific 1-piece tier pricing over generic customerPrice
-      const pricingArray = price.pricingArray || item.pricingArray || [];
-      const pricingList = Array.isArray(pricingArray) ? pricingArray : [pricingArray];
+      const pricingArray = price.pricingArray || item.pricingArray || price.programPricing || item.programPricing || [];
+      const pricingList = Array.isArray(pricingArray) ? pricingArray : (pricingArray ? [pricingArray] : []);
+      
+      if (idx === 0 && pricingList.length > 0) {
+        console.log(`[provider-sanmar] pricingArray has ${pricingList.length} entries, first keys: ${Object.keys(pricingList[0] || {}).join(", ")}`);
+      }
       
       // Find the best program price (1-piece tier)
       let programPrice = "";
       for (const pricing of pricingList) {
+        if (!pricing) continue;
         // Look for benefitPrice or contractPrice in each pricing tier
-        const benefitPrice = pricing.benefitPrice || pricing.benefit || "";
-        const contractPrice = pricing.contractPrice || pricing.contract || "";
-        const piecePrice = pricing.piecePrice || pricing.piece || "";
+        const benefitPrice = pricing.benefitPrice || pricing.benefit || pricing.BenefitPrice || "";
+        const contractPrice = pricing.contractPrice || pricing.contract || pricing.ContractPrice || "";
+        const piecePrice = pricing.piecePrice || pricing.piece || pricing.PiecePrice || "";
         
         // Prioritize: benefitPrice > contractPrice > piecePrice
         if (benefitPrice && !programPrice) {
@@ -289,10 +301,26 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
         }
       }
       
-      // Fallback to customerPrice if no program pricing found
+      // Also check direct fields on price object for program pricing
+      if (!programPrice && (price.benefitPrice || price.BenefitPrice)) {
+        programPrice = String(price.benefitPrice || price.BenefitPrice);
+        console.log(`[provider-sanmar] Found direct benefitPrice: ${programPrice}`);
+      }
+      if (!programPrice && (price.contractPrice || price.ContractPrice)) {
+        programPrice = String(price.contractPrice || price.ContractPrice);
+        console.log(`[provider-sanmar] Found direct contractPrice: ${programPrice}`);
+      }
+      
+      // CRITICAL: Use piecePrice as the primary price source 
+      // SanMar's piecePrice is the 1-piece wholesale rate which reflects program pricing better
+      // than the generic customerPrice field
       const finalPrice = programPrice || 
-        price.customerPrice || item.customerPrice || 
-        price.piecePrice || item.piecePrice || "";
+        price.piecePrice || item.piecePrice ||
+        price.customerPrice || item.customerPrice || "";
+      
+      if (idx === 0) {
+        console.log(`[provider-sanmar] Final price: ${finalPrice} (program: ${programPrice || "none"})`);
+      }
       
       return {
         // Basic info
@@ -336,12 +364,22 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
 
 /**
  * STRICT FILTERING: Filter products to only those matching exact styleCode
+ * Safely handles non-string values (objects, numbers, etc.)
  */
 function filterByExactStyle(products: any[], targetStyle: string): any[] {
   const normalizedTarget = targetStyle.toUpperCase().trim();
   
   const filtered = products.filter(p => {
-    const productStyle = (p.style || p.styleCode || "").toUpperCase().trim();
+    // Safely extract style - handle objects, numbers, nulls gracefully
+    let styleVal = p.style ?? p.styleCode ?? "";
+    
+    // If it's an object, try to get a string from it
+    if (typeof styleVal === "object" && styleVal !== null) {
+      styleVal = styleVal["#text"] || styleVal.value || styleVal.toString?.() || "";
+    }
+    
+    // Convert to string and normalize
+    const productStyle = String(styleVal).toUpperCase().trim();
     return productStyle === normalizedTarget;
   });
   
@@ -613,6 +651,11 @@ function aggregateProducts(
     if (!colorEntry.sizesMap.has(sizeName)) {
       // CRITICAL: Use customerPrice which now contains program pricing
       const price = parseFloat(product.customerPrice || product.piecePrice || "0");
+      
+      // Log first few price assignments to diagnose
+      if (colorMap.size <= 2 && colorEntry.sizesMap.size === 0) {
+        console.log(`[provider-sanmar] Price for ${colorName}/${sizeName}: ${price} (raw: ${product.customerPrice}, piecePrice: ${product.piecePrice})`);
+      }
       
       colorEntry.sizesMap.set(sizeName, {
         code: sizeName,
