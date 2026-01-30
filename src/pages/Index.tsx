@@ -5,53 +5,75 @@ import { ProductHeader } from "@/components/ProductHeader";
 import { useSourcingEngine } from "@/hooks/useSourcingEngine";
 import { AlertCircle, Search } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { DistributorResult } from "@/types/sourcing";
+import { DistributorResult, StandardProduct } from "@/types/sourcing";
+
+// Safely extract string field from product with null checks
+function safeString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+}
 
 // Group key for de-duplication: styleNumber|brand (normalized)
-function getProductGroupKey(product: { styleNumber?: unknown; brand?: unknown }): string {
-  const styleNumber = String(product?.styleNumber ?? '').toUpperCase().trim();
-  const brand = String(product?.brand ?? '').toUpperCase().trim();
+function getProductGroupKey(product: Partial<StandardProduct> | null | undefined): string {
+  if (!product) return 'UNKNOWN|UNKNOWN';
+  const styleNumber = safeString(product.styleNumber).toUpperCase();
+  const brand = safeString(product.brand).toUpperCase();
   return `${styleNumber || 'UNKNOWN'}|${brand || 'UNKNOWN'}`;
 }
 
 // Group results by unique product (styleNumber + brand) to prevent "Frankenstein" merging
+// IMPORTANT: All distributors are always included - those without products show "--" in cells
 interface ProductGroup {
   key: string;
   styleNumber: string;
   brand: string;
-  results: DistributorResult[];
+  results: DistributorResult[]; // Contains ALL distributors, some may have null products
 }
 
 function groupResultsByProduct(results: DistributorResult[]): ProductGroup[] {
+  // Separate results with products from those without
+  const withProduct = results.filter(r => r.status === "success" && r.product);
+  const withoutProduct = results.filter(r => r.status !== "success" || !r.product);
+  
+  // Group results that have products
   const groups = new Map<string, ProductGroup>();
   
-  for (const result of results) {
-    if (result.status === "success" && result.product) {
-      const key = getProductGroupKey(result.product);
-      
-      if (!groups.has(key)) {
-        groups.set(key, {
-          key,
-          styleNumber: result.product.styleNumber,
-          brand: result.product.brand,
-          results: [],
-        });
-      }
-      groups.get(key)!.results.push(result);
-    } else {
-      // For pending/error results, add them to a special "unknown" group
-      // They'll be displayed but won't be merged with actual products
-      const unknownKey = `__unknown__${result.distributorId}`;
-      if (!groups.has(unknownKey)) {
-        groups.set(unknownKey, {
-          key: unknownKey,
-          styleNumber: "",
-          brand: "",
-          results: [],
-        });
-      }
-      groups.get(unknownKey)!.results.push(result);
+  for (const result of withProduct) {
+    const key = getProductGroupKey(result.product);
+    
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        styleNumber: safeString(result.product?.styleNumber),
+        brand: safeString(result.product?.brand),
+        results: [],
+      });
     }
+    groups.get(key)!.results.push(result);
+  }
+  
+  // DISTRIBUTOR PERSISTENCE: Add all distributors without products to each group
+  // This ensures every row always shows all distributors with "--" for missing data
+  if (groups.size > 0) {
+    for (const group of groups.values()) {
+      // Get IDs of distributors already in this group
+      const existingIds = new Set(group.results.map(r => r.distributorId));
+      
+      // Add missing distributors from withoutProduct
+      for (const result of withoutProduct) {
+        if (!existingIds.has(result.distributorId)) {
+          group.results.push(result);
+        }
+      }
+    }
+  } else if (withoutProduct.length > 0) {
+    // No products found at all - create a single group showing all distributors
+    groups.set('__no_results__', {
+      key: '__no_results__',
+      styleNumber: '',
+      brand: '',
+      results: withoutProduct,
+    });
   }
   
   return Array.from(groups.values());
