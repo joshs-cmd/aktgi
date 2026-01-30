@@ -5,13 +5,69 @@ import { ProductHeader } from "@/components/ProductHeader";
 import { useSourcingEngine } from "@/hooks/useSourcingEngine";
 import { AlertCircle, Search } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { DistributorResult } from "@/types/sourcing";
+
+// Group key for de-duplication: styleNumber|brand (normalized)
+function getProductGroupKey(product: { styleNumber: string; brand: string }): string {
+  return `${product.styleNumber.toUpperCase().trim()}|${product.brand.toUpperCase().trim()}`;
+}
+
+// Group results by unique product (styleNumber + brand) to prevent "Frankenstein" merging
+interface ProductGroup {
+  key: string;
+  styleNumber: string;
+  brand: string;
+  results: DistributorResult[];
+}
+
+function groupResultsByProduct(results: DistributorResult[]): ProductGroup[] {
+  const groups = new Map<string, ProductGroup>();
+  
+  for (const result of results) {
+    if (result.status === "success" && result.product) {
+      const key = getProductGroupKey(result.product);
+      
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          styleNumber: result.product.styleNumber,
+          brand: result.product.brand,
+          results: [],
+        });
+      }
+      groups.get(key)!.results.push(result);
+    } else {
+      // For pending/error results, add them to a special "unknown" group
+      // They'll be displayed but won't be merged with actual products
+      const unknownKey = `__unknown__${result.distributorId}`;
+      if (!groups.has(unknownKey)) {
+        groups.set(unknownKey, {
+          key: unknownKey,
+          styleNumber: "",
+          brand: "",
+          results: [],
+        });
+      }
+      groups.get(unknownKey)!.results.push(result);
+    }
+  }
+  
+  return Array.from(groups.values());
+}
 
 const Index = () => {
   const { isLoading, response, error, search } = useSourcingEngine();
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
 
-  // Get the first successful product for the header
-  const firstProduct = response?.results.find(
+  // Group results by unique product (styleNumber + brand)
+  const productGroups = useMemo(() => {
+    if (!response?.results) return [];
+    return groupResultsByProduct(response.results);
+  }, [response?.results]);
+
+  // Get the first successful product for the header (from first real group)
+  const firstProductGroup = productGroups.find(g => g.styleNumber && g.results.length > 0);
+  const firstProduct = firstProductGroup?.results.find(
     (r) => r.status === "success" && r.product
   )?.product;
 
@@ -34,10 +90,9 @@ const Index = () => {
     search(query);
   };
 
-  // Check if all results returned null products
-  const allResultsEmpty = response?.results.every(
-    (r) => r.status !== "success" || r.product === null
-  );
+  // Check if all results returned null products (considering groups)
+  const allResultsEmpty = productGroups.length === 0 || 
+    productGroups.every(g => !g.styleNumber || g.results.every(r => r.status !== "success" || r.product === null));
 
   return (
     <div className="min-h-screen bg-background">
@@ -86,25 +141,46 @@ const Index = () => {
             </Alert>
           )}
 
-          {/* Results */}
+          {/* Results - Render each product group separately */}
           {response && !allResultsEmpty && (
-            <div className="w-full space-y-6">
-              {/* Product Info */}
-              {firstProduct && (
-                <ProductHeader
-                  product={firstProduct}
-                  query={response.query}
-                  searchedAt={response.searchedAt}
-                  selectedColor={selectedColor}
-                  onColorSelect={setSelectedColor}
-                />
-              )}
+            <div className="w-full space-y-8">
+              {productGroups
+                .filter(g => g.styleNumber && g.results.some(r => r.status === "success" && r.product))
+                .map((group, idx) => {
+                  // Get the first product from this group for the header
+                  const groupProduct = group.results.find(r => r.status === "success" && r.product)?.product;
+                  
+                  return (
+                    <div key={group.key} className="space-y-6">
+                      {/* Product Info - show header for first group only */}
+                      {idx === 0 && groupProduct && (
+                        <ProductHeader
+                          product={groupProduct}
+                          query={response.query}
+                          searchedAt={response.searchedAt}
+                          selectedColor={selectedColor}
+                          onColorSelect={setSelectedColor}
+                        />
+                      )}
 
-              {/* Comparison Table */}
-              <ComparisonTable
-                results={response.results}
-                selectedColor={selectedColor}
-              />
+                      {/* Additional product header for subsequent groups */}
+                      {idx > 0 && groupProduct && (
+                        <div className="pt-4 border-t">
+                          <h3 className="text-lg font-semibold">
+                            {groupProduct.brand} {groupProduct.styleNumber}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">{groupProduct.name}</p>
+                        </div>
+                      )}
+
+                      {/* Comparison Table for this product group */}
+                      <ComparisonTable
+                        results={group.results}
+                        selectedColor={selectedColor}
+                      />
+                    </div>
+                  );
+                })}
 
               {/* Legend */}
               <div className="flex items-center gap-6 text-sm text-muted-foreground">
