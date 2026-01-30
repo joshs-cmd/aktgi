@@ -52,12 +52,14 @@ const Index = () => {
       {/* Header */}
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-6">
-          <h1 className="text-2xl font-bold tracking-tight">
-            Price & Inventory Aggregator
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Compare prices and stock across distributors
-          </p>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight">
+              AKT Garment Inventory
+            </h1>
+            <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
+              Beta
+            </span>
+          </div>
         </div>
       </header>
 
