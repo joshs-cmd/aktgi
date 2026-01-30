@@ -3,8 +3,9 @@ import { SearchBar } from "@/components/SearchBar";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { ProductHeader } from "@/components/ProductHeader";
 import { useSourcingEngine } from "@/hooks/useSourcingEngine";
-import { AlertCircle, Search } from "lucide-react";
+import { AlertCircle, Search, Loader2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const Index = () => {
   const { isLoading, response, error, search } = useSourcingEngine();
@@ -35,9 +36,16 @@ const Index = () => {
     search(query);
   };
 
-  // Check if all results returned null products
+  // Check if all results returned null products or all errored
   const allResultsEmpty = !response?.results || 
     response.results.every(r => r.status !== "success" || r.product === null);
+  
+  // Check if we have partial results (some succeeded, some failed)
+  const hasPartialResults = response?.results?.some(r => r.status === "success" && r.product) &&
+    response?.results?.some(r => r.status === "error");
+  
+  // Get failed distributors for warning message
+  const failedDistributors = response?.results?.filter(r => r.status === "error") || [];
 
   return (
     <div className="min-h-screen bg-background">
@@ -61,8 +69,25 @@ const Index = () => {
             <SearchBar onSearch={handleSearch} isLoading={isLoading} />
           </div>
 
-          {/* Error State */}
-          {error && (
+          {/* Loading State */}
+          {isLoading && (
+            <div className="w-full max-w-4xl space-y-6">
+              <div className="flex items-center justify-center gap-3 py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                <span className="text-lg text-muted-foreground">Searching distributors...</span>
+              </div>
+              {/* Loading skeleton for table */}
+              <div className="rounded-lg border bg-card p-4 space-y-3">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            </div>
+          )}
+
+          {/* Error State - Total failure */}
+          {error && !isLoading && (
             <Alert variant="destructive" className="max-w-2xl">
               <AlertCircle className="h-4 w-4" />
               <AlertTitle>Search Error</AlertTitle>
@@ -70,24 +95,35 @@ const Index = () => {
             </Alert>
           )}
 
+          {/* Partial Results Warning - Some APIs failed but others succeeded */}
+          {hasPartialResults && !isLoading && (
+            <Alert className="max-w-2xl border-warning/50 bg-warning/10">
+              <AlertCircle className="h-4 w-4 text-warning" />
+              <AlertTitle>Partial Results</AlertTitle>
+              <AlertDescription>
+                Some distributors are unavailable: {failedDistributors.map(d => d.distributorName).join(', ')}. 
+                Showing available results below.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* No Results Found State */}
-          {response && allResultsEmpty && !error && (
+          {response && allResultsEmpty && !error && !isLoading && (
             <Alert className="max-w-2xl">
               <Search className="h-4 w-4" />
-              <AlertTitle>No Products Found</AlertTitle>
+              <AlertTitle>No Matching Products Found</AlertTitle>
               <AlertDescription>
-                No matching products found for "{response.query}". Try a different search like:
-                <ul className="mt-2 list-disc list-inside text-sm">
-                  <li>Brand + style number: "Gildan 5000" or "Bella Canvas 3001"</li>
-                  <li>Part number: "00760" or "G500"</li>
-                  <li>Just the style number: "5000" or "3001"</li>
+                We couldn't find any products matching "{response.query}". Please check your SKU and try again.
+                <ul className="mt-3 list-disc list-inside text-sm space-y-1">
+                  <li>Try a brand + style number: "Gildan 5000" or "Bella Canvas 3001"</li>
+                  <li>Or just the style number: "5000", "3001", "PC61"</li>
                 </ul>
               </AlertDescription>
             </Alert>
           )}
 
           {/* Results - Single Unified Comparison Table */}
-          {response && !allResultsEmpty && (
+          {response && !allResultsEmpty && !isLoading && (
             <div className="w-full space-y-8">
               {/* Product Header - show for the winner product */}
               {firstProduct && (
@@ -109,7 +145,7 @@ const Index = () => {
               {/* Legend */}
               <div className="flex items-center gap-6 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
-                  <div className="h-4 w-8 rounded bg-emerald-500/15" />
+                  <div className="h-4 w-8 rounded bg-success/15" />
                   <span>Lowest price in column</span>
                 </div>
                 <div className="flex items-center gap-2">
