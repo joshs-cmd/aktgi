@@ -152,19 +152,19 @@ export const mockASColourResult: DistributorResult = {
   product: null,
 };
 
-export const mockAlphabroderResult: DistributorResult = {
-  distributorId: "alphabroder-001",
-  distributorCode: "alphabroder",
-  distributorName: "Alphabroder",
+export const mockOneStopResult: DistributorResult = {
+  distributorId: "onestop-001",
+  distributorCode: "onestop",
+  distributorName: "OneStop",
   status: "pending",
   lastSynced: null,
   product: null,
 };
 
-export const mockIndependentResult: DistributorResult = {
-  distributorId: "independent-001",
-  distributorCode: "independent",
-  distributorName: "Independent Trading Co.",
+export const mockMcCrearysResult: DistributorResult = {
+  distributorId: "mccreary-001",
+  distributorCode: "mccreary",
+  distributorName: "McCreary's",
   status: "pending",
   lastSynced: null,
   product: null,
@@ -178,8 +178,8 @@ export const getMockSourcingResponse = (query: string): SourcingResponse => ({
     mockSSActivewearResult,
     mockSanMarResult,
     mockASColourResult,
-    mockAlphabroderResult,
-    mockIndependentResult,
+    mockOneStopResult,
+    mockMcCrearysResult,
   ],
 });
 
