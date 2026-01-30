@@ -11,7 +11,7 @@ const corsHeaders = {
 const PRODUCT_INFO_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarProductInfoServicePort";
 const INVENTORY_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarWebServicePort";
 
-// SanMar warehouse mapping
+// SanMar warehouse mapping (from Integration Guide)
 const WAREHOUSE_NAMES: Record<string, string> = {
   "1": "Seattle, WA",
   "2": "Cincinnati, OH",
@@ -20,8 +20,10 @@ const WAREHOUSE_NAMES: Record<string, string> = {
   "5": "Robbinsville, NJ",
   "6": "Jacksonville, FL",
   "7": "Minneapolis, MN",
+  "10": "Seattle, WA",
   "12": "Phoenix, AZ",
   "31": "Richmond, VA",
+  "80": "Cincinnati, OH",
 };
 
 // Size order mapping for sorting
@@ -105,7 +107,7 @@ function generateQueryVariants(query: string): string[] {
   }
   
   // Try to detect brand+style patterns without space
-  for (const { pattern, brand } of BRAND_PATTERNS) {
+  for (const { pattern } of BRAND_PATTERNS) {
     const match = trimmed.toLowerCase().match(pattern);
     if (match) {
       const suffix = match[2].trim();
@@ -168,7 +170,7 @@ function buildProductInfoRequest(
 
 /**
  * Build SOAP request for getInventoryQtyForStyleColorSize
- * Uses the SanMarWebServicePort endpoint with impl namespace
+ * Uses the SanMarWebServicePort endpoint with webservice namespace
  */
 function buildInventoryRequest(
   style: string,
@@ -176,17 +178,18 @@ function buildInventoryRequest(
   username: string,
   password: string
 ): string {
+  // SanMar inventory uses webservice namespace, not impl namespace
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" 
-                  xmlns:impl="http://impl.webservice.integration.sanmar.com/">
+                  xmlns:web="http://webservice.integration.sanmar.com/">
   <soapenv:Header/>
   <soapenv:Body>
-    <impl:getInventoryQtyForStyleColorSize>
+    <web:getInventoryQtyForStyleColorSize>
       <arg0>${escapeXml(customerNumber)}</arg0>
       <arg1>${escapeXml(username)}</arg1>
       <arg2>${escapeXml(password)}</arg2>
       <arg3>${escapeXml(style)}</arg3>
-    </impl:getInventoryQtyForStyleColorSize>
+    </web:getInventoryQtyForStyleColorSize>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
@@ -260,6 +263,7 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
       return {
         // Basic info
         style: basic.style || item.style || "",
+        styleCode: basic.styleCode || item.styleCode || basic.style || item.style || "",
         productTitle: basic.productTitle || item.productTitle || "",
         productDescription: basic.productDescription || item.productDescription || "",
         brandName: basic.brandName || item.brandName || "",
@@ -272,7 +276,8 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
         uniqueKey: basic.uniqueKey || item.uniqueKey || "",
         productStatus: basic.productStatus || item.productStatus || "",
         
-        // Price info
+        // Price info - CRITICAL: Use customerPrice for wholesale cost
+        customerPrice: price.customerPrice || item.customerPrice || price.piecePrice || item.piecePrice || "",
         piecePrice: price.piecePrice || item.piecePrice || "",
         casePrice: price.casePrice || item.casePrice || "",
         pieceSalePrice: price.pieceSalePrice || item.pieceSalePrice || "",
@@ -296,32 +301,118 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
 }
 
 /**
- * Parse inventory from SOAP response
+ * STRICT FILTERING: Filter products to only those matching exact styleCode
+ */
+function filterByExactStyle(products: any[], targetStyle: string): any[] {
+  const normalizedTarget = targetStyle.toUpperCase().trim();
+  
+  const filtered = products.filter(p => {
+    const productStyle = (p.style || p.styleCode || "").toUpperCase().trim();
+    return productStyle === normalizedTarget;
+  });
+  
+  console.log(`[provider-sanmar] Strict filter: ${products.length} -> ${filtered.length} products (target: ${normalizedTarget})`);
+  
+  return filtered;
+}
+
+/**
+ * Parse inventory from SOAP response - handles multiple SanMar response formats
  */
 function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
   try {
     const result = parser.parse(xmlData);
     
+    // Log top-level keys to understand structure
+    console.log(`[provider-sanmar] Inventory XML top keys: ${Object.keys(result).join(", ")}`);
+    
     const envelope = result["S:Envelope"] || result["soap:Envelope"] || result["soapenv:Envelope"] || result.Envelope;
-    if (!envelope) return [];
-    
-    const body = envelope["S:Body"] || envelope["soap:Body"] || envelope["soapenv:Body"] || envelope.Body;
-    if (!body) return [];
-    
-    const responseKey = Object.keys(body).find(k => k.includes("getInventoryQtyForStyleColorSizeResponse"));
-    if (!responseKey) return [];
-    
-    const response = body[responseKey];
-    const returnVal = response?.return || response;
-    
-    if (!returnVal || returnVal.errorOccured === true || returnVal.errorOccured === "true") {
+    if (!envelope) {
+      console.log("[provider-sanmar] Inventory: No envelope found");
       return [];
     }
     
-    const listResponse = returnVal.listResponse;
-    if (!listResponse) return [];
+    console.log(`[provider-sanmar] Inventory envelope keys: ${Object.keys(envelope).join(", ")}`);
     
-    return Array.isArray(listResponse) ? listResponse : [listResponse];
+    const body = envelope["S:Body"] || envelope["soap:Body"] || envelope["soapenv:Body"] || envelope.Body;
+    if (!body) {
+      console.log("[provider-sanmar] Inventory: No body found");
+      return [];
+    }
+    
+    console.log(`[provider-sanmar] Inventory body keys: ${Object.keys(body).join(", ")}`);
+    
+    // Find the response element - may have ns2: prefix
+    const responseKey = Object.keys(body).find(k => 
+      k.includes("getInventoryQtyForStyleColorSizeResponse") || 
+      k.includes("Inventory")
+    );
+    
+    if (!responseKey) {
+      console.log("[provider-sanmar] Inventory: No response element found in body");
+      return [];
+    }
+    
+    console.log(`[provider-sanmar] Inventory response key: ${responseKey}`);
+    const response = body[responseKey];
+    console.log(`[provider-sanmar] Inventory response keys: ${Object.keys(response || {}).join(", ")}`);
+    
+    // Handle 'return' which may be an array directly or contain listResponse
+    const returnVal = response?.return;
+    
+    if (!returnVal) {
+      console.log("[provider-sanmar] Inventory: No return value");
+      return [];
+    }
+    
+    console.log(`[provider-sanmar] Inventory return type: ${Array.isArray(returnVal) ? 'array' : typeof returnVal}`);
+    
+    // SanMar may return the inventory items directly in 'return' as an array
+    if (Array.isArray(returnVal)) {
+      console.log(`[provider-sanmar] Inventory: Direct array with ${returnVal.length} items`);
+      if (returnVal.length > 0) {
+        console.log(`[provider-sanmar] First item keys: ${Object.keys(returnVal[0]).join(", ")}`);
+      }
+      return returnVal;
+    }
+    
+    // Or it may wrap them in an object
+    console.log(`[provider-sanmar] Return object keys: ${Object.keys(returnVal).join(", ")}`);
+    
+    if (returnVal.errorOccurred === true || returnVal.errorOccurred === "true" || 
+        returnVal.errorOccured === true || returnVal.errorOccured === "true") {
+      console.log(`[provider-sanmar] Inventory: Error - ${returnVal.message}`);
+      return [];
+    }
+    
+    // SanMar uses 'response' field (not 'listResponse') for inventory data
+    const inventoryResponse = returnVal.response || returnVal.listResponse;
+    if (inventoryResponse) {
+      const items = Array.isArray(inventoryResponse) ? inventoryResponse : [inventoryResponse];
+      console.log(`[provider-sanmar] Inventory: response field with ${items.length} items`);
+      if (items.length > 0) {
+        console.log(`[provider-sanmar] First inv item keys: ${Object.keys(items[0]).join(", ")}`);
+        
+        // SanMar returns: { style: "PC61", skus: { sku: [ ...inventory SKUs... ] } }
+        // We need to extract the skus.sku array
+        const firstItem = items[0];
+        if (firstItem.skus) {
+          // Handle nested structure: skus.sku contains the actual array
+          const skusObj = firstItem.skus;
+          const skuArray = skusObj.sku || skusObj;
+          const skus = Array.isArray(skuArray) ? skuArray : [skuArray];
+          console.log(`[provider-sanmar] Inventory: Extracted ${skus.length} SKUs from nested structure`);
+          if (skus.length > 0 && skus[0]) {
+            console.log(`[provider-sanmar] SKU item keys: ${Object.keys(skus[0]).join(", ")}`);
+          }
+          return skus;
+        }
+      }
+      return items;
+    }
+    
+    console.log("[provider-sanmar] Inventory: No listResponse found");
+    return [];
   } catch (error) {
     console.error("[provider-sanmar] Error parsing inventory response:", error);
     return [];
@@ -329,48 +420,104 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
 }
 
 /**
- * Aggregate products into normalized structure with colors
+ * Build inventory lookup map from inventory response
+ * Key format: "catalogColor|size" -> Map of warehouseCode -> totalQuantity
+ * CRITICAL: Sums ALL warehouse quantities for complete inventory visibility
+ * 
+ * SanMar SKU structure: { color: "White", size: "M", whse: [...warehouse data...] }
  */
-function aggregateProducts(
-  productList: any[],
-  inventoryList: any[]
-): StandardProduct | null {
-  if (!productList || productList.length === 0) return null;
-  
-  // Build inventory lookup: catalogColor|size -> warehouse -> qty
+function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, number>> {
   const inventoryMap = new Map<string, Map<string, number>>();
   
+  // Log first item for debugging
+  if (inventoryList.length > 0) {
+    const sample = inventoryList[0];
+    console.log(`[provider-sanmar] Sample SKU: color=${sample.color}, size=${sample.size}, whse type=${typeof sample.whse}, whse is array=${Array.isArray(sample.whse)}`);
+    if (sample.whse) {
+      const whseArr = Array.isArray(sample.whse) ? sample.whse : [sample.whse];
+      if (whseArr[0]) {
+        console.log(`[provider-sanmar] Warehouse item keys: ${Object.keys(whseArr[0]).join(", ")}`);
+      }
+    }
+  }
+  
   for (const inv of inventoryList) {
-    const catalogColor = (inv.catalogColor || inv.color || "").trim();
-    const size = (inv.size || "").trim();
+    // SanMar uses 'color' field for the catalog color name
+    const catalogColor = (inv.color || inv.catalogColor || "").toString().trim();
+    const size = (inv.size || "").toString().trim();
     const key = `${catalogColor}|${size}`;
     
     if (!inventoryMap.has(key)) {
       inventoryMap.set(key, new Map());
     }
     
-    // Parse warehouse quantities from the response structure
-    // SanMar returns { whseNo: "1", whseName: "Seattle", qty: 100 }
-    const whseNo = String(inv.whseNo || inv.warehouseNo || "");
-    const qty = parseInt(inv.qty || inv.quantity || "0", 10);
+    const warehouseMap = inventoryMap.get(key)!;
     
-    if (whseNo) {
-      inventoryMap.get(key)!.set(whseNo, qty);
+    // Handle SanMar's 'whse' field - array of warehouse inventory
+    const whseData = inv.whse;
+    if (whseData) {
+      const whseArray = Array.isArray(whseData) ? whseData : [whseData];
+      for (const wh of whseArray) {
+        // SanMar uses whseID for warehouse identifier and qty for quantity
+        const whCode = String(wh.whseID || wh.whseNo || wh.warehouseNo || wh.whseCode || wh.warehouse || wh.whse || "");
+        const qty = parseInt(String(wh.qty || wh.quantity || wh.inventoryQty || wh.avail || "0"), 10);
+        
+        if (whCode && qty > 0) {
+          warehouseMap.set(whCode, (warehouseMap.get(whCode) || 0) + qty);
+        }
+      }
     }
     
-    // Also handle nested inventory arrays
-    if (inv.inventoryList || inv.inventory) {
-      const invItems = inv.inventoryList || inv.inventory;
-      const items = Array.isArray(invItems) ? invItems : [invItems];
-      for (const item of items) {
-        const wh = String(item.whseNo || item.warehouseNo || "");
-        const q = parseInt(item.qty || item.quantity || "0", 10);
-        if (wh) {
-          inventoryMap.get(key)!.set(wh, q);
+    // Handle direct warehouse fields as fallback
+    const directWhseNo = inv.whseNo || inv.warehouseNo || inv.warehouseCode;
+    const directQty = inv.qty || inv.quantity || inv.inventoryQty;
+    
+    if (directWhseNo !== undefined && directQty !== undefined) {
+      const whCode = String(directWhseNo);
+      const qty = parseInt(String(directQty), 10) || 0;
+      if (qty > 0) {
+        warehouseMap.set(whCode, (warehouseMap.get(whCode) || 0) + qty);
+      }
+    }
+    
+    // Handle nested quantities array
+    const quantities = inv.quantities || inv.inventoryList || inv.inventory || inv.warehouseInventory;
+    if (quantities) {
+      const qtyArray = Array.isArray(quantities) ? quantities : [quantities];
+      for (const qItem of qtyArray) {
+        const whCode = String(qItem.whseNo || qItem.warehouseNo || qItem.warehouseCode || qItem.warehouse || "");
+        const qty = parseInt(String(qItem.qty || qItem.quantity || qItem.inventoryQty || "0"), 10);
+        
+        if (whCode && qty > 0) {
+          warehouseMap.set(whCode, (warehouseMap.get(whCode) || 0) + qty);
         }
       }
     }
   }
+  
+  // Log inventory totals for debugging
+  let totalInventoryItems = 0;
+  for (const [key, whMap] of inventoryMap) {
+    let totalForKey = 0;
+    for (const qty of whMap.values()) {
+      totalForKey += qty;
+    }
+    totalInventoryItems += totalForKey;
+  }
+  console.log(`[provider-sanmar] Built inventory map with ${inventoryMap.size} color/size combinations, total qty: ${totalInventoryItems}`);
+  
+  return inventoryMap;
+}
+
+/**
+ * Aggregate products into normalized structure with colors
+ * Uses customerPrice for pricing and sums all warehouse inventory
+ */
+function aggregateProducts(
+  productList: any[],
+  inventoryMap: Map<string, Map<string, number>>
+): StandardProduct | null {
+  if (!productList || productList.length === 0) return null;
   
   // Group products by color
   const colorMap = new Map<string, {
@@ -410,22 +557,26 @@ function aggregateProducts(
     const sizeName = (product.size || "OS").trim();
     
     if (!colorEntry.sizesMap.has(sizeName)) {
+      // CRITICAL: Use customerPrice for wholesale pricing
+      const price = parseFloat(product.customerPrice || product.piecePrice || "0");
+      
       colorEntry.sizesMap.set(sizeName, {
         code: sizeName,
         order: getSizeOrder(sizeName),
-        price: parseFloat(product.piecePrice || product.casePrice || "0"),
+        price: price,
         inventory: new Map(),
       });
     }
     
     const sizeEntry = colorEntry.sizesMap.get(sizeName)!;
     
-    // Get inventory from our lookup
+    // Get inventory from our pre-built lookup map
     const invKey = `${catalogColor}|${sizeName}`;
     const invForKey = inventoryMap.get(invKey);
     if (invForKey) {
       for (const [whCode, qty] of invForKey) {
-        sizeEntry.inventory.set(whCode, qty);
+        // Sum quantities (in case of duplicates)
+        sizeEntry.inventory.set(whCode, (sizeEntry.inventory.get(whCode) || 0) + qty);
       }
     }
   }
@@ -459,8 +610,20 @@ function aggregateProducts(
   
   if (!firstProduct) return null;
   
+  // Calculate total inventory for logging
+  let totalStock = 0;
+  for (const color of colors) {
+    for (const size of color.sizes) {
+      for (const inv of size.inventory) {
+        totalStock += inv.quantity;
+      }
+    }
+  }
+  
+  console.log(`[provider-sanmar] Aggregated: ${colors.length} colors, total stock: ${totalStock}`);
+  
   return {
-    styleNumber: firstProduct.style || "",
+    styleNumber: firstProduct.style || firstProduct.styleCode || "",
     name: firstProduct.productTitle || `${firstProduct.brandName || ""} ${firstProduct.style || ""}`.trim(),
     brand: firstProduct.brandName || "SanMar",
     category: firstProduct.category || "",
@@ -517,6 +680,10 @@ serve(async (req) => {
         
         const soapRequest = buildProductInfoRequest(variant, customerNumber, username, password);
         
+        // 5-second timeout for product info
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
         const response = await fetch(PRODUCT_INFO_ENDPOINT, {
           method: "POST",
           headers: {
@@ -524,13 +691,14 @@ serve(async (req) => {
             "SOAPAction": "",
           },
           body: soapRequest,
+          signal: controller.signal,
         });
 
+        clearTimeout(timeoutId);
         const xmlText = await response.text();
         
         if (!response.ok) {
           console.log(`[provider-sanmar] HTTP ${response.status} for variant ${variant}`);
-          console.log(`[provider-sanmar] Response preview: ${xmlText.substring(0, 500)}`);
           continue;
         }
         
@@ -543,13 +711,24 @@ serve(async (req) => {
         const parsed = parseProductResponse(xmlText, parser);
         
         if (parsed && parsed.length > 0) {
-          productList = parsed;
-          matchedVariant = variant;
-          console.log(`[provider-sanmar] Found ${productList.length} products with variant: ${variant}`);
-          break;
+          // STRICT FILTERING: Only keep products with exact style match
+          const filtered = filterByExactStyle(parsed, variant);
+          
+          if (filtered.length > 0) {
+            productList = filtered;
+            matchedVariant = variant;
+            console.log(`[provider-sanmar] Found ${productList.length} products with exact match: ${variant}`);
+            break;
+          } else {
+            console.log(`[provider-sanmar] No exact style match for variant ${variant} (had ${parsed.length} results)`);
+          }
         }
-      } catch (err) {
-        console.error(`[provider-sanmar] Error with variant ${variant}:`, err);
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          console.log(`[provider-sanmar] Timeout for variant ${variant}`);
+        } else {
+          console.error(`[provider-sanmar] Error with variant ${variant}:`, err);
+        }
         continue;
       }
     }
@@ -570,7 +749,7 @@ serve(async (req) => {
     try {
       const invRequest = buildInventoryRequest(matchedVariant, customerNumber, username, password);
       
-      // Use AbortController for timeout (5 seconds for inventory)
+      // 5-second timeout for inventory
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       
@@ -590,6 +769,12 @@ serve(async (req) => {
       if (invResponse.ok) {
         const invXml = await invResponse.text();
         console.log(`[provider-sanmar] Inventory XML length: ${invXml.length}`);
+        
+        // Log a sample of the XML for debugging inventory structure
+        if (invXml.length > 0 && invXml.length < 5000) {
+          console.log(`[provider-sanmar] Inventory XML sample: ${invXml.substring(0, 1000)}`);
+        }
+        
         inventoryList = parseInventoryResponse(invXml, parser);
         console.log(`[provider-sanmar] Got ${inventoryList.length} inventory items`);
       } else {
@@ -604,8 +789,11 @@ serve(async (req) => {
       }
     }
 
+    // Build inventory map with summed warehouse quantities
+    const inventoryMap = buildInventoryMap(inventoryList);
+
     // Aggregate into normalized structure
-    const standardProduct = aggregateProducts(productList, inventoryList);
+    const standardProduct = aggregateProducts(productList, inventoryMap);
 
     if (!standardProduct) {
       console.log(`[provider-sanmar] Failed to aggregate products`);
