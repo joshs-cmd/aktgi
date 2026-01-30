@@ -8,8 +8,21 @@ interface PriceCellProps {
   isLowest: boolean;
 }
 
-export function PriceCell({ price, inventory, isLowest }: PriceCellProps) {
+/**
+ * Format inventory total with 3,000+ notation for capped values
+ */
+function formatInventoryTotal(inventory: StandardInventory[]): string {
   const totalStock = inventory.reduce((sum, inv) => sum + inv.quantity, 0);
+  const hasCapped = inventory.some(inv => inv.isCapped);
+  
+  if (hasCapped) {
+    return `${totalStock.toLocaleString()}+`;
+  }
+  return totalStock.toLocaleString();
+}
+
+export function PriceCell({ price, inventory, isLowest }: PriceCellProps) {
+  const stockDisplay = formatInventoryTotal(inventory);
 
   return (
     <WarehouseTooltip inventory={inventory}>
@@ -24,7 +37,7 @@ export function PriceCell({ price, inventory, isLowest }: PriceCellProps) {
           ${price.toFixed(2)}
         </span>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {totalStock.toLocaleString()} in stock
+          {stockDisplay} in stock
         </span>
       </button>
     </WarehouseTooltip>

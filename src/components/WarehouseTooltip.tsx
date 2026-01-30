@@ -11,8 +11,17 @@ interface WarehouseTooltipProps {
   children: React.ReactNode;
 }
 
+/**
+ * Format quantity with + suffix if capped (3,000+ rule)
+ */
+function formatQuantity(quantity: number, isCapped?: boolean): string {
+  const formatted = quantity.toLocaleString();
+  return isCapped ? `${formatted}+` : formatted;
+}
+
 export function WarehouseTooltip({ inventory, children }: WarehouseTooltipProps) {
   const totalStock = inventory.reduce((sum, inv) => sum + inv.quantity, 0);
+  const hasCapped = inventory.some(inv => inv.isCapped);
 
   return (
     <Tooltip delayDuration={200}>
@@ -32,14 +41,23 @@ export function WarehouseTooltip({ inventory, children }: WarehouseTooltipProps)
                 <span className="text-muted-foreground">
                   {inv.warehouseCode} ({inv.warehouseName.split("(")[0].trim()})
                 </span>
-                <span className="font-medium tabular-nums">{inv.quantity.toLocaleString()}</span>
+                <span className="font-medium tabular-nums">
+                  {formatQuantity(inv.quantity, inv.isCapped)}
+                </span>
               </div>
             ))}
           </div>
           <div className="mt-2 flex items-center justify-between border-t pt-2 text-sm">
             <span className="font-medium">Total</span>
-            <span className="font-semibold tabular-nums">{totalStock.toLocaleString()}</span>
+            <span className="font-semibold tabular-nums">
+              {formatQuantity(totalStock, hasCapped)}
+            </span>
           </div>
+          {hasCapped && (
+            <div className="mt-2 text-xs text-muted-foreground italic">
+              + indicates warehouse cap of 3,000 units
+            </div>
+          )}
         </div>
       </TooltipContent>
     </Tooltip>
