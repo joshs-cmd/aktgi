@@ -172,18 +172,34 @@ function generateQueryVariants(query: string): string[] {
   return variants;
 }
 
+// Priority brands for S&S scoring (must match sourcing-engine)
+const PRIORITY_BRANDS = [
+  "GILDAN", "PORT & COMPANY", "PORT AND COMPANY", "BELLA + CANVAS", 
+  "BELLA+CANVAS", "BELLACANVAS", "NEXT LEVEL", "NEXT LEVEL APPAREL",
+  "HANES", "JERZEES", "FRUIT OF THE LOOM", "CHAMPION", "AMERICAN APPAREL"
+];
+
 /**
- * Score a style match for best result selection
+ * Score a style match for best result selection - prioritizes industry brands
  */
 function scoreStyleMatch(style: SSStyle, query: string): number {
   let score = 0;
   const queryLower = query.toLowerCase();
   const styleName = (style.styleName || "").toLowerCase();
-  const brandName = (style.brandName || "").toLowerCase();
+  const brandName = (style.brandName || "").toLowerCase().trim();
+  const brandUpper = brandName.toUpperCase();
   const title = (style.title || "").toLowerCase();
   const partNumber = (style.partNumber || "").toLowerCase();
   
-  // Exact matches get highest score
+  // BRAND AUTHORITY BONUS: Priority brands get massive boost
+  const brandIdx = PRIORITY_BRANDS.findIndex(pb => 
+    brandUpper.includes(pb) || pb.includes(brandUpper)
+  );
+  if (brandIdx !== -1) {
+    score += 500 - (brandIdx * 10); // Gildan gets 500, Port & Co gets 490, etc.
+  }
+  
+  // Exact matches get high score
   if (styleName === queryLower) score += 100;
   if (partNumber === queryLower) score += 100;
   
