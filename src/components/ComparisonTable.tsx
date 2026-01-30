@@ -18,22 +18,25 @@ interface ComparisonTableProps {
 }
 
 export function ComparisonTable({ results, selectedColor }: ComparisonTableProps) {
-  // Get sizes for a result based on selected color
+  // Safely get sizes for a result based on selected color
+  // Uses optional chaining throughout to prevent crashes
   const getSizesForResult = (result: DistributorResult): StandardSize[] => {
-    if (!result.product) return [];
+    if (!result?.product) return [];
+    
+    const product = result.product;
     
     // If product has colors, use selected color's sizes
-    if (result.product.colors && result.product.colors.length > 0) {
+    if (Array.isArray(product.colors) && product.colors.length > 0) {
       if (selectedColor) {
-        const color = result.product.colors.find((c) => c.name === selectedColor);
-        if (color) return color.sizes;
+        const color = product.colors.find((c) => c?.name === selectedColor);
+        if (color?.sizes) return color.sizes;
       }
       // Default to first color if no selection
-      return result.product.colors[0].sizes;
+      return product.colors[0]?.sizes || [];
     }
     
     // Fall back to direct sizes (backward compat)
-    return result.product.sizes || [];
+    return Array.isArray(product.sizes) ? product.sizes : [];
   };
 
   // Collect all unique sizes from all products, sorted by order
