@@ -56,6 +56,7 @@ interface StandardInventory {
   warehouseCode: string;
   warehouseName: string;
   quantity: number;
+  isCapped?: boolean; // True when quantity equals 3000 (SanMar cap)
 }
 
 interface StandardSize {
@@ -82,6 +83,9 @@ interface StandardProduct {
   imageUrl?: string;
   colors: StandardColor[];
 }
+
+// SanMar inventory cap constant
+const SANMAR_INVENTORY_CAP = 3000;
 
 function getSizeOrder(sizeCode: string): number {
   const normalized = sizeCode.toUpperCase().trim();
@@ -260,6 +264,36 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
       const price = item.productPriceInfo || {};
       const images = item.productImageInfo || {};
       
+      // PROGRAM PRICING: Extract the pricingArray and prioritize benefitPrice/contractPrice
+      // for account-specific 1-piece tier pricing over generic customerPrice
+      const pricingArray = price.pricingArray || item.pricingArray || [];
+      const pricingList = Array.isArray(pricingArray) ? pricingArray : [pricingArray];
+      
+      // Find the best program price (1-piece tier)
+      let programPrice = "";
+      for (const pricing of pricingList) {
+        // Look for benefitPrice or contractPrice in each pricing tier
+        const benefitPrice = pricing.benefitPrice || pricing.benefit || "";
+        const contractPrice = pricing.contractPrice || pricing.contract || "";
+        const piecePrice = pricing.piecePrice || pricing.piece || "";
+        
+        // Prioritize: benefitPrice > contractPrice > piecePrice
+        if (benefitPrice && !programPrice) {
+          programPrice = String(benefitPrice);
+          console.log(`[provider-sanmar] Found benefitPrice: ${programPrice}`);
+        } else if (contractPrice && !programPrice) {
+          programPrice = String(contractPrice);
+          console.log(`[provider-sanmar] Found contractPrice: ${programPrice}`);
+        } else if (piecePrice && !programPrice) {
+          programPrice = String(piecePrice);
+        }
+      }
+      
+      // Fallback to customerPrice if no program pricing found
+      const finalPrice = programPrice || 
+        price.customerPrice || item.customerPrice || 
+        price.piecePrice || item.piecePrice || "";
+      
       return {
         // Basic info
         style: basic.style || item.style || "",
@@ -276,8 +310,8 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
         uniqueKey: basic.uniqueKey || item.uniqueKey || "",
         productStatus: basic.productStatus || item.productStatus || "",
         
-        // Price info - CRITICAL: Use customerPrice for wholesale cost
-        customerPrice: price.customerPrice || item.customerPrice || price.piecePrice || item.piecePrice || "",
+        // Price info - CRITICAL: Use program pricing for account-specific rates
+        customerPrice: finalPrice,
         piecePrice: price.piecePrice || item.piecePrice || "",
         casePrice: price.casePrice || item.casePrice || "",
         pieceSalePrice: price.pieceSalePrice || item.pieceSalePrice || "",
@@ -420,14 +454,23 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
 }
 
 /**
+ * Inventory data with cap flag
+ */
+interface WarehouseInventory {
+  quantity: number;
+  isCapped: boolean;
+}
+
+/**
  * Build inventory lookup map from inventory response
- * Key format: "catalogColor|size" -> Map of warehouseCode -> totalQuantity
+ * Key format: "catalogColor|size" -> Map of warehouseCode -> { quantity, isCapped }
  * CRITICAL: Sums ALL warehouse quantities for complete inventory visibility
+ * CRITICAL: Flags quantities at exactly 3000 as capped (SanMar API limit)
  * 
  * SanMar SKU structure: { color: "White", size: "M", whse: [...warehouse data...] }
  */
-function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, number>> {
-  const inventoryMap = new Map<string, Map<string, number>>();
+function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, WarehouseInventory>> {
+  const inventoryMap = new Map<string, Map<string, WarehouseInventory>>();
   
   // Log first item for debugging
   if (inventoryList.length > 0) {
@@ -453,6 +496,24 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, number
     
     const warehouseMap = inventoryMap.get(key)!;
     
+    // Helper to add inventory with cap detection
+    const addInventory = (whCode: string, qty: number) => {
+      if (!whCode || qty <= 0) return;
+      
+      const isCapped = qty === SANMAR_INVENTORY_CAP;
+      const existing = warehouseMap.get(whCode);
+      
+      if (existing) {
+        // Sum quantities and mark as capped if either entry was capped
+        warehouseMap.set(whCode, {
+          quantity: existing.quantity + qty,
+          isCapped: existing.isCapped || isCapped
+        });
+      } else {
+        warehouseMap.set(whCode, { quantity: qty, isCapped });
+      }
+    };
+    
     // Handle SanMar's 'whse' field - array of warehouse inventory
     const whseData = inv.whse;
     if (whseData) {
@@ -461,10 +522,7 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, number
         // SanMar uses whseID for warehouse identifier and qty for quantity
         const whCode = String(wh.whseID || wh.whseNo || wh.warehouseNo || wh.whseCode || wh.warehouse || wh.whse || "");
         const qty = parseInt(String(wh.qty || wh.quantity || wh.inventoryQty || wh.avail || "0"), 10);
-        
-        if (whCode && qty > 0) {
-          warehouseMap.set(whCode, (warehouseMap.get(whCode) || 0) + qty);
-        }
+        addInventory(whCode, qty);
       }
     }
     
@@ -475,9 +533,7 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, number
     if (directWhseNo !== undefined && directQty !== undefined) {
       const whCode = String(directWhseNo);
       const qty = parseInt(String(directQty), 10) || 0;
-      if (qty > 0) {
-        warehouseMap.set(whCode, (warehouseMap.get(whCode) || 0) + qty);
-      }
+      addInventory(whCode, qty);
     }
     
     // Handle nested quantities array
@@ -487,35 +543,33 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, number
       for (const qItem of qtyArray) {
         const whCode = String(qItem.whseNo || qItem.warehouseNo || qItem.warehouseCode || qItem.warehouse || "");
         const qty = parseInt(String(qItem.qty || qItem.quantity || qItem.inventoryQty || "0"), 10);
-        
-        if (whCode && qty > 0) {
-          warehouseMap.set(whCode, (warehouseMap.get(whCode) || 0) + qty);
-        }
+        addInventory(whCode, qty);
       }
     }
   }
   
   // Log inventory totals for debugging
   let totalInventoryItems = 0;
+  let cappedCount = 0;
   for (const [key, whMap] of inventoryMap) {
-    let totalForKey = 0;
-    for (const qty of whMap.values()) {
-      totalForKey += qty;
+    for (const inv of whMap.values()) {
+      totalInventoryItems += inv.quantity;
+      if (inv.isCapped) cappedCount++;
     }
-    totalInventoryItems += totalForKey;
   }
-  console.log(`[provider-sanmar] Built inventory map with ${inventoryMap.size} color/size combinations, total qty: ${totalInventoryItems}`);
+  console.log(`[provider-sanmar] Built inventory map with ${inventoryMap.size} color/size combinations, total qty: ${totalInventoryItems}, capped entries: ${cappedCount}`);
   
   return inventoryMap;
 }
 
 /**
  * Aggregate products into normalized structure with colors
- * Uses customerPrice for pricing and sums all warehouse inventory
+ * Uses program pricing (benefitPrice/contractPrice) and sums all warehouse inventory
+ * Passes through isCapped flag for 3,000+ display in UI
  */
 function aggregateProducts(
   productList: any[],
-  inventoryMap: Map<string, Map<string, number>>
+  inventoryMap: Map<string, Map<string, WarehouseInventory>>
 ): StandardProduct | null {
   if (!productList || productList.length === 0) return null;
   
@@ -530,7 +584,7 @@ function aggregateProducts(
       code: string;
       order: number;
       price: number;
-      inventory: Map<string, number>;
+      inventory: Map<string, WarehouseInventory>;
     }>;
   }>();
   
@@ -557,7 +611,7 @@ function aggregateProducts(
     const sizeName = (product.size || "OS").trim();
     
     if (!colorEntry.sizesMap.has(sizeName)) {
-      // CRITICAL: Use customerPrice for wholesale pricing
+      // CRITICAL: Use customerPrice which now contains program pricing
       const price = parseFloat(product.customerPrice || product.piecePrice || "0");
       
       colorEntry.sizesMap.set(sizeName, {
@@ -570,13 +624,21 @@ function aggregateProducts(
     
     const sizeEntry = colorEntry.sizesMap.get(sizeName)!;
     
-    // Get inventory from our pre-built lookup map
+    // Get inventory from our pre-built lookup map (now with cap info)
     const invKey = `${catalogColor}|${sizeName}`;
     const invForKey = inventoryMap.get(invKey);
     if (invForKey) {
-      for (const [whCode, qty] of invForKey) {
-        // Sum quantities (in case of duplicates)
-        sizeEntry.inventory.set(whCode, (sizeEntry.inventory.get(whCode) || 0) + qty);
+      for (const [whCode, invData] of invForKey) {
+        // Merge inventory, preserving cap flags
+        const existing = sizeEntry.inventory.get(whCode);
+        if (existing) {
+          sizeEntry.inventory.set(whCode, {
+            quantity: existing.quantity + invData.quantity,
+            isCapped: existing.isCapped || invData.isCapped
+          });
+        } else {
+          sizeEntry.inventory.set(whCode, { ...invData });
+        }
       }
     }
   }
@@ -589,10 +651,11 @@ function aggregateProducts(
         order: sizeData.order,
         price: sizeData.price,
         inventory: Array.from(sizeData.inventory.entries())
-          .map(([code, qty]) => ({
+          .map(([code, invData]) => ({
             warehouseCode: code,
             warehouseName: WAREHOUSE_NAMES[code] || `Warehouse ${code}`,
-            quantity: qty,
+            quantity: invData.quantity,
+            isCapped: invData.isCapped,
           }))
           .sort((a, b) => b.quantity - a.quantity),
       }))

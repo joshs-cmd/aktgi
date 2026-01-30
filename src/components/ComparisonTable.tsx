@@ -79,11 +79,26 @@ export function ComparisonTable({ results, selectedColor }: ComparisonTableProps
     return lowest;
   }, [results, allSizes, selectedColor]);
 
-  // Calculate total stock for each distributor
+  // Calculate total stock for each distributor (with 3,000+ notation for capped)
   const getTotalStock = (sizes: StandardSize[]) => {
-    return sizes.reduce((total, size) => {
-      return total + size.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
-    }, 0);
+    let total = 0;
+    let hasCapped = false;
+    
+    for (const size of sizes) {
+      for (const inv of size.inventory) {
+        total += inv.quantity;
+        if (inv.isCapped) hasCapped = true;
+      }
+    }
+    
+    return { total, hasCapped };
+  };
+
+  // Format total stock with + if any warehouse was capped
+  const formatTotalStock = (sizes: StandardSize[]) => {
+    const { total, hasCapped } = getTotalStock(sizes);
+    const formatted = total.toLocaleString();
+    return hasCapped ? `${formatted}+` : formatted;
   };
 
   if (results.length === 0) {
@@ -148,7 +163,7 @@ export function ComparisonTable({ results, selectedColor }: ComparisonTableProps
                 <TableCell className="text-right">
                   {result.status === "success" && sizes.length > 0 ? (
                     <span className="font-semibold tabular-nums">
-                      {getTotalStock(sizes).toLocaleString()}
+                      {formatTotalStock(sizes)}
                     </span>
                   ) : (
                     <span className="text-muted-foreground">--</span>

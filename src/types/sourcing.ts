@@ -5,6 +5,7 @@ export interface StandardInventory {
   warehouseCode: string;
   warehouseName: string;
   quantity: number;
+  isCapped?: boolean; // True when quantity equals 3000 (SanMar API cap)
 }
 
 export interface StandardSize {
