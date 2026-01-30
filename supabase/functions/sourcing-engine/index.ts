@@ -49,18 +49,17 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch all distributors
-    const { data: distributors, error: distError } = await supabase
-      .from("distributors")
-      .select("*")
-      .order("name");
+    // Hardcoded distributor roster (5 distributors)
+    // This ensures consistent UI regardless of database state
+    const distributors = [
+      { id: "sanmar-001", code: "sanmar", name: "SanMar", is_active: true },
+      { id: "ss-activewear-001", code: "ss-activewear", name: "S&S Activewear", is_active: true },
+      { id: "as-colour-001", code: "as-colour", name: "AS Colour", is_active: false },
+      { id: "onestop-001", code: "onestop", name: "OneStop", is_active: false },
+      { id: "mccreary-001", code: "mccreary", name: "McCreary's", is_active: false },
+    ];
 
-    if (distError) {
-      console.error("[sourcing-engine] Error fetching distributors:", distError);
-      throw new Error("Failed to fetch distributors");
-    }
-
-    console.log(`[sourcing-engine] Found ${distributors?.length || 0} distributors`);
+    console.log(`[sourcing-engine] Using hardcoded roster: ${distributors.length} distributors`);
 
     // Fan out to each provider in parallel
     const results: DistributorResult[] = await Promise.all(
