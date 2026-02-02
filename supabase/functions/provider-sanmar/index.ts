@@ -11,7 +11,7 @@ const corsHeaders = {
 const PRODUCT_INFO_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarProductInfoServicePort";
 const INVENTORY_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarWebServicePort";
 
-// SanMar warehouse mapping (from Integration Guide)
+// SanMar warehouse mapping
 const WAREHOUSE_NAMES: Record<string, string> = {
   "1": "Seattle, WA",
   "2": "Cincinnati, OH",
@@ -26,7 +26,7 @@ const WAREHOUSE_NAMES: Record<string, string> = {
   "80": "Cincinnati, OH",
 };
 
-// Size order mapping for sorting
+// Size order mapping
 const SIZE_ORDER: Record<string, number> = {
   XS: 1, S: 2, M: 3, L: 4, XL: 5,
   "2XL": 6, "3XL": 7, "4XL": 8, "5XL": 9, "6XL": 10,
@@ -35,7 +35,7 @@ const SIZE_ORDER: Record<string, number> = {
   OSFA: 50, OS: 50, "ONE SIZE": 50,
 };
 
-// Common brand patterns for fuzzy matching
+// Brand patterns for fuzzy matching
 const BRAND_PATTERNS = [
   { pattern: /^(port\s*authority)(.+)/i, brand: "port authority" },
   { pattern: /^(port\s*&?\s*co)(.+)/i, brand: "port & company" },
@@ -56,7 +56,7 @@ interface StandardInventory {
   warehouseCode: string;
   warehouseName: string;
   quantity: number;
-  isCapped?: boolean; // True when quantity equals 3000 (SanMar cap)
+  isCapped?: boolean;
 }
 
 interface StandardSize {
@@ -85,7 +85,6 @@ interface StandardProduct {
   colors: StandardColor[];
 }
 
-// SanMar inventory cap constant
 const SANMAR_INVENTORY_CAP = 3000;
 
 function getSizeOrder(sizeCode: string): number {
@@ -96,27 +95,20 @@ function getSizeOrder(sizeCode: string): number {
   return 99;
 }
 
-/**
- * Generate query variants for fuzzy matching
- */
 function generateQueryVariants(query: string): string[] {
   const variants: string[] = [];
   const trimmed = query.trim();
   
-  // Always include original
   variants.push(trimmed);
   
-  // Also try uppercase (SanMar styles are often uppercase like PC61, K500)
   if (trimmed !== trimmed.toUpperCase()) {
     variants.push(trimmed.toUpperCase());
   }
   
-  // Try to detect brand+style patterns without space
   for (const { pattern } of BRAND_PATTERNS) {
     const match = trimmed.toLowerCase().match(pattern);
     if (match) {
       const suffix = match[2].trim();
-      // Just use the style number without brand
       if (suffix && !variants.includes(suffix.toUpperCase())) {
         variants.push(suffix.toUpperCase());
       }
@@ -124,7 +116,6 @@ function generateQueryVariants(query: string): string[] {
     }
   }
   
-  // Generic pattern: letters followed by numbers without space (PC61 -> PC61)
   const alphaNumMatch = trimmed.match(/^([a-zA-Z]+)(\d+)$/);
   if (alphaNumMatch) {
     const formatted = `${alphaNumMatch[1].toUpperCase()}${alphaNumMatch[2]}`;
@@ -133,7 +124,6 @@ function generateQueryVariants(query: string): string[] {
     }
   }
   
-  // If query has spaces, try without (Port Authority K500 -> K500)
   if (trimmed.includes(" ")) {
     const parts = trimmed.split(/\s+/);
     const lastPart = parts[parts.length - 1].toUpperCase();
@@ -145,8 +135,18 @@ function generateQueryVariants(query: string): string[] {
   return variants;
 }
 
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 /**
  * Build SOAP request for getProductInfoByStyleColorSize
+ * This returns product info INCLUDING pricing (benefitPrice/contractPrice if account is enrolled)
  */
 function buildProductInfoRequest(
   style: string,
@@ -175,7 +175,6 @@ function buildProductInfoRequest(
 
 /**
  * Build SOAP request for getInventoryQtyForStyleColorSize
- * Uses the SanMarWebServicePort endpoint with webservice namespace
  */
 function buildInventoryRequest(
   style: string,
@@ -183,7 +182,6 @@ function buildInventoryRequest(
   username: string,
   password: string
 ): string {
-  // SanMar inventory uses webservice namespace, not impl namespace
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" 
                   xmlns:web="http://webservice.integration.sanmar.com/">
@@ -199,23 +197,54 @@ function buildInventoryRequest(
 </soapenv:Envelope>`;
 }
 
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+/**
+ * Deep search for any pricing-related fields in an object
+ * Returns all fields that look like prices
+ */
+function findAllPriceFields(obj: any, prefix = ""): Record<string, any> {
+  const priceFields: Record<string, any> = {};
+  
+  if (!obj || typeof obj !== 'object') return priceFields;
+  
+  for (const [key, value] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}.${key}` : key;
+    const lowerKey = key.toLowerCase();
+    
+    // Check if this looks like a price field
+    if (lowerKey.includes('price') || 
+        lowerKey.includes('cost') || 
+        lowerKey.includes('benefit') || 
+        lowerKey.includes('contract') ||
+        lowerKey.includes('rate') ||
+        lowerKey.includes('tier') ||
+        lowerKey.includes('program')) {
+      priceFields[fullKey] = value;
+    }
+    
+    // Recurse into nested objects (but not arrays of many items)
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      Object.assign(priceFields, findAllPriceFields(value, fullKey));
+    }
+  }
+  
+  return priceFields;
 }
 
 /**
  * Parse product info from SOAP response
+ * IMPORTANT: This extracts ALL pricing fields and prioritizes benefitPrice/contractPrice
  */
-function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
+function parseProductResponse(xmlData: string, parser: XMLParser, logRaw = false): any[] {
   try {
+    // Log a sample of raw XML to understand structure
+    if (logRaw) {
+      console.log(`[provider-sanmar] ===== RAW getProductInfo XML (first 2000 chars) =====`);
+      console.log(xmlData.substring(0, 2000));
+      console.log(`[provider-sanmar] ===== END RAW XML (total: ${xmlData.length} chars) =====`);
+    }
+    
     const result = parser.parse(xmlData);
     
-    // Navigate SOAP envelope
     const envelope = result["S:Envelope"] || result["soap:Envelope"] || result["soapenv:Envelope"] || result.Envelope;
     if (!envelope) {
       console.log("[provider-sanmar] No envelope found");
@@ -228,7 +257,6 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
       return [];
     }
     
-    // Find the response element
     const responseKey = Object.keys(body).find(k => k.includes("getProductInfoByStyleColorSizeResponse"));
     if (!responseKey) {
       console.log("[provider-sanmar] No response element found");
@@ -243,13 +271,11 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
       return [];
     }
     
-    // Check for error
     if (returnVal.errorOccured === true || returnVal.errorOccured === "true") {
       console.log(`[provider-sanmar] Error in response: ${returnVal.message}`);
       return [];
     }
     
-    // Get list response - can be array or single object
     const listResponse = returnVal.listResponse;
     if (!listResponse) {
       console.log("[provider-sanmar] No listResponse found");
@@ -258,76 +284,88 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
     
     const items = Array.isArray(listResponse) ? listResponse : [listResponse];
     
-    // SanMar response has nested structure with productBasicInfo, productPriceInfo, etc.
-    // Flatten and merge the nested objects
+    // Debug: Log ALL price-related fields in first item to discover benefitPrice location
+    if (items.length > 0) {
+      const firstItem = items[0];
+      const allPriceFields = findAllPriceFields(firstItem);
+      console.log(`[provider-sanmar] ALL price-related fields in first item:`);
+      console.log(JSON.stringify(allPriceFields, null, 2));
+      
+      // Also log the full structure of productPriceInfo
+      if (firstItem.productPriceInfo) {
+        console.log(`[provider-sanmar] Full productPriceInfo structure:`);
+        console.log(JSON.stringify(firstItem.productPriceInfo, null, 2).substring(0, 1500));
+      }
+    }
+    
     return items.map((item, idx) => {
       const basic = item.productBasicInfo || {};
       const price = item.productPriceInfo || {};
       const images = item.productImageInfo || {};
       
-      // Debug: Log price structure for first item
-      if (idx === 0) {
-        console.log(`[provider-sanmar] Price info keys: ${Object.keys(price).join(", ")}`);
-        console.log(`[provider-sanmar] Item keys: ${Object.keys(item).join(", ")}`);
-        console.log(`[provider-sanmar] piecePrice: ${price.piecePrice}, item.customerPrice: ${item.customerPrice}`);
-      }
+      // Extract ALL possible price fields to find benefitPrice/contractPrice
+      // Priority order: benefitPrice > contractPrice > customerPrice > piecePrice
       
-      // PROGRAM PRICING: Extract the pricingArray and prioritize benefitPrice/contractPrice
-      // for account-specific 1-piece tier pricing over generic customerPrice
-      const pricingArray = price.pricingArray || item.pricingArray || price.programPricing || item.programPricing || [];
-      const pricingList = Array.isArray(pricingArray) ? pricingArray : (pricingArray ? [pricingArray] : []);
+      // Check direct fields
+      let benefitPrice = parseFloat(price.benefitPrice || price.BenefitPrice || item.benefitPrice || "") || null;
+      let contractPrice = parseFloat(price.contractPrice || price.ContractPrice || item.contractPrice || "") || null;
+      let customerPrice = parseFloat(price.customerPrice || price.CustomerPrice || item.customerPrice || "") || null;
+      let piecePrice = parseFloat(price.piecePrice || price.PiecePrice || item.piecePrice || "") || null;
+      let listPrice = parseFloat(price.listPrice || price.ListPrice || item.listPrice || "") || null;
       
-      if (idx === 0 && pricingList.length > 0) {
-        console.log(`[provider-sanmar] pricingArray has ${pricingList.length} entries, first keys: ${Object.keys(pricingList[0] || {}).join(", ")}`);
-      }
+      // Check nested pricingArray/programPricing for tiered pricing
+      const pricingArrays = [
+        price.pricingArray,
+        price.programPricing,
+        price.tierPricing,
+        item.pricingArray,
+        item.programPricing,
+        item.customerPricing
+      ].filter(Boolean);
       
-      // Find the best program price (1-piece tier)
-      let programPrice = "";
-      for (const pricing of pricingList) {
-        if (!pricing) continue;
-        // Look for benefitPrice or contractPrice in each pricing tier
-        const benefitPrice = pricing.benefitPrice || pricing.benefit || pricing.BenefitPrice || "";
-        const contractPrice = pricing.contractPrice || pricing.contract || pricing.ContractPrice || "";
-        const piecePrice = pricing.piecePrice || pricing.piece || pricing.PiecePrice || "";
-        
-        // Prioritize: benefitPrice > contractPrice > piecePrice
-        if (benefitPrice && !programPrice) {
-          programPrice = String(benefitPrice);
-          console.log(`[provider-sanmar] Found benefitPrice: ${programPrice}`);
-        } else if (contractPrice && !programPrice) {
-          programPrice = String(contractPrice);
-          console.log(`[provider-sanmar] Found contractPrice: ${programPrice}`);
-        } else if (piecePrice && !programPrice) {
-          programPrice = String(piecePrice);
+      for (const pricingData of pricingArrays) {
+        const pricingList = Array.isArray(pricingData) ? pricingData : [pricingData];
+        for (const tier of pricingList) {
+          if (!tier) continue;
+          
+          // Check for benefit/contract in each tier
+          if (!benefitPrice && tier.benefitPrice) {
+            benefitPrice = parseFloat(tier.benefitPrice) || null;
+          }
+          if (!contractPrice && tier.contractPrice) {
+            contractPrice = parseFloat(tier.contractPrice) || null;
+          }
         }
       }
       
-      // Also check direct fields on price object for program pricing
-      if (!programPrice && (price.benefitPrice || price.BenefitPrice)) {
-        programPrice = String(price.benefitPrice || price.BenefitPrice);
-        console.log(`[provider-sanmar] Found direct benefitPrice: ${programPrice}`);
-      }
-      if (!programPrice && (price.contractPrice || price.ContractPrice)) {
-        programPrice = String(price.contractPrice || price.ContractPrice);
-        console.log(`[provider-sanmar] Found direct contractPrice: ${programPrice}`);
-      }
+      // Determine final price and whether it's a program price
+      let finalPrice = 0;
+      let isProgramPrice = false;
       
-      // CRITICAL: Use piecePrice as the primary price source 
-      // SanMar's piecePrice is the 1-piece wholesale rate which reflects program pricing better
-      // than the generic customerPrice field
-      const finalPrice = programPrice || 
-        price.piecePrice || item.piecePrice ||
-        price.customerPrice || item.customerPrice || "";
-      
-      // Track if this is a program price (benefit/contract pricing)
-      const hasProgramPrice = Boolean(programPrice);
+      if (benefitPrice && benefitPrice > 0) {
+        finalPrice = benefitPrice;
+        isProgramPrice = true;
+        if (idx === 0) console.log(`[provider-sanmar] Using BENEFIT price: $${benefitPrice}`);
+      } else if (contractPrice && contractPrice > 0) {
+        finalPrice = contractPrice;
+        isProgramPrice = true;
+        if (idx === 0) console.log(`[provider-sanmar] Using CONTRACT price: $${contractPrice}`);
+      } else if (piecePrice && piecePrice > 0) {
+        finalPrice = piecePrice;
+        if (idx === 0) console.log(`[provider-sanmar] Using PIECE price: $${piecePrice}`);
+      } else if (customerPrice && customerPrice > 0) {
+        finalPrice = customerPrice;
+        if (idx === 0) console.log(`[provider-sanmar] Using CUSTOMER price: $${customerPrice}`);
+      } else if (listPrice && listPrice > 0) {
+        finalPrice = listPrice;
+        if (idx === 0) console.log(`[provider-sanmar] Using LIST price: $${listPrice}`);
+      }
       
       if (idx === 0) {
-        console.log(`[provider-sanmar] Final price: ${finalPrice} (program: ${programPrice || "none"}, hasProgramPrice: ${hasProgramPrice})`);
+        console.log(`[provider-sanmar] Price summary: benefit=${benefitPrice}, contract=${contractPrice}, piece=${piecePrice}, customer=${customerPrice}, list=${listPrice}, FINAL=$${finalPrice}, isProgramPrice=${isProgramPrice}`);
       }
       
       return {
-        // Basic info
         style: basic.style || item.style || "",
         styleCode: basic.styleCode || item.styleCode || basic.style || item.style || "",
         productTitle: basic.productTitle || item.productTitle || "",
@@ -342,16 +380,15 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
         uniqueKey: basic.uniqueKey || item.uniqueKey || "",
         productStatus: basic.productStatus || item.productStatus || "",
         
-        // Price info - CRITICAL: Use program pricing for account-specific rates
-        customerPrice: finalPrice,
-        piecePrice: price.piecePrice || item.piecePrice || "",
-        casePrice: price.casePrice || item.casePrice || "",
-        pieceSalePrice: price.pieceSalePrice || item.pieceSalePrice || "",
-        caseSalePrice: price.caseSalePrice || item.caseSalePrice || "",
-        priceCode: price.priceCode || item.priceCode || "",
-        hasProgramPrice: hasProgramPrice,
+        // Store pricing info
+        finalPrice: finalPrice,
+        isProgramPrice: isProgramPrice,
+        benefitPrice: benefitPrice,
+        contractPrice: contractPrice,
+        piecePrice: piecePrice,
+        customerPrice: customerPrice,
+        listPrice: listPrice,
         
-        // Image info
         productImage: images.productImage || item.productImage || "",
         colorProductImage: images.colorProductImage || item.colorProductImage || "",
         colorSquareImage: images.colorSquareImage || item.colorSquareImage || "",
@@ -367,23 +404,16 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
   }
 }
 
-/**
- * STRICT FILTERING: Filter products to only those matching exact styleCode
- * Safely handles non-string values (objects, numbers, etc.)
- */
 function filterByExactStyle(products: any[], targetStyle: string): any[] {
   const normalizedTarget = targetStyle.toUpperCase().trim();
   
   const filtered = products.filter(p => {
-    // Safely extract style - handle objects, numbers, nulls gracefully
     let styleVal = p.style ?? p.styleCode ?? "";
     
-    // If it's an object, try to get a string from it
     if (typeof styleVal === "object" && styleVal !== null) {
       styleVal = styleVal["#text"] || styleVal.value || styleVal.toString?.() || "";
     }
     
-    // Convert to string and normalize
     const productStyle = String(styleVal).toUpperCase().trim();
     return productStyle === normalizedTarget;
   });
@@ -393,14 +423,10 @@ function filterByExactStyle(products: any[], targetStyle: string): any[] {
   return filtered;
 }
 
-/**
- * Parse inventory from SOAP response - handles multiple SanMar response formats
- */
 function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
   try {
     const result = parser.parse(xmlData);
     
-    // Log top-level keys to understand structure
     console.log(`[provider-sanmar] Inventory XML top keys: ${Object.keys(result).join(", ")}`);
     
     const envelope = result["S:Envelope"] || result["soap:Envelope"] || result["soapenv:Envelope"] || result.Envelope;
@@ -419,7 +445,6 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
     
     console.log(`[provider-sanmar] Inventory body keys: ${Object.keys(body).join(", ")}`);
     
-    // Find the response element - may have ns2: prefix
     const responseKey = Object.keys(body).find(k => 
       k.includes("getInventoryQtyForStyleColorSizeResponse") || 
       k.includes("Inventory")
@@ -434,7 +459,6 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
     const response = body[responseKey];
     console.log(`[provider-sanmar] Inventory response keys: ${Object.keys(response || {}).join(", ")}`);
     
-    // Handle 'return' which may be an array directly or contain listResponse
     const returnVal = response?.return;
     
     if (!returnVal) {
@@ -444,7 +468,6 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
     
     console.log(`[provider-sanmar] Inventory return type: ${Array.isArray(returnVal) ? 'array' : typeof returnVal}`);
     
-    // SanMar may return the inventory items directly in 'return' as an array
     if (Array.isArray(returnVal)) {
       console.log(`[provider-sanmar] Inventory: Direct array with ${returnVal.length} items`);
       if (returnVal.length > 0) {
@@ -453,7 +476,6 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
       return returnVal;
     }
     
-    // Or it may wrap them in an object
     console.log(`[provider-sanmar] Return object keys: ${Object.keys(returnVal).join(", ")}`);
     
     if (returnVal.errorOccurred === true || returnVal.errorOccurred === "true" || 
@@ -462,7 +484,6 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
       return [];
     }
     
-    // SanMar uses 'response' field (not 'listResponse') for inventory data
     const inventoryResponse = returnVal.response || returnVal.listResponse;
     if (inventoryResponse) {
       const items = Array.isArray(inventoryResponse) ? inventoryResponse : [inventoryResponse];
@@ -470,11 +491,8 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
       if (items.length > 0) {
         console.log(`[provider-sanmar] First inv item keys: ${Object.keys(items[0]).join(", ")}`);
         
-        // SanMar returns: { style: "PC61", skus: { sku: [ ...inventory SKUs... ] } }
-        // We need to extract the skus.sku array
         const firstItem = items[0];
         if (firstItem.skus) {
-          // Handle nested structure: skus.sku contains the actual array
           const skusObj = firstItem.skus;
           const skuArray = skusObj.sku || skusObj;
           const skus = Array.isArray(skuArray) ? skuArray : [skuArray];
@@ -496,26 +514,14 @@ function parseInventoryResponse(xmlData: string, parser: XMLParser): any[] {
   }
 }
 
-/**
- * Inventory data with cap flag
- */
 interface WarehouseInventory {
   quantity: number;
   isCapped: boolean;
 }
 
-/**
- * Build inventory lookup map from inventory response
- * Key format: "catalogColor|size" -> Map of warehouseCode -> { quantity, isCapped }
- * CRITICAL: Sums ALL warehouse quantities for complete inventory visibility
- * CRITICAL: Flags quantities at exactly 3000 as capped (SanMar API limit)
- * 
- * SanMar SKU structure: { color: "White", size: "M", whse: [...warehouse data...] }
- */
 function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, WarehouseInventory>> {
   const inventoryMap = new Map<string, Map<string, WarehouseInventory>>();
   
-  // Log first item for debugging
   if (inventoryList.length > 0) {
     const sample = inventoryList[0];
     console.log(`[provider-sanmar] Sample SKU: color=${sample.color}, size=${sample.size}, whse type=${typeof sample.whse}, whse is array=${Array.isArray(sample.whse)}`);
@@ -528,7 +534,6 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, Wareho
   }
   
   for (const inv of inventoryList) {
-    // SanMar uses 'color' field for the catalog color name
     const catalogColor = (inv.color || inv.catalogColor || "").toString().trim();
     const size = (inv.size || "").toString().trim();
     const key = `${catalogColor}|${size}`;
@@ -539,7 +544,6 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, Wareho
     
     const warehouseMap = inventoryMap.get(key)!;
     
-    // Helper to add inventory with cap detection
     const addInventory = (whCode: string, qty: number) => {
       if (!whCode || qty <= 0) return;
       
@@ -547,7 +551,6 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, Wareho
       const existing = warehouseMap.get(whCode);
       
       if (existing) {
-        // Sum quantities and mark as capped if either entry was capped
         warehouseMap.set(whCode, {
           quantity: existing.quantity + qty,
           isCapped: existing.isCapped || isCapped
@@ -557,19 +560,16 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, Wareho
       }
     };
     
-    // Handle SanMar's 'whse' field - array of warehouse inventory
     const whseData = inv.whse;
     if (whseData) {
       const whseArray = Array.isArray(whseData) ? whseData : [whseData];
       for (const wh of whseArray) {
-        // SanMar uses whseID for warehouse identifier and qty for quantity
         const whCode = String(wh.whseID || wh.whseNo || wh.warehouseNo || wh.whseCode || wh.warehouse || wh.whse || "");
         const qty = parseInt(String(wh.qty || wh.quantity || wh.inventoryQty || wh.avail || "0"), 10);
         addInventory(whCode, qty);
       }
     }
     
-    // Handle direct warehouse fields as fallback
     const directWhseNo = inv.whseNo || inv.warehouseNo || inv.warehouseCode;
     const directQty = inv.qty || inv.quantity || inv.inventoryQty;
     
@@ -579,7 +579,6 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, Wareho
       addInventory(whCode, qty);
     }
     
-    // Handle nested quantities array
     const quantities = inv.quantities || inv.inventoryList || inv.inventory || inv.warehouseInventory;
     if (quantities) {
       const qtyArray = Array.isArray(quantities) ? quantities : [quantities];
@@ -591,7 +590,6 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, Wareho
     }
   }
   
-  // Log inventory totals for debugging
   let totalInventoryItems = 0;
   let cappedCount = 0;
   for (const [key, whMap] of inventoryMap) {
@@ -607,8 +605,7 @@ function buildInventoryMap(inventoryList: any[]): Map<string, Map<string, Wareho
 
 /**
  * Aggregate products into normalized structure with colors
- * Uses program pricing (benefitPrice/contractPrice) and sums all warehouse inventory
- * Passes through isCapped flag for 3,000+ display in UI
+ * Uses pricing extracted from product info (benefitPrice > contractPrice > piecePrice)
  */
 function aggregateProducts(
   productList: any[],
@@ -616,7 +613,6 @@ function aggregateProducts(
 ): StandardProduct | null {
   if (!productList || productList.length === 0) return null;
   
-  // Group products by color
   const colorMap = new Map<string, {
     code: string;
     name: string;
@@ -644,7 +640,7 @@ function aggregateProducts(
       colorMap.set(colorName, {
         code: catalogColor,
         name: colorName,
-        hexCode: null, // SanMar doesn't provide hex codes in the API
+        hexCode: null,
         swatchUrl: product.colorSquareImage || product.colorSwatchImage || null,
         imageUrl: product.colorProductImage || product.productImage || null,
         sizesMap: new Map(),
@@ -655,26 +651,14 @@ function aggregateProducts(
     const sizeName = (product.size || "OS").trim();
     
     if (!colorEntry.sizesMap.has(sizeName)) {
-      // CRITICAL: Use customerPrice which now contains program pricing
-      const price = parseFloat(product.customerPrice || product.piecePrice || "0");
-      
-      // Detect if this is a program price (benefit/contract pricing)
-      // Program price is identified when customerPrice differs from piecePrice
-      // or when we found benefitPrice/contractPrice in parsing
-      const isProgramPrice = product.hasProgramPrice === true || 
-        (product.customerPrice && product.piecePrice && 
-         parseFloat(product.customerPrice) !== parseFloat(product.piecePrice) &&
-         parseFloat(product.customerPrice) < parseFloat(product.piecePrice));
-      
-      // Log first few price assignments to diagnose
-      if (colorMap.size <= 2 && colorEntry.sizesMap.size === 0) {
-        console.log(`[provider-sanmar] Price for ${colorName}/${sizeName}: ${price} (raw: ${product.customerPrice}, piecePrice: ${product.piecePrice}, isProgramPrice: ${isProgramPrice})`);
-      }
+      // Use pre-extracted pricing from parseProductResponse
+      const finalPrice = product.finalPrice || 0;
+      const isProgramPrice = product.isProgramPrice || false;
       
       colorEntry.sizesMap.set(sizeName, {
         code: sizeName,
         order: getSizeOrder(sizeName),
-        price: price,
+        price: finalPrice,
         isProgramPrice: isProgramPrice,
         inventory: new Map(),
       });
@@ -682,12 +666,10 @@ function aggregateProducts(
     
     const sizeEntry = colorEntry.sizesMap.get(sizeName)!;
     
-    // Get inventory from our pre-built lookup map (now with cap info)
     const invKey = `${catalogColor}|${sizeName}`;
     const invForKey = inventoryMap.get(invKey);
     if (invForKey) {
       for (const [whCode, invData] of invForKey) {
-        // Merge inventory, preserving cap flags
         const existing = sizeEntry.inventory.get(whCode);
         if (existing) {
           sizeEntry.inventory.set(whCode, {
@@ -701,7 +683,6 @@ function aggregateProducts(
     }
   }
   
-  // Convert to StandardColor array
   const colors: StandardColor[] = Array.from(colorMap.entries()).map(([_, colorData]) => {
     const sizes: StandardSize[] = Array.from(colorData.sizesMap.values())
       .map((sizeData) => ({
@@ -732,17 +713,21 @@ function aggregateProducts(
   
   if (!firstProduct) return null;
   
-  // Calculate total inventory for logging
+  // Log pricing summary
+  let programPriceCount = 0;
+  let totalPrices = 0;
   let totalStock = 0;
   for (const color of colors) {
     for (const size of color.sizes) {
+      totalPrices++;
+      if (size.isProgramPrice) programPriceCount++;
       for (const inv of size.inventory) {
         totalStock += inv.quantity;
       }
     }
   }
   
-  console.log(`[provider-sanmar] Aggregated: ${colors.length} colors, total stock: ${totalStock}`);
+  console.log(`[provider-sanmar] Aggregated: ${colors.length} colors, ${programPriceCount}/${totalPrices} with program pricing, total stock: ${totalStock}`);
   
   return {
     styleNumber: firstProduct.style || firstProduct.styleCode || "",
@@ -794,15 +779,15 @@ serve(async (req) => {
 
     let productList: any[] = [];
     let matchedVariant = "";
+    let isFirstVariant = true;
 
-    // Try each variant until we get a match
+    // Get product info using getProductInfoByStyleColorSize
     for (const variant of variants) {
       try {
         console.log(`[provider-sanmar] Trying variant: ${variant}`);
         
         const soapRequest = buildProductInfoRequest(variant, customerNumber, username, password);
         
-        // 5-second timeout for product info
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
         
@@ -824,16 +809,16 @@ serve(async (req) => {
           continue;
         }
         
-        // Check for SOAP fault
         if (xmlText.includes("Fault") || xmlText.includes("fault")) {
           console.log(`[provider-sanmar] SOAP fault for variant ${variant}`);
           continue;
         }
         
-        const parsed = parseProductResponse(xmlText, parser);
+        // Log raw XML for first variant to debug pricing structure
+        const parsed = parseProductResponse(xmlText, parser, isFirstVariant);
+        isFirstVariant = false;
         
         if (parsed && parsed.length > 0) {
-          // STRICT FILTERING: Only keep products with exact style match
           const filtered = filterByExactStyle(parsed, variant);
           
           if (filtered.length > 0) {
@@ -863,7 +848,7 @@ serve(async (req) => {
       );
     }
 
-    // Fetch inventory for the matched style with timeout
+    // Fetch inventory
     console.log(`[provider-sanmar] Fetching inventory for: ${matchedVariant}`);
     
     let inventoryList: any[] = [];
@@ -871,7 +856,6 @@ serve(async (req) => {
     try {
       const invRequest = buildInventoryRequest(matchedVariant, customerNumber, username, password);
       
-      // 5-second timeout for inventory
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       
@@ -891,12 +875,6 @@ serve(async (req) => {
       if (invResponse.ok) {
         const invXml = await invResponse.text();
         console.log(`[provider-sanmar] Inventory XML length: ${invXml.length}`);
-        
-        // Log a sample of the XML for debugging inventory structure
-        if (invXml.length > 0 && invXml.length < 5000) {
-          console.log(`[provider-sanmar] Inventory XML sample: ${invXml.substring(0, 1000)}`);
-        }
-        
         inventoryList = parseInventoryResponse(invXml, parser);
         console.log(`[provider-sanmar] Got ${inventoryList.length} inventory items`);
       } else {
@@ -911,7 +889,7 @@ serve(async (req) => {
       }
     }
 
-    // Build inventory map with summed warehouse quantities
+    // Build inventory map
     const inventoryMap = buildInventoryMap(inventoryList);
 
     // Aggregate into normalized structure
@@ -935,7 +913,7 @@ serve(async (req) => {
     console.error("[provider-sanmar] Fatal error:", error);
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: error instanceof Error ? error.message : "Unknown error",
         product: null,
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
