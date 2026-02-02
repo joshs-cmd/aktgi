@@ -13,6 +13,7 @@ export interface StandardSize {
   order: number;       // For sorting
   price: number;
   inventory: StandardInventory[];
+  isProgramPrice?: boolean; // True when using benefit/contract pricing (SanMar)
 }
 
 export interface StandardColor {

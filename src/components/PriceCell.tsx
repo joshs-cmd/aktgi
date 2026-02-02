@@ -1,11 +1,15 @@
 import { cn } from "@/lib/utils";
 import { StandardInventory } from "@/types/sourcing";
 import { WarehouseTooltip } from "./WarehouseTooltip";
+import { Badge } from "@/components/ui/badge";
 
 interface PriceCellProps {
   price: number;
   inventory: StandardInventory[];
   isLowest: boolean;
+  showPrice?: boolean;
+  isProgramPrice?: boolean;
+  distributorCode?: string;
 }
 
 /**
@@ -21,8 +25,16 @@ function formatInventoryTotal(inventory: StandardInventory[]): string {
   return totalStock.toLocaleString();
 }
 
-export function PriceCell({ price, inventory, isLowest }: PriceCellProps) {
+export function PriceCell({ 
+  price, 
+  inventory, 
+  isLowest, 
+  showPrice = true,
+  isProgramPrice = false,
+  distributorCode
+}: PriceCellProps) {
   const stockDisplay = formatInventoryTotal(inventory);
+  const isSanMar = distributorCode === "sanmar";
 
   return (
     <WarehouseTooltip inventory={inventory}>
@@ -30,12 +42,25 @@ export function PriceCell({ price, inventory, isLowest }: PriceCellProps) {
         className={cn(
           "flex flex-col items-center justify-center rounded-md px-3 py-2 text-center transition-colors",
           "hover:bg-accent/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1",
-          isLowest && "bg-success/15 text-success"
+          isLowest && showPrice && "bg-success/15 text-success"
         )}
       >
-        <span className="text-sm font-semibold tabular-nums">
-          ${price.toFixed(2)}
-        </span>
+        {showPrice ? (
+          <div className="flex items-center gap-1">
+            <span className="text-sm font-semibold tabular-nums">
+              ${price.toFixed(2)}
+            </span>
+            {isProgramPrice && isSanMar && (
+              <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 bg-primary/10 text-primary">
+                Program
+              </Badge>
+            )}
+          </div>
+        ) : (
+          <span className="text-sm font-medium text-muted-foreground">
+            ••••
+          </span>
+        )}
         <span className="text-xs text-muted-foreground tabular-nums">
           {stockDisplay} in stock
         </span>
