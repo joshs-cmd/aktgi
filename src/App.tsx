@@ -7,22 +7,26 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import { Gatekeeper } from "@/components/Gatekeeper";
+import { UserRole, getAuthState, AUTH_SESSION_KEY, ROLE_SESSION_KEY } from "@/types/auth";
 
 const queryClient = new QueryClient();
 
 const App = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
     // Check if already authenticated in this session
-    const authenticated = sessionStorage.getItem("akt-authenticated") === "true";
-    setIsAuthenticated(authenticated);
+    const authState = getAuthState();
+    setIsAuthenticated(authState.isAuthenticated);
+    setUserRole(authState.role);
     setIsChecking(false);
   }, []);
 
-  const handleGatekeeperSuccess = () => {
+  const handleGatekeeperSuccess = (role: UserRole) => {
     setIsAuthenticated(true);
+    setUserRole(role);
   };
 
   // Show nothing while checking session
@@ -42,7 +46,7 @@ const App = () => {
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Index />} />
+            <Route path="/" element={<Index userRole={userRole} />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

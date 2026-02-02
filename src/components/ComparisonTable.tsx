@@ -15,9 +15,10 @@ import { cn } from "@/lib/utils";
 interface ComparisonTableProps {
   results: DistributorResult[];
   selectedColor?: string | null;
+  showPrices?: boolean;
 }
 
-export function ComparisonTable({ results, selectedColor }: ComparisonTableProps) {
+export function ComparisonTable({ results, selectedColor, showPrices = true }: ComparisonTableProps) {
   // Safely get sizes for a result based on selected color
   // Uses optional chaining throughout to prevent crashes
   const getSizesForResult = (result: DistributorResult): StandardSize[] => {
@@ -159,6 +160,9 @@ export function ComparisonTable({ results, selectedColor }: ComparisonTableProps
                         price={size.price}
                         inventory={size.inventory}
                         isLowest={isLowest}
+                        showPrice={showPrices}
+                        isProgramPrice={size.isProgramPrice}
+                        distributorCode={result.distributorCode}
                       />
                     </TableCell>
                   );

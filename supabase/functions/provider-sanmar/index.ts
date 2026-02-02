@@ -63,6 +63,7 @@ interface StandardSize {
   code: string;
   order: number;
   price: number;
+  isProgramPrice?: boolean;
   inventory: StandardInventory[];
 }
 
@@ -318,8 +319,11 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
         price.piecePrice || item.piecePrice ||
         price.customerPrice || item.customerPrice || "";
       
+      // Track if this is a program price (benefit/contract pricing)
+      const hasProgramPrice = Boolean(programPrice);
+      
       if (idx === 0) {
-        console.log(`[provider-sanmar] Final price: ${finalPrice} (program: ${programPrice || "none"})`);
+        console.log(`[provider-sanmar] Final price: ${finalPrice} (program: ${programPrice || "none"}, hasProgramPrice: ${hasProgramPrice})`);
       }
       
       return {
@@ -345,6 +349,7 @@ function parseProductResponse(xmlData: string, parser: XMLParser): any[] {
         pieceSalePrice: price.pieceSalePrice || item.pieceSalePrice || "",
         caseSalePrice: price.caseSalePrice || item.caseSalePrice || "",
         priceCode: price.priceCode || item.priceCode || "",
+        hasProgramPrice: hasProgramPrice,
         
         // Image info
         productImage: images.productImage || item.productImage || "",
@@ -622,6 +627,7 @@ function aggregateProducts(
       code: string;
       order: number;
       price: number;
+      isProgramPrice: boolean;
       inventory: Map<string, WarehouseInventory>;
     }>;
   }>();
@@ -652,15 +658,24 @@ function aggregateProducts(
       // CRITICAL: Use customerPrice which now contains program pricing
       const price = parseFloat(product.customerPrice || product.piecePrice || "0");
       
+      // Detect if this is a program price (benefit/contract pricing)
+      // Program price is identified when customerPrice differs from piecePrice
+      // or when we found benefitPrice/contractPrice in parsing
+      const isProgramPrice = product.hasProgramPrice === true || 
+        (product.customerPrice && product.piecePrice && 
+         parseFloat(product.customerPrice) !== parseFloat(product.piecePrice) &&
+         parseFloat(product.customerPrice) < parseFloat(product.piecePrice));
+      
       // Log first few price assignments to diagnose
       if (colorMap.size <= 2 && colorEntry.sizesMap.size === 0) {
-        console.log(`[provider-sanmar] Price for ${colorName}/${sizeName}: ${price} (raw: ${product.customerPrice}, piecePrice: ${product.piecePrice})`);
+        console.log(`[provider-sanmar] Price for ${colorName}/${sizeName}: ${price} (raw: ${product.customerPrice}, piecePrice: ${product.piecePrice}, isProgramPrice: ${isProgramPrice})`);
       }
       
       colorEntry.sizesMap.set(sizeName, {
         code: sizeName,
         order: getSizeOrder(sizeName),
         price: price,
+        isProgramPrice: isProgramPrice,
         inventory: new Map(),
       });
     }
@@ -693,6 +708,7 @@ function aggregateProducts(
         code: sizeData.code,
         order: sizeData.order,
         price: sizeData.price,
+        isProgramPrice: sizeData.isProgramPrice,
         inventory: Array.from(sizeData.inventory.entries())
           .map(([code, invData]) => ({
             warehouseCode: code,

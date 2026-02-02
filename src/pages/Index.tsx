@@ -6,8 +6,13 @@ import { useSourcingEngine } from "@/hooks/useSourcingEngine";
 import { AlertCircle, Search, Loader2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UserRole, canViewPrices } from "@/types/auth";
 
-const Index = () => {
+interface IndexProps {
+  userRole: UserRole | null;
+}
+
+const Index = ({ userRole }: IndexProps) => {
   const { isLoading, response, error, search } = useSourcingEngine();
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
 
@@ -142,14 +147,23 @@ const Index = () => {
               <ComparisonTable
                 results={response.results}
                 selectedColor={selectedColor}
+                showPrices={canViewPrices(userRole)}
               />
 
               {/* Legend */}
-              <div className="flex items-center gap-6 text-sm text-muted-foreground">
-                <div className="flex items-center gap-2">
-                  <div className="h-4 w-8 rounded bg-success/15" />
-                  <span>Lowest price in column</span>
-                </div>
+              <div className="flex flex-wrap items-center gap-6 text-sm text-muted-foreground">
+                {canViewPrices(userRole) && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-8 rounded bg-success/15" />
+                      <span>Lowest price in column</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-1 py-0.5 text-[10px] rounded bg-primary/10 text-primary">Program</span>
+                      <span>AKT contract pricing</span>
+                    </div>
+                  </>
+                )}
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">--</span>
                   <span>Not available / Pending connection</span>

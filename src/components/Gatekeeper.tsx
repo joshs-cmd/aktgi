@@ -3,9 +3,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { Lock, Loader2, AlertCircle } from "lucide-react";
+import { UserRole, setAuthState } from "@/types/auth";
 
 interface GatekeeperProps {
-  onSuccess: () => void;
+  onSuccess: (role: UserRole) => void;
 }
 
 export const Gatekeeper = ({ onSuccess }: GatekeeperProps) => {
@@ -38,10 +39,10 @@ export const Gatekeeper = ({ onSuccess }: GatekeeperProps) => {
         return;
       }
 
-      if (data?.valid) {
-        // Store in session storage so it persists during the session
-        sessionStorage.setItem("akt-authenticated", "true");
-        onSuccess();
+      if (data?.valid && data?.role) {
+        // Store role in session storage
+        setAuthState(data.role as UserRole);
+        onSuccess(data.role as UserRole);
       } else {
         setError("Incorrect password");
         setPassword("");
