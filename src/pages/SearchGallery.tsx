@@ -29,10 +29,11 @@ const SearchGallery = () => {
     search(query);
   };
 
-  const handleProductClick = (styleNumber: string, brand: string) => {
+  const handleProductClick = (styleNumber: string, brand: string, distributorSkuMap?: Record<string, string>) => {
     const q = lastQueryRef.current || searchParams.get("q") || styleNumber;
+    const skuMapParam = distributorSkuMap ? `&skuMap=${encodeURIComponent(JSON.stringify(distributorSkuMap))}` : "";
     navigate(
-      `/product?style=${encodeURIComponent(styleNumber)}&brand=${encodeURIComponent(brand)}&q=${encodeURIComponent(q)}`
+      `/product?style=${encodeURIComponent(styleNumber)}&brand=${encodeURIComponent(brand)}&q=${encodeURIComponent(q)}${skuMapParam}`
     );
   };
 
@@ -119,7 +120,7 @@ const SearchGallery = () => {
                     key={`${product.styleNumber}-${product.brand}-${idx}`}
                     product={product}
                     onClick={() =>
-                      handleProductClick(product.styleNumber, product.brand)
+                      handleProductClick(product.styleNumber, product.brand, product.distributorSkuMap)
                     }
                   />
                 ))}

@@ -8,7 +8,7 @@ export function useSourcingEngine() {
   const [response, setResponse] = useState<SourcingResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const search = useCallback(async (query: string) => {
+  const search = useCallback(async (query: string, options?: { distributorSkuMap?: Record<string, string>; brand?: string }) => {
     setIsLoading(true);
     setError(null);
 
@@ -23,7 +23,11 @@ export function useSourcingEngine() {
         const { data, error: fnError } = await supabase.functions.invoke(
           "sourcing-engine",
           {
-            body: { query },
+            body: {
+              query,
+              distributorSkuMap: options?.distributorSkuMap,
+              brand: options?.brand,
+            },
           }
         );
 

@@ -24,14 +24,26 @@ const ProductDetail = ({ userRole }: ProductDetailProps) => {
 
   const styleParam = searchParams.get("style") || "";
   const queryParam = searchParams.get("q") || styleParam;
+  const brandParam = searchParams.get("brand") || "";
+  const skuMapParam = searchParams.get("skuMap");
+  
+  // Parse distributor SKU map from URL
+  const distributorSkuMap = useMemo(() => {
+    if (!skuMapParam) return undefined;
+    try {
+      return JSON.parse(skuMapParam) as Record<string, string>;
+    } catch {
+      return undefined;
+    }
+  }, [skuMapParam]);
 
-  // Trigger full sourcing-engine on mount
+  // Trigger full sourcing-engine on mount with distributor-specific SKUs
   useEffect(() => {
     if (styleParam && !hasSearched.current) {
       hasSearched.current = true;
-      search(styleParam);
+      search(styleParam, { distributorSkuMap, brand: brandParam });
     }
-  }, [styleParam, search]);
+  }, [styleParam, search, distributorSkuMap, brandParam]);
 
   const handleBackToResults = () => {
     navigate(`/?q=${encodeURIComponent(queryParam)}`);
