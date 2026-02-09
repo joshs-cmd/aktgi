@@ -8,10 +8,11 @@ export interface CatalogProduct {
   imageUrl?: string;
   colorCount: number;
   totalInventory: number;
-  isProgramItem: boolean; // true if any size uses benefitPrice/contractPrice
-  distributorCode: string; // which distributor returned this
+  isProgramItem: boolean;
+  distributorCode: string;
   distributorName: string;
-  score: number; // weighted ranking score
+  distributorSources: string[]; // e.g. ["SanMar", "S&S Activewear"]
+  score: number;
 }
 
 export interface CatalogSearchResponse {

@@ -8,9 +8,11 @@ const corsHeaders = {
 };
 
 const SS_API_BASE = "https://api.ssactivewear.com/v2";
-const MAX_STYLES_TO_FETCH = 12;
+const MAX_STYLES_TO_FETCH = 20;
 
-interface CatalogProduct {
+// ---------- Types ----------
+
+interface RawCatalogProduct {
   styleNumber: string;
   name: string;
   brand: string;
@@ -21,6 +23,20 @@ interface CatalogProduct {
   isProgramItem: boolean;
   distributorCode: string;
   distributorName: string;
+}
+
+interface DedupedCatalogProduct {
+  styleNumber: string;
+  name: string;
+  brand: string;
+  category: string;
+  imageUrl?: string;
+  colorCount: number;
+  totalInventory: number;
+  isProgramItem: boolean;
+  distributorCode: string;
+  distributorName: string;
+  distributorSources: string[];
   score: number;
 }
 
@@ -47,36 +63,128 @@ interface SSProduct {
   warehouses?: Array<{ warehouseAbbr?: string; qty?: number }>;
 }
 
+// ---------- Root-SKU Matching ----------
+
 /**
- * Weighted ranking:
- * - 1000 pts for exact SKU match
- * - 500 pts if SKU is contained within search string or vice versa
- * - 10 pts per unique color
- * - 1 pt per 100 units of inventory
+ * Extract the "SKU part" from a query: last whitespace-separated token.
+ * e.g. "Bella Canvas 3001" → "3001", "5000" → "5000"
  */
+function extractQuerySKU(query: string): string {
+  const parts = query.trim().split(/\s+/);
+  return (parts.pop() || query.trim()).toUpperCase();
+}
+
+/**
+ * Check if a style number is a root-SKU match for the query SKU.
+ * Returns: "exact" | "root" | null
+ *
+ * Exact: styleNumber equals querySKU (case-insensitive)
+ * Root: querySKU appears at start/end of styleNumber, or separated by hyphen/space
+ *       e.g. querySKU="3001" matches "3001CVC", "3001T", "FF3001", "3001-B"
+ * null: no match (querySKU only found in description, not in the SKU itself)
+ */
+function matchRootSKU(styleNumber: string, querySKU: string): "exact" | "root" | null {
+  const sn = styleNumber.toUpperCase().trim();
+  const q = querySKU.toUpperCase().trim();
+
+  if (!q || !sn) return null;
+
+  // Exact match
+  if (sn === q) return "exact";
+
+  // Root match: query SKU appears as a contiguous part of the style number
+  // Must be at a word boundary (start/end of string, or adjacent to non-alphanumeric)
+  // Also matches prefixed/suffixed variants like 3001CVC, FF3001, 3001-B
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rootRegex = new RegExp(`(^|[^A-Z0-9])${escaped}([^0-9]|$)`, "i");
+
+  // Simple containment: the SKU number is in the style number
+  if (sn.startsWith(q) || sn.endsWith(q)) return "root";
+  if (rootRegex.test(sn)) return "root";
+
+  // Check hyphen-separated parts
+  const parts = sn.split(/[-\s]/);
+  for (const part of parts) {
+    if (part === q) return "root";
+  }
+
+  return null;
+}
+
+// ---------- Scoring ----------
+
 function calculateScore(
-  styleNumber: string,
-  query: string,
+  matchType: "exact" | "root",
   colorCount: number,
   totalInventory: number
 ): number {
-  const nq = query.toUpperCase().trim();
-  const ns = styleNumber.toUpperCase().trim();
-  const queryLastPart = nq.split(/\s+/).pop() || nq;
-
-  let score = 0;
-
-  if (ns === nq || ns === queryLastPart) {
-    score += 1000;
-  } else if (ns.includes(queryLastPart) || queryLastPart.includes(ns)) {
-    score += 500;
-  }
-
+  let score = matchType === "exact" ? 2000 : 1000;
   score += colorCount * 10;
   score += Math.floor(totalInventory / 100);
-
   return score;
 }
+
+// ---------- Deduplication ----------
+
+function deduplicateProducts(
+  products: RawCatalogProduct[],
+  querySKU: string
+): DedupedCatalogProduct[] {
+  const groups = new Map<string, {
+    items: RawCatalogProduct[];
+    matchType: "exact" | "root";
+  }>();
+
+  for (const p of products) {
+    const matchType = matchRootSKU(p.styleNumber, querySKU);
+    if (!matchType) continue; // Filter out non-matching results
+
+    // Group key: normalized brand + style number
+    const key = `${p.brand.toUpperCase().trim()}::${p.styleNumber.toUpperCase().trim()}`;
+
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(p);
+      // Promote to exact if any item is exact
+      if (matchType === "exact") existing.matchType = "exact";
+    } else {
+      groups.set(key, { items: [p], matchType });
+    }
+  }
+
+  const deduped: DedupedCatalogProduct[] = [];
+
+  for (const [, group] of groups) {
+    const primary = group.items[0];
+    const sources = [...new Set(group.items.map((i) => i.distributorName))];
+    const totalInventory = group.items.reduce((sum, i) => sum + i.totalInventory, 0);
+    const colorCount = Math.max(...group.items.map((i) => i.colorCount));
+    const isProgramItem = group.items.some((i) => i.isProgramItem);
+
+    const score = calculateScore(group.matchType, colorCount, totalInventory);
+
+    deduped.push({
+      styleNumber: primary.styleNumber,
+      name: primary.name,
+      brand: primary.brand,
+      category: primary.category,
+      imageUrl: primary.imageUrl || group.items.find((i) => i.imageUrl)?.imageUrl,
+      colorCount,
+      totalInventory,
+      isProgramItem,
+      distributorCode: primary.distributorCode,
+      distributorName: sources.join(", "),
+      distributorSources: sources,
+      score,
+    });
+  }
+
+  // Sort: score descending
+  deduped.sort((a, b) => b.score - a.score);
+  return deduped;
+}
+
+// ---------- Image helpers ----------
 
 function buildImageUrl(relativePath: string | undefined): string | null {
   if (!relativePath) return null;
@@ -85,31 +193,25 @@ function buildImageUrl(relativePath: string | undefined): string | null {
   return `https://www.ssactivewear.com/${largePath}`;
 }
 
-/**
- * Fetch ALL matching styles from S&S Activewear styles search,
- * then fetch products for each to get color counts and inventory.
- */
+// ---------- S&S Activewear ----------
+
 async function fetchSSActivewearCatalog(
   query: string,
   authHeader: string
-): Promise<CatalogProduct[]> {
+): Promise<RawCatalogProduct[]> {
   const fetchOpts = {
     headers: { Authorization: authHeader, Accept: "application/json" },
   };
 
-  // Generate query variants for fuzzy matching
   const variants = [query.trim()];
   const lower = query.trim().toLowerCase();
-  // letters+numbers without space → add spaced version
   const m = lower.match(/^([a-z]+)(\d+)$/);
   if (m) variants.push(`${m[1]} ${m[2]}`);
-  // if has space, also try last part alone
   if (query.includes(" ")) {
     const parts = query.trim().split(/\s+/);
     variants.push(parts[parts.length - 1]);
   }
 
-  // 1) Search styles endpoint to get ALL matching styles
   let allStyles: SSStyle[] = [];
   for (const variant of variants) {
     try {
@@ -120,7 +222,6 @@ async function fetchSSActivewearCatalog(
         const data: SSStyle[] = await res.json();
         if (Array.isArray(data) && data.length > 0) {
           console.log(`[catalog-search] S&S found ${data.length} styles for "${variant}"`);
-          // Merge unique styles by styleID
           for (const s of data) {
             if (s.styleID && !allStyles.find((x) => x.styleID === s.styleID)) {
               allStyles.push(s);
@@ -140,13 +241,19 @@ async function fetchSSActivewearCatalog(
     return [];
   }
 
-  // Limit to top N styles to avoid too many API calls
-  const stylesToFetch = allStyles.slice(0, MAX_STYLES_TO_FETCH);
-  console.log(`[catalog-search] S&S: fetching products for ${stylesToFetch.length} styles`);
+  // Pre-filter styles by root-SKU match before fetching products
+  const querySKU = extractQuerySKU(query);
+  const matchedStyles = allStyles.filter((s) => {
+    const sn = s.styleName || "";
+    return matchRootSKU(sn, querySKU) !== null;
+  });
 
-  // 2) Fetch products for each style in parallel to get color/inventory details
+  console.log(`[catalog-search] S&S: ${matchedStyles.length}/${allStyles.length} styles pass root-SKU filter`);
+
+  const stylesToFetch = matchedStyles.slice(0, MAX_STYLES_TO_FETCH);
+
   const results = await Promise.allSettled(
-    stylesToFetch.map(async (style): Promise<CatalogProduct | null> => {
+    stylesToFetch.map(async (style): Promise<RawCatalogProduct | null> => {
       if (!style.styleID) return null;
 
       try {
@@ -154,7 +261,6 @@ async function fetchSSActivewearCatalog(
         const res = await fetch(url, fetchOpts);
         if (!res.ok) {
           await res.text();
-          // Return a card with just style info, no color/inventory detail
           return {
             styleNumber: style.styleName || String(style.styleID),
             name: style.title || style.styleName || "Unknown",
@@ -166,14 +272,12 @@ async function fetchSSActivewearCatalog(
             isProgramItem: false,
             distributorCode: "ss-activewear",
             distributorName: "S&S Activewear",
-            score: 0,
           };
         }
 
         const products: SSProduct[] = await res.json();
         if (!Array.isArray(products) || products.length === 0) return null;
 
-        // Count unique colors
         const colorNames = new Set<string>();
         let totalInventory = 0;
         let imageUrl: string | null = null;
@@ -191,8 +295,6 @@ async function fetchSSActivewearCatalog(
         }
 
         const styleNumber = style.styleName || products[0].styleName || String(style.styleID);
-        const colorCount = colorNames.size;
-        const score = calculateScore(styleNumber, query, colorCount, totalInventory);
 
         return {
           styleNumber,
@@ -200,12 +302,11 @@ async function fetchSSActivewearCatalog(
           brand: style.brandName || products[0].brandName || "",
           category: style.baseCategory || products[0].baseCategory || "",
           imageUrl: imageUrl || buildImageUrl(style.styleImage) || undefined,
-          colorCount,
+          colorCount: colorNames.size,
           totalInventory,
           isProgramItem: false,
           distributorCode: "ss-activewear",
           distributorName: "S&S Activewear",
-          score,
         };
       } catch (err) {
         console.error(`[catalog-search] S&S products error for style ${style.styleID}:`, err);
@@ -215,18 +316,17 @@ async function fetchSSActivewearCatalog(
   );
 
   return results
-    .filter((r): r is PromiseFulfilledResult<CatalogProduct | null> => r.status === "fulfilled")
+    .filter((r): r is PromiseFulfilledResult<RawCatalogProduct | null> => r.status === "fulfilled")
     .map((r) => r.value)
-    .filter((p): p is CatalogProduct => p !== null);
+    .filter((p): p is RawCatalogProduct => p !== null);
 }
 
-/**
- * Fetch SanMar results via the provider function (returns single product).
- */
+// ---------- SanMar ----------
+
 async function fetchSanMarCatalog(
   query: string,
   supabase: ReturnType<typeof createClient>
-): Promise<CatalogProduct[]> {
+): Promise<RawCatalogProduct[]> {
   try {
     const { data, error } = await supabase.functions.invoke("provider-sanmar", {
       body: { query, distributorId: "sanmar-001" },
@@ -265,8 +365,6 @@ async function fetchSanMarCatalog(
       }
     }
 
-    const score = calculateScore(styleNumber, query, colorCount, totalInventory);
-
     return [{
       styleNumber,
       name: String(product.name ?? ""),
@@ -278,13 +376,14 @@ async function fetchSanMarCatalog(
       isProgramItem,
       distributorCode: "sanmar",
       distributorName: "SanMar",
-      score,
     }];
   } catch (err) {
     console.error("[catalog-search] SanMar exception:", err);
     return [];
   }
 }
+
+// ---------- Handler ----------
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -307,14 +406,12 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // S&S credentials for direct API calls
     const ssUsername = Deno.env.get("SS_ACTIVEWEAR_USERNAME");
     const ssPassword = Deno.env.get("SS_ACTIVEWEAR_PASSWORD");
     const ssAuthHeader = ssUsername && ssPassword
       ? "Basic " + btoa(`${ssUsername}:${ssPassword}`)
       : "";
 
-    // Fan out: S&S (direct, multi-result) + SanMar (via provider, single result) in parallel
     const [ssResults, sanmarResults] = await Promise.all([
       ssAuthHeader
         ? fetchSSActivewearCatalog(query, ssAuthHeader)
@@ -322,23 +419,20 @@ serve(async (req) => {
       fetchSanMarCatalog(query, supabase),
     ]);
 
-    console.log(`[catalog-search] S&S returned ${ssResults.length} products, SanMar returned ${sanmarResults.length}`);
+    console.log(`[catalog-search] S&S returned ${ssResults.length}, SanMar returned ${sanmarResults.length}`);
 
-    // Combine all results
-    const allProducts = [...ssResults, ...sanmarResults];
+    // Combine raw results, then deduplicate + filter + score
+    const allRaw = [...ssResults, ...sanmarResults];
+    const querySKU = extractQuerySKU(query);
+    const dedupedProducts = deduplicateProducts(allRaw, querySKU);
 
-    // Sort by score descending
-    allProducts.sort((a, b) => b.score - a.score);
+    console.log(`[catalog-search] After dedup/filter: ${dedupedProducts.length} products`);
 
-    console.log(`[catalog-search] Returning ${allProducts.length} total catalog products`);
-
-    const response = {
+    return new Response(JSON.stringify({
       query,
-      products: allProducts,
+      products: dedupedProducts,
       searchedAt: new Date().toISOString(),
-    };
-
-    return new Response(JSON.stringify(response), {
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
