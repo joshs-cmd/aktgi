@@ -38,6 +38,7 @@ interface DedupedCatalogProduct {
   distributorCode: string;
   distributorName: string;
   distributorSources: string[];
+  distributorSkuMap: Record<string, string>; // e.g. { sanmar: "NL3600", "ss-activewear": "3600" }
   score: number;
 }
 
@@ -252,6 +253,14 @@ function deduplicateProducts(
     const colorCount = Math.max(...group.items.map((i) => i.colorCount));
     const isProgramItem = group.items.some((i) => i.isProgramItem);
 
+    // Build distributorSkuMap: { "sanmar": "NL3600", "ss-activewear": "3600" }
+    const distributorSkuMap: Record<string, string> = {};
+    for (const item of group.items) {
+      if (!distributorSkuMap[item.distributorCode]) {
+        distributorSkuMap[item.distributorCode] = item.styleNumber;
+      }
+    }
+
     const score = calculateScore(group.matchType, colorCount, totalInventory);
 
     deduped.push({
@@ -267,6 +276,7 @@ function deduplicateProducts(
       distributorCode: primary.distributorCode,
       distributorName: sources.join(", "),
       distributorSources: sources,
+      distributorSkuMap,
       score,
     });
   }
@@ -353,7 +363,7 @@ function generateSearchVariants(query: string): string[] {
 // ---------- S&S Activewear ----------
 
 /** Common style suffixes for family expansion */
-const FAMILY_SUFFIXES = ["CVC", "T", "B", "Y", "W", "L", "C", "P", "H", "LS", "V", "FL"];
+const FAMILY_SUFFIXES = ["CVC", "T", "B", "Y", "W", "L", "C", "P", "H", "LS", "V", "FL", "SW", "VC", "BB", "HVY", "YS"];
 
 async function fetchSSStylesBySearch(
   variants: string[],
@@ -441,11 +451,17 @@ async function fetchSSFamilyStyles(
 
         console.log(`[catalog-search] S&S brand "${brand}": ${allBrandStyles.length} total styles`);
 
-        // Filter for styles containing the query SKU
+        // Filter for styles containing the query SKU using fuzzy regex
+        // For numeric queries like "3600", match any SKU starting with those digits: 3600, 3600SW, 3600LS, etc.
         const q = querySKU.toUpperCase();
+        const isNumeric = /^\d+$/.test(q);
+        const fuzzyRegex = isNumeric ? new RegExp(`^${q}[A-Z0-9]*$`) : null;
+        
         const familyStyles = allBrandStyles.filter((s) => {
           if (!s.styleID || existingIds.has(s.styleID)) return false;
           const sn = normalizeSKU(s.styleName || "");
+          // Fuzzy: starts-with for numeric queries, contains for alphanumeric
+          if (fuzzyRegex) return fuzzyRegex.test(sn);
           return sn.includes(q);
         });
 

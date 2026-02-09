@@ -7,6 +7,31 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+/** Brand-aware prefix mapping for fallback retries */
+const PREFIX_BRAND_MAP: Record<string, string[]> = {
+  "BC":  ["BELLA+CANVAS", "BELLA + CANVAS", "BELLA CANVAS", "BELLACANVAS"],
+  "NL":  ["NEXT LEVEL", "NEXT LEVEL APPAREL", "NEXTLEVEL"],
+  "G":   ["GILDAN"],
+  "PC":  ["PORT & COMPANY", "PORT AND COMPANY", "PORT COMPANY"],
+  "CP":  ["CORNERSTONE", "CORNER STONE"],
+  "DT":  ["DISTRICT", "DISTRICT MADE"],
+  "J":   ["JERZEES"],
+  "H":   ["HANES"],
+  "CC":  ["COMFORT COLORS", "COMFORTCOLORS"],
+  "SS":  ["SPORT-TEK", "SPORT TEK"],
+};
+
+/** Get the appropriate vendor prefix for a brand */
+function getPrefixForBrand(brand: string): string | null {
+  const upper = brand.toUpperCase().trim();
+  for (const [prefix, brands] of Object.entries(PREFIX_BRAND_MAP)) {
+    if (brands.some((b) => upper.includes(b) || b.includes(upper))) {
+      return prefix;
+    }
+  }
+  return null;
+}
+
 interface DistributorResult {
   distributorId: string;
   distributorCode: string;
@@ -30,7 +55,10 @@ serve(async (req) => {
   }
 
   try {
-    const { query } = await req.json();
+    const body = await req.json();
+    const query: string = body.query;
+    const distributorSkuMap: Record<string, string> | undefined = body.distributorSkuMap;
+    const brand: string | undefined = body.brand;
 
     if (!query || typeof query !== "string") {
       return new Response(
@@ -43,6 +71,9 @@ serve(async (req) => {
     }
 
     console.log(`[sourcing-engine] Searching for: ${query}`);
+    if (distributorSkuMap) {
+      console.log(`[sourcing-engine] SKU map provided:`, JSON.stringify(distributorSkuMap));
+    }
 
     // Initialize Supabase client
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -50,7 +81,6 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Hardcoded distributor roster (5 distributors)
-    // This ensures consistent UI regardless of database state
     const distributors = [
       { id: "sanmar-001", code: "sanmar", name: "SanMar", is_active: true },
       { id: "ss-activewear-001", code: "ss-activewear", name: "S&S Activewear", is_active: true },
@@ -65,7 +95,6 @@ serve(async (req) => {
     const results: DistributorResult[] = await Promise.all(
       (distributors || []).map(async (distributor) => {
         if (!distributor.is_active) {
-          // Return pending status for inactive distributors
           return {
             distributorId: distributor.id,
             distributorCode: distributor.code,
@@ -76,25 +105,65 @@ serve(async (req) => {
           };
         }
 
+        // Determine the SKU to use for this distributor
+        const originalSku = distributorSkuMap?.[distributor.code];
+        const queryForProvider = originalSku || query;
+
         try {
-          // Call the specific provider function
           const providerFnName = `provider-${distributor.code}`;
-          console.log(`[sourcing-engine] Calling ${providerFnName} for query: ${query}`);
+          console.log(`[sourcing-engine] Calling ${providerFnName} with SKU: "${queryForProvider}" (original: ${originalSku ? "yes" : "no, using query"})`);
 
           const { data, error } = await supabase.functions.invoke(providerFnName, {
-            body: { query, distributorId: distributor.id },
+            body: { query: queryForProvider, distributorId: distributor.id },
           });
 
-          if (error) {
-            console.error(`[sourcing-engine] Error from ${providerFnName}:`, error);
+          if (error || !data?.product) {
+            // PREFIX FALLBACK: If the call failed and we have a brand, retry with prefix
+            if (brand && !originalSku) {
+              const prefix = getPrefixForBrand(brand);
+              if (prefix) {
+                const prefixedQuery = `${prefix}${query}`;
+                console.log(`[sourcing-engine] Retrying ${providerFnName} with prefix fallback: "${prefixedQuery}"`);
+                
+                const { data: retryData, error: retryError } = await supabase.functions.invoke(providerFnName, {
+                  body: { query: prefixedQuery, distributorId: distributor.id },
+                });
+
+                if (!retryError && retryData?.product) {
+                  console.log(`[sourcing-engine] Prefix fallback succeeded for ${distributor.name}`);
+                  return {
+                    distributorId: distributor.id,
+                    distributorCode: distributor.code,
+                    distributorName: distributor.name,
+                    status: "success" as const,
+                    product: retryData.product,
+                    lastSynced: new Date().toISOString(),
+                  };
+                }
+              }
+            }
+
+            if (error) {
+              console.error(`[sourcing-engine] Error from ${providerFnName}:`, error);
+              return {
+                distributorId: distributor.id,
+                distributorCode: distributor.code,
+                distributorName: distributor.name,
+                status: "error" as const,
+                product: null,
+                lastSynced: null,
+                errorMessage: error.message,
+              };
+            }
+
+            // No product found (not an error, just empty)
             return {
               distributorId: distributor.id,
               distributorCode: distributor.code,
               distributorName: distributor.name,
-              status: "error" as const,
+              status: "success" as const,
               product: null,
-              lastSynced: null,
-              errorMessage: error.message,
+              lastSynced: new Date().toISOString(),
             };
           }
 
@@ -127,21 +196,18 @@ serve(async (req) => {
     const normalizedQuery = query.toUpperCase().trim();
     const queryLastPart = normalizedQuery.split(/\s+/).pop() || normalizedQuery;
     
-    // Priority brands for ranking (lower index = higher priority)
     const PRIORITY_BRANDS = [
       "GILDAN", "PORT & COMPANY", "PORT AND COMPANY", "BELLA + CANVAS", 
       "BELLA+CANVAS", "BELLACANVAS", "NEXT LEVEL", "NEXT LEVEL APPAREL",
       "HANES", "JERZEES", "FRUIT OF THE LOOM", "CHAMPION", "AMERICAN APPAREL"
     ];
     
-    // Helper to extract fields from product (type-safe)
     const getProductField = (product: unknown, field: string): string => {
       if (!product || typeof product !== "object") return "";
       const p = product as Record<string, unknown>;
       return String(p[field] ?? "").toUpperCase().trim();
     };
     
-    // Helper to calculate total inventory for a product
     const getTotalInventory = (product: unknown): number => {
       if (!product || typeof product !== "object") return 0;
       const p = product as Record<string, unknown>;
@@ -164,13 +230,11 @@ serve(async (req) => {
       return total;
     };
     
-    // Get brand priority (lower = better, 999 = unknown)
-    const getBrandPriority = (brand: string): number => {
-      const idx = PRIORITY_BRANDS.findIndex(pb => brand.includes(pb) || pb.includes(brand));
+    const getBrandPriority = (b: string): number => {
+      const idx = PRIORITY_BRANDS.findIndex(pb => b.includes(pb) || pb.includes(b));
       return idx !== -1 ? idx : 999;
     };
     
-    // Score each result with a product
     interface ScoredResult {
       result: DistributorResult;
       styleNumber: string;
@@ -184,10 +248,9 @@ serve(async (req) => {
       .filter(r => r.status === "success" && r.product)
       .map(r => {
         const styleNumber = getProductField(r.product, "styleNumber");
-        const brand = getProductField(r.product, "brand");
+        const b = getProductField(r.product, "brand");
         const inventory = getTotalInventory(r.product);
         
-        // Tier 1: Exact SKU match, Tier 2: Partial match, Tier 3: Other
         let tier = 3;
         if (styleNumber === normalizedQuery || styleNumber === queryLastPart) {
           tier = 1;
@@ -198,21 +261,19 @@ serve(async (req) => {
         return { 
           result: r, 
           styleNumber, 
-          brand, 
+          brand: b, 
           tier, 
-          brandPriority: getBrandPriority(brand), 
+          brandPriority: getBrandPriority(b), 
           inventory 
         };
       });
     
-    // Sort to find the ONE winner: tier ASC, brandPriority ASC, inventory DESC
     scoredResults.sort((a, b) => {
       if (a.tier !== b.tier) return a.tier - b.tier;
       if (a.brandPriority !== b.brandPriority) return a.brandPriority - b.brandPriority;
       return b.inventory - a.inventory;
     });
     
-    // The winner is the first result after sorting
     const winner = scoredResults[0];
     const winnerKey = winner ? `${winner.styleNumber}|${winner.brand}` : null;
     
@@ -221,20 +282,16 @@ serve(async (req) => {
       console.log(`[sourcing-engine] Winner details: tier=${winner.tier}, brand=${winner.brand}, brandPri=${winner.brandPriority}, inv=${winner.inventory}`);
     }
     
-    // Build final results: keep only products matching the winner, null out others
     const finalResults: DistributorResult[] = results.map(r => {
-      // Keep pending/error results as-is
       if (r.status !== "success" || !r.product) {
         return r;
       }
       
       const styleNumber = getProductField(r.product, "styleNumber");
-      const brand = getProductField(r.product, "brand");
-      const key = `${styleNumber}|${brand}`;
+      const b = getProductField(r.product, "brand");
+      const key = `${styleNumber}|${b}`;
       
-      // If this result matches the winner, keep it
       if (winnerKey && key === winnerKey) {
-        // Sanitize the product fields
         const p = r.product as Record<string, unknown>;
         return {
           ...r,
@@ -248,8 +305,7 @@ serve(async (req) => {
         };
       }
       
-      // Otherwise, null out the product (distributor still shows in table)
-      console.log(`[sourcing-engine] Discarding non-winner: ${styleNumber} by ${brand} (${r.distributorName})`);
+      console.log(`[sourcing-engine] Discarding non-winner: ${styleNumber} by ${b} (${r.distributorName})`);
       return { ...r, product: null };
     });
 
