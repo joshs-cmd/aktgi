@@ -290,18 +290,13 @@ function generateSearchVariants(query: string): string[] {
 
 // ---------- S&S Activewear ----------
 
-async function fetchSSActivewearCatalog(
-  query: string,
-  authHeader: string
-): Promise<RawCatalogProduct[]> {
-  const fetchOpts = {
-    headers: { Authorization: authHeader, Accept: "application/json" },
-  };
+/** Common style suffixes for family expansion */
+const FAMILY_SUFFIXES = ["CVC", "T", "B", "Y", "W", "L", "C", "P", "H", "LS", "V", "FL"];
 
-  const variants = generateSearchVariants(query);
-  console.log(`[catalog-search] S&S multi-cast: ${variants.length} search variants`);
-
-  // Fire all variant searches in parallel for speed
+async function fetchSSStylesBySearch(
+  variants: string[],
+  fetchOpts: RequestInit
+): Promise<SSStyle[]> {
   const styleSearchResults = await Promise.allSettled(
     variants.map(async (variant) => {
       try {
@@ -323,7 +318,6 @@ async function fetchSSActivewearCatalog(
     })
   );
 
-  // Consolidate and deduplicate styles by styleID
   const seenIds = new Set<number>();
   const allStyles: SSStyle[] = [];
   for (const result of styleSearchResults) {
@@ -336,18 +330,80 @@ async function fetchSSActivewearCatalog(
       }
     }
   }
+  return allStyles;
+}
 
-  if (allStyles.length === 0) {
-    console.log("[catalog-search] S&S: no styles found across all variants");
-    return [];
+/**
+ * Phase 2: Brand-level family fetch.
+ * After initial search identifies the primary brand, fetch ALL styles for that brand
+ * and filter for ones whose styleName contains the query SKU.
+ */
+async function fetchSSFamilyStyles(
+  primaryBrand: string,
+  querySKU: string,
+  existingIds: Set<number>,
+  fetchOpts: RequestInit
+): Promise<SSStyle[]> {
+  if (!primaryBrand) return [];
+
+  // Try multiple brand name formats (S&S API is picky about encoding)
+  const brandVariants = [
+    primaryBrand,
+    primaryBrand.replace(/\+/g, "and"),
+    primaryBrand.replace(/&/g, "and"),
+    primaryBrand.replace(/\s*\+\s*/g, " "),
+  ];
+  // Dedupe
+  const uniqueBrands = [...new Set(brandVariants)];
+
+  for (const brand of uniqueBrands) {
+    try {
+      // S&S API: /v2/styles/{BrandName} returns all styles for a brand
+      // Also try search endpoint as fallback
+      const urls = [
+        `${SS_API_BASE}/styles/${encodeURIComponent(brand)}`,
+        `${SS_API_BASE}/styles/?search=${encodeURIComponent(brand)}`,
+      ];
+
+      for (const url of urls) {
+        console.log(`[catalog-search] S&S family fetch: ${url}`);
+        const res = await fetch(url, fetchOpts);
+
+        if (!res.ok) {
+          await res.text();
+          continue;
+        }
+
+        const allBrandStyles: SSStyle[] = await res.json();
+        if (!Array.isArray(allBrandStyles) || allBrandStyles.length === 0) continue;
+
+        console.log(`[catalog-search] S&S brand "${brand}": ${allBrandStyles.length} total styles`);
+
+        // Filter for styles containing the query SKU
+        const q = querySKU.toUpperCase();
+        const familyStyles = allBrandStyles.filter((s) => {
+          if (!s.styleID || existingIds.has(s.styleID)) return false;
+          const sn = normalizeSKU(s.styleName || "");
+          return sn.includes(q);
+        });
+
+        console.log(`[catalog-search] S&S family filter: ${familyStyles.length} new styles contain "${querySKU}"`);
+        return familyStyles;
+      }
+    } catch (err) {
+      console.error(`[catalog-search] S&S family fetch error for "${brand}":`, err);
+    }
   }
 
-  console.log(`[catalog-search] S&S: ${allStyles.length} unique styles found, fetching products for ${Math.min(allStyles.length, MAX_STYLES_TO_FETCH)}`);
+  return [];
+}
 
-  const stylesToFetch = allStyles.slice(0, MAX_STYLES_TO_FETCH);
-
+async function fetchSSProductDetails(
+  styles: SSStyle[],
+  fetchOpts: RequestInit
+): Promise<RawCatalogProduct[]> {
   const results = await Promise.allSettled(
-    stylesToFetch.map(async (style): Promise<RawCatalogProduct | null> => {
+    styles.map(async (style): Promise<RawCatalogProduct | null> => {
       if (!style.styleID) return null;
 
       try {
@@ -415,6 +471,47 @@ async function fetchSSActivewearCatalog(
     .filter((p): p is RawCatalogProduct => p !== null);
 }
 
+async function fetchSSActivewearCatalog(
+  query: string,
+  authHeader: string
+): Promise<RawCatalogProduct[]> {
+  const fetchOpts = {
+    headers: { Authorization: authHeader, Accept: "application/json" },
+  };
+
+  const querySKU = extractQuerySKU(query);
+  const variants = generateSearchVariants(query);
+  console.log(`[catalog-search] S&S multi-cast: ${variants.length} search variants`);
+
+  // Phase 1: Multi-cast search
+  const phase1Styles = await fetchSSStylesBySearch(variants, fetchOpts);
+
+  if (phase1Styles.length === 0) {
+    console.log("[catalog-search] S&S: no styles found across all variants");
+    return [];
+  }
+
+  console.log(`[catalog-search] S&S Phase 1: ${phase1Styles.length} unique styles from search`);
+
+  // Phase 2: Brand-level family fetch
+  // Identify the primary brand from the best-matching style
+  const primaryBrand = phase1Styles.find((s) => {
+    const sn = normalizeSKU(s.styleName || "");
+    return sn === querySKU.toUpperCase() || sn.startsWith(querySKU.toUpperCase());
+  })?.brandName || phase1Styles[0]?.brandName || "";
+
+  const existingIds = new Set(phase1Styles.map((s) => s.styleID!).filter(Boolean));
+  const familyStyles = await fetchSSFamilyStyles(primaryBrand, querySKU, existingIds, fetchOpts);
+
+  // Combine and limit
+  const allStyles = [...phase1Styles, ...familyStyles];
+  const stylesToFetch = allStyles.slice(0, MAX_STYLES_TO_FETCH);
+
+  console.log(`[catalog-search] S&S total: ${allStyles.length} styles (Phase1: ${phase1Styles.length}, Family: ${familyStyles.length}), fetching ${stylesToFetch.length}`);
+
+  return fetchSSProductDetails(stylesToFetch, fetchOpts);
+}
+
 // ---------- SanMar (with fallback variants) ----------
 
 function generateSanMarVariants(query: string): string[] {
@@ -430,11 +527,18 @@ function generateSanMarVariants(query: string): string[] {
     variants.add(normalizedSKU);
   }
   
-  // Add common SanMar-style prefixed versions
   const isNumericCore = /^\d+[A-Z]*$/i.test(normalizedSKU);
   if (isNumericCore) {
+    // Add common SanMar-style prefixed versions
     for (const prefix of ["BC", "PC", "G", "NL", "DT", "J"]) {
       variants.add(`${prefix}${normalizedSKU}`);
+    }
+    
+    // Add family suffix variants (3001T, 3001B, 3001CVC, etc.)
+    for (const suffix of FAMILY_SUFFIXES) {
+      variants.add(`${normalizedSKU}${suffix}`);
+      // Also try with brand prefix: BC3001CVC, etc.
+      variants.add(`BC${normalizedSKU}${suffix}`);
     }
   }
   
@@ -496,33 +600,37 @@ async function fetchSanMarCatalog(
   supabase: ReturnType<typeof createClient>
 ): Promise<RawCatalogProduct[]> {
   const variants = generateSanMarVariants(query);
-  console.log(`[catalog-search] SanMar multi-cast: ${variants.length} variants: ${variants.join(", ")}`);
+  console.log(`[catalog-search] SanMar multi-cast: ${variants.length} variants`);
   
   const allProducts: RawCatalogProduct[] = [];
   const seenStyles = new Set<string>();
   
-  // Try variants in parallel
-  const results = await Promise.allSettled(
-    variants.map(async (variant) => {
-      try {
-        const { data, error } = await supabase.functions.invoke("provider-sanmar", {
-          body: { query: variant, distributorId: "sanmar-001" },
-        });
-        if (error || !data?.product) return null;
-        return parseSanMarProduct(data.product as Record<string, unknown>);
-      } catch (err) {
-        console.error(`[catalog-search] SanMar error for "${variant}":`, err);
-        return null;
-      }
-    })
-  );
-  
-  for (const result of results) {
-    if (result.status === "fulfilled" && result.value) {
-      const key = `${result.value.brand}::${normalizeSKU(result.value.styleNumber)}`;
-      if (!seenStyles.has(key)) {
-        seenStyles.add(key);
-        allProducts.push(result.value);
+  // Batch into groups of 10 to avoid overwhelming the SOAP API
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < variants.length; i += BATCH_SIZE) {
+    const batch = variants.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (variant) => {
+        try {
+          const { data, error } = await supabase.functions.invoke("provider-sanmar", {
+            body: { query: variant, distributorId: "sanmar-001" },
+          });
+          if (error || !data?.product) return null;
+          return parseSanMarProduct(data.product as Record<string, unknown>);
+        } catch (err) {
+          // Silently skip failed variants
+          return null;
+        }
+      })
+    );
+    
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value) {
+        const key = `${result.value.brand}::${normalizeSKU(result.value.styleNumber)}`;
+        if (!seenStyles.has(key)) {
+          seenStyles.add(key);
+          allProducts.push(result.value);
+        }
       }
     }
   }
