@@ -2,13 +2,42 @@ import { CatalogProduct } from "@/types/catalog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Package, Palette, Boxes, Store } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 
 interface ProductCardProps {
   product: CatalogProduct;
   onClick: () => void;
 }
 
+/**
+ * Highlight the query SKU within the style number.
+ * e.g. styleNumber="3001CVC", query="3001" → <span class="text-primary font-bold">3001</span>CVC
+ */
+function HighlightedSKU({ styleNumber, query }: { styleNumber: string; query: string }) {
+  if (!query) return <>{styleNumber}</>;
+
+  const querySKU = query.trim().split(/\s+/).pop()?.toUpperCase() || "";
+  const upperStyle = styleNumber.toUpperCase();
+  const idx = upperStyle.indexOf(querySKU);
+
+  if (!querySKU || idx === -1) return <>{styleNumber}</>;
+
+  const before = styleNumber.slice(0, idx);
+  const match = styleNumber.slice(idx, idx + querySKU.length);
+  const after = styleNumber.slice(idx + querySKU.length);
+
+  return (
+    <>
+      {before}
+      <span className="text-primary">{match}</span>
+      {after}
+    </>
+  );
+}
+
 export function ProductCard({ product, onClick }: ProductCardProps) {
+  const [searchParams] = useSearchParams();
+  const query = searchParams.get("q") || "";
   const formattedInventory = product.totalInventory.toLocaleString();
   const sources = product.distributorSources ?? [product.distributorName];
 
@@ -53,9 +82,9 @@ export function ProductCard({ product, onClick }: ProductCardProps) {
             {product.brand}
           </p>
 
-          {/* Style Number + Name */}
+          {/* Style Number with highlight */}
           <h3 className="text-sm font-semibold leading-tight mt-0.5 truncate">
-            {product.styleNumber}
+            <HighlightedSKU styleNumber={product.styleNumber} query={query} />
           </h3>
           <p className="text-xs text-muted-foreground truncate mt-0.5">
             {product.name}
