@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 const SS_API_BASE = "https://api.ssactivewear.com/v2";
-const MAX_STYLES_TO_FETCH = 20;
+const MAX_STYLES_TO_FETCH = 50;
 
 // ---------- Types ----------
 
@@ -96,39 +96,41 @@ function extractQuerySKU(query: string): string {
 }
 
 /**
- * Match a style number against the query SKU using normalized comparison.
- * Returns: "exact" | "starts" | "contains" | null
+ * Determine match tier for a product against the query SKU.
+ * Uses SOFT ranking — nothing is discarded, everything gets a tier.
  *
- * Exact: normalized styleNumber equals querySKU
- * Starts: normalized styleNumber starts with querySKU (e.g. 3001CVC, 3001T)
- * Contains: querySKU appears in the normalized styleNumber (e.g. FF3001)
- * null: no match in the SKU itself
+ * Tier 1 "exact":    normalized SKU equals query (2000 pts)
+ * Tier 2 "starts":   normalized SKU starts with query (1000 pts)
+ * Tier 3 "contains": query found anywhere in normalized SKU (500 pts)
+ * Tier 4 "title":    query found in product name/title only (250 pts)
+ * null:              no match at all (will be excluded)
  */
-function matchRootSKU(styleNumber: string, querySKU: string): "exact" | "starts" | "contains" | null {
+function matchProduct(
+  styleNumber: string,
+  productName: string,
+  querySKU: string
+): "exact" | "starts" | "contains" | "title" | null {
   const normalized = normalizeSKU(styleNumber);
   const q = querySKU.toUpperCase().trim();
 
-  if (!q || !normalized) return null;
+  if (!q) return null;
 
-  // Exact match after normalization
+  // Tier 1: Exact normalized match
   if (normalized === q) return "exact";
 
-  // Starts with query (family variants like 3001CVC, 3001T)
+  // Tier 2: Starts with query
   if (normalized.startsWith(q)) return "starts";
 
-  // Contains query as a segment (e.g. FF3001)
-  if (normalized.endsWith(q)) return "contains";
+  // Tier 3: Contains query anywhere in SKU
+  if (normalized.includes(q)) return "contains";
 
-  // Check hyphen/space-separated parts
-  const parts = normalized.split(/[-\s]/);
-  for (const part of parts) {
-    if (part === q) return "contains";
-  }
+  // Also check un-normalized SKU for contains
+  const raw = styleNumber.toUpperCase().trim();
+  if (raw.includes(q)) return "contains";
 
-  // Check if query appears as contiguous digits in the SKU
-  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const containsRegex = new RegExp(`(^|[^0-9])${escaped}([^0-9]|$)`);
-  if (containsRegex.test(normalized)) return "contains";
+  // Tier 4: Query found in product title/name
+  const upperName = productName.toUpperCase();
+  if (upperName.includes(q)) return "title";
 
   return null;
 }
@@ -136,14 +138,15 @@ function matchRootSKU(styleNumber: string, querySKU: string): "exact" | "starts"
 // ---------- Scoring ----------
 
 function calculateScore(
-  matchType: "exact" | "starts" | "contains",
+  matchType: "exact" | "starts" | "contains" | "title",
   colorCount: number,
   totalInventory: number
 ): number {
-  let score = matchType === "exact" ? 2000 : matchType === "starts" ? 1000 : 500;
-  score += colorCount * 10;
-  score += Math.floor(totalInventory / 100);
-  return score;
+  const tierPoints = matchType === "exact" ? 2000
+    : matchType === "starts" ? 1000
+    : matchType === "contains" ? 500
+    : 250;
+  return tierPoints + (colorCount * 10) + Math.floor(totalInventory / 100);
 }
 
 // ---------- Deduplication ----------
@@ -154,12 +157,12 @@ function deduplicateProducts(
 ): DedupedCatalogProduct[] {
   const groups = new Map<string, {
     items: RawCatalogProduct[];
-    matchType: "exact" | "starts" | "contains";
+    matchType: "exact" | "starts" | "contains" | "title";
   }>();
 
   for (const p of products) {
-    const matchType = matchRootSKU(p.styleNumber, querySKU);
-    if (!matchType) continue; // Filter out non-matching results
+    const matchType = matchProduct(p.styleNumber, p.name, querySKU);
+    if (!matchType) continue; // Only exclude if zero relevance
 
     // Group key: normalized brand + normalized style number (merges BC3001 + 3001)
     const normalizedSKU = normalizeSKU(p.styleNumber);
@@ -168,8 +171,9 @@ function deduplicateProducts(
     const existing = groups.get(key);
     if (existing) {
       existing.items.push(p);
-      // Promote match type: exact > starts > contains
-      if (matchType === "exact" || (matchType === "starts" && existing.matchType === "contains")) {
+      // Promote to best match type
+      const rank = { exact: 4, starts: 3, contains: 2, title: 1 };
+      if (rank[matchType] > rank[existing.matchType]) {
         existing.matchType = matchType;
       }
     } else {
@@ -267,16 +271,10 @@ async function fetchSSActivewearCatalog(
     return [];
   }
 
-  // Pre-filter styles by root-SKU match before fetching products
-  const querySKU = extractQuerySKU(query);
-  const matchedStyles = allStyles.filter((s) => {
-    const sn = s.styleName || "";
-    return matchRootSKU(sn, querySKU) !== null;
-  });
+  // NO pre-filter — send all styles to product fetch, let soft ranking handle it
+  console.log(`[catalog-search] S&S: fetching products for ${Math.min(allStyles.length, MAX_STYLES_TO_FETCH)}/${allStyles.length} styles`);
 
-  console.log(`[catalog-search] S&S: ${matchedStyles.length}/${allStyles.length} styles pass root-SKU filter`);
-
-  const stylesToFetch = matchedStyles.slice(0, MAX_STYLES_TO_FETCH);
+  const stylesToFetch = allStyles.slice(0, MAX_STYLES_TO_FETCH);
 
   const results = await Promise.allSettled(
     stylesToFetch.map(async (style): Promise<RawCatalogProduct | null> => {
