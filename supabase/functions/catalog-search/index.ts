@@ -27,6 +27,7 @@ interface RawCatalogProduct {
 
 interface DedupedCatalogProduct {
   styleNumber: string;
+  normalizedSKU: string;
   name: string;
   brand: string;
   category: string;
@@ -63,50 +64,71 @@ interface SSProduct {
   warehouses?: Array<{ warehouseAbbr?: string; qty?: number }>;
 }
 
-// ---------- Root-SKU Matching ----------
+// ---------- SKU Normalization & Matching ----------
+
+/** Common distributor prefixes to strip for normalization */
+const DISTRIBUTOR_PREFIXES = ["BC", "NL", "SAN", "PC", "G"];
 
 /**
- * Extract the "SKU part" from a query: last whitespace-separated token.
- * e.g. "Bella Canvas 3001" → "3001", "5000" → "5000"
+ * Strip known distributor prefixes from a style number.
+ * e.g. "BC3001" → "3001", "G5000" → "5000", "PC61" → "61", "3001CVC" → "3001CVC"
  */
-function extractQuerySKU(query: string): string {
-  const parts = query.trim().split(/\s+/);
-  return (parts.pop() || query.trim()).toUpperCase();
+function normalizeSKU(styleNumber: string): string {
+  const sn = styleNumber.toUpperCase().trim();
+  for (const prefix of DISTRIBUTOR_PREFIXES) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length) {
+      const rest = sn.slice(prefix.length);
+      // Only strip if remainder starts with a digit (avoids stripping from e.g. "GRAND")
+      if (/^\d/.test(rest)) return rest;
+    }
+  }
+  return sn;
 }
 
 /**
- * Check if a style number is a root-SKU match for the query SKU.
- * Returns: "exact" | "root" | null
- *
- * Exact: styleNumber equals querySKU (case-insensitive)
- * Root: querySKU appears at start/end of styleNumber, or separated by hyphen/space
- *       e.g. querySKU="3001" matches "3001CVC", "3001T", "FF3001", "3001-B"
- * null: no match (querySKU only found in description, not in the SKU itself)
+ * Extract the "SKU part" from a query: last whitespace-separated token, then normalize.
+ * e.g. "Bella Canvas 3001" → "3001", "BC3001" → "3001"
  */
-function matchRootSKU(styleNumber: string, querySKU: string): "exact" | "root" | null {
-  const sn = styleNumber.toUpperCase().trim();
+function extractQuerySKU(query: string): string {
+  const parts = query.trim().split(/\s+/);
+  const raw = (parts.pop() || query.trim()).toUpperCase();
+  return normalizeSKU(raw);
+}
+
+/**
+ * Match a style number against the query SKU using normalized comparison.
+ * Returns: "exact" | "starts" | "contains" | null
+ *
+ * Exact: normalized styleNumber equals querySKU
+ * Starts: normalized styleNumber starts with querySKU (e.g. 3001CVC, 3001T)
+ * Contains: querySKU appears in the normalized styleNumber (e.g. FF3001)
+ * null: no match in the SKU itself
+ */
+function matchRootSKU(styleNumber: string, querySKU: string): "exact" | "starts" | "contains" | null {
+  const normalized = normalizeSKU(styleNumber);
   const q = querySKU.toUpperCase().trim();
 
-  if (!q || !sn) return null;
+  if (!q || !normalized) return null;
 
-  // Exact match
-  if (sn === q) return "exact";
+  // Exact match after normalization
+  if (normalized === q) return "exact";
 
-  // Root match: query SKU appears as a contiguous part of the style number
-  // Must be at a word boundary (start/end of string, or adjacent to non-alphanumeric)
-  // Also matches prefixed/suffixed variants like 3001CVC, FF3001, 3001-B
-  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const rootRegex = new RegExp(`(^|[^A-Z0-9])${escaped}([^0-9]|$)`, "i");
+  // Starts with query (family variants like 3001CVC, 3001T)
+  if (normalized.startsWith(q)) return "starts";
 
-  // Simple containment: the SKU number is in the style number
-  if (sn.startsWith(q) || sn.endsWith(q)) return "root";
-  if (rootRegex.test(sn)) return "root";
+  // Contains query as a segment (e.g. FF3001)
+  if (normalized.endsWith(q)) return "contains";
 
-  // Check hyphen-separated parts
-  const parts = sn.split(/[-\s]/);
+  // Check hyphen/space-separated parts
+  const parts = normalized.split(/[-\s]/);
   for (const part of parts) {
-    if (part === q) return "root";
+    if (part === q) return "contains";
   }
+
+  // Check if query appears as contiguous digits in the SKU
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const containsRegex = new RegExp(`(^|[^0-9])${escaped}([^0-9]|$)`);
+  if (containsRegex.test(normalized)) return "contains";
 
   return null;
 }
@@ -114,11 +136,11 @@ function matchRootSKU(styleNumber: string, querySKU: string): "exact" | "root" |
 // ---------- Scoring ----------
 
 function calculateScore(
-  matchType: "exact" | "root",
+  matchType: "exact" | "starts" | "contains",
   colorCount: number,
   totalInventory: number
 ): number {
-  let score = matchType === "exact" ? 2000 : 1000;
+  let score = matchType === "exact" ? 2000 : matchType === "starts" ? 1000 : 500;
   score += colorCount * 10;
   score += Math.floor(totalInventory / 100);
   return score;
@@ -132,21 +154,24 @@ function deduplicateProducts(
 ): DedupedCatalogProduct[] {
   const groups = new Map<string, {
     items: RawCatalogProduct[];
-    matchType: "exact" | "root";
+    matchType: "exact" | "starts" | "contains";
   }>();
 
   for (const p of products) {
     const matchType = matchRootSKU(p.styleNumber, querySKU);
     if (!matchType) continue; // Filter out non-matching results
 
-    // Group key: normalized brand + style number
-    const key = `${p.brand.toUpperCase().trim()}::${p.styleNumber.toUpperCase().trim()}`;
+    // Group key: normalized brand + normalized style number (merges BC3001 + 3001)
+    const normalizedSKU = normalizeSKU(p.styleNumber);
+    const key = `${p.brand.toUpperCase().trim()}::${normalizedSKU}`;
 
     const existing = groups.get(key);
     if (existing) {
       existing.items.push(p);
-      // Promote to exact if any item is exact
-      if (matchType === "exact") existing.matchType = "exact";
+      // Promote match type: exact > starts > contains
+      if (matchType === "exact" || (matchType === "starts" && existing.matchType === "contains")) {
+        existing.matchType = matchType;
+      }
     } else {
       groups.set(key, { items: [p], matchType });
     }
@@ -165,6 +190,7 @@ function deduplicateProducts(
 
     deduped.push({
       styleNumber: primary.styleNumber,
+      normalizedSKU: normalizeSKU(primary.styleNumber),
       name: primary.name,
       brand: primary.brand,
       category: primary.category,

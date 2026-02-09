@@ -2,6 +2,7 @@
 
 export interface CatalogProduct {
   styleNumber: string;
+  normalizedSKU: string;
   name: string;
   brand: string;
   category: string;
