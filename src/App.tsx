@@ -4,7 +4,8 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Index from "./pages/Index";
+import SearchGallery from "./pages/SearchGallery";
+import ProductDetail from "./pages/ProductDetail";
 import NotFound from "./pages/NotFound";
 import { Gatekeeper } from "@/components/Gatekeeper";
 import { UserRole, getAuthState, AUTH_SESSION_KEY, ROLE_SESSION_KEY } from "@/types/auth";
@@ -46,7 +47,8 @@ const App = () => {
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Index userRole={userRole} />} />
+            <Route path="/" element={<SearchGallery />} />
+            <Route path="/product" element={<ProductDetail userRole={userRole} />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

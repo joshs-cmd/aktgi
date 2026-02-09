@@ -1,0 +1,137 @@
+import { SearchBar } from "@/components/SearchBar";
+import { ProductCard } from "@/components/ProductCard";
+import { useCatalogSearch } from "@/hooks/useCatalogSearch";
+import { AlertCircle, Search, Loader2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useRef } from "react";
+
+const SearchGallery = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { isLoading, response, error, search } = useCatalogSearch();
+  const lastQueryRef = useRef<string | null>(null);
+
+  // Restore search from URL param (for back navigation)
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q && q !== lastQueryRef.current) {
+      lastQueryRef.current = q;
+      search(q);
+    }
+  }, [searchParams, search]);
+
+  const handleSearch = (query: string) => {
+    lastQueryRef.current = query;
+    // Update URL without navigation so back works
+    navigate(`/?q=${encodeURIComponent(query)}`, { replace: true });
+    search(query);
+  };
+
+  const handleProductClick = (styleNumber: string, brand: string) => {
+    const q = lastQueryRef.current || searchParams.get("q") || styleNumber;
+    navigate(
+      `/product?style=${encodeURIComponent(styleNumber)}&brand=${encodeURIComponent(brand)}&q=${encodeURIComponent(q)}`
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="border-b bg-card">
+        <div className="container mx-auto px-4 py-6">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight">
+              AKT Garment Inventory
+            </h1>
+            <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
+              Beta
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <main className="container mx-auto px-4 py-8">
+        <div className="flex flex-col items-center gap-8">
+          {/* Search Bar */}
+          <div className="w-full flex justify-center">
+            <SearchBar onSearch={handleSearch} isLoading={isLoading} />
+          </div>
+
+          {/* Loading State */}
+          {isLoading && (
+            <div className="w-full max-w-3xl space-y-4">
+              <div className="flex items-center justify-center gap-3 py-6">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                <span className="text-lg text-muted-foreground">
+                  Searching catalogs...
+                </span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[1, 2, 3, 4].map((i) => (
+                  <Skeleton key={i} className="h-28 w-full rounded-lg" />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Error */}
+          {error && !isLoading && (
+            <Alert variant="destructive" className="max-w-2xl">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Search Error</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* No Results */}
+          {response && response.products.length === 0 && !error && !isLoading && (
+            <Alert className="max-w-2xl">
+              <Search className="h-4 w-4" />
+              <AlertTitle>No Matching Products Found</AlertTitle>
+              <AlertDescription>
+                We couldn't find any products matching "{response.query}".
+                <ul className="mt-3 list-disc list-inside text-sm space-y-1">
+                  <li>Try a brand + style number: "Gildan 5000" or "Bella Canvas 3001"</li>
+                  <li>Or just the style number: "5000", "3001", "PC61"</li>
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Results Gallery */}
+          {response && response.products.length > 0 && !isLoading && (
+            <div className="w-full max-w-3xl space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {response.products.length} result{response.products.length !== 1 ? "s" : ""} for "{response.query}"
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {response.products.map((product, idx) => (
+                  <ProductCard
+                    key={`${product.styleNumber}-${product.brand}-${idx}`}
+                    product={product}
+                    onClick={() =>
+                      handleProductClick(product.styleNumber, product.brand)
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Empty State */}
+          {!response && !error && !isLoading && (
+            <div className="py-12 text-center">
+              <p className="text-lg text-muted-foreground">
+                Enter a SKU or style number to compare prices across distributors
+              </p>
+            </div>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default SearchGallery;
