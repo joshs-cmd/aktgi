@@ -571,21 +571,44 @@ async function fetchSSActivewearCatalog(
 
   console.log(`[catalog-search] S&S Phase 1: ${phase1Styles.length} unique styles from search`);
 
-  // Phase 2: Brand-level family fetch
-  // Identify the primary brand from the best-matching style
-  const primaryBrand = phase1Styles.find((s) => {
+  // Phase 2: Brand-level family fetch for ALL matching brands
+  // Collect all unique brands from exact/starts-with matches (not just the first one)
+  const matchingBrands = new Set<string>();
+  for (const s of phase1Styles) {
     const sn = normalizeSKU(s.styleName || "");
-    return sn === querySKU.toUpperCase() || sn.startsWith(querySKU.toUpperCase());
-  })?.brandName || phase1Styles[0]?.brandName || "";
+    if (sn === querySKU.toUpperCase() || sn.startsWith(querySKU.toUpperCase())) {
+      if (s.brandName) matchingBrands.add(s.brandName);
+    }
+  }
+  // If no exact/starts matches, fall back to the first brand
+  if (matchingBrands.size === 0 && phase1Styles[0]?.brandName) {
+    matchingBrands.add(phase1Styles[0].brandName);
+  }
+
+  console.log(`[catalog-search] S&S family brands: ${[...matchingBrands].join(", ")}`);
 
   const existingIds = new Set(phase1Styles.map((s) => s.styleID!).filter(Boolean));
-  const familyStyles = await fetchSSFamilyStyles(primaryBrand, querySKU, existingIds, fetchOpts);
+  
+  // Fetch families for ALL matching brands in parallel
+  const familyResults = await Promise.all(
+    [...matchingBrands].map((brand) =>
+      fetchSSFamilyStyles(brand, querySKU, existingIds, fetchOpts)
+    )
+  );
+  const familyStyles = familyResults.flat();
+  
+  // Dedupe family styles against existing
+  const uniqueFamilyStyles = familyStyles.filter((s) => {
+    if (!s.styleID || existingIds.has(s.styleID)) return false;
+    existingIds.add(s.styleID);
+    return true;
+  });
 
   // Combine and limit
-  const allStyles = [...phase1Styles, ...familyStyles];
+  const allStyles = [...phase1Styles, ...uniqueFamilyStyles];
   const stylesToFetch = allStyles.slice(0, MAX_STYLES_TO_FETCH);
 
-  console.log(`[catalog-search] S&S total: ${allStyles.length} styles (Phase1: ${phase1Styles.length}, Family: ${familyStyles.length}), fetching ${stylesToFetch.length}`);
+  console.log(`[catalog-search] S&S total: ${allStyles.length} styles (Phase1: ${phase1Styles.length}, Family: ${uniqueFamilyStyles.length}), fetching ${stylesToFetch.length}`);
 
   return fetchSSProductDetails(stylesToFetch, fetchOpts);
 }

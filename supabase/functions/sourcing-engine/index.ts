@@ -191,16 +191,29 @@ serve(async (req) => {
     );
 
     // ===============================================================
-    // GLOBAL SKU RESOLVER: Pick ONE "Winner" Product
+    // GLOBAL SKU RESOLVER: Keep all products that match the same
+    // normalized fingerprint — don't discard cross-distributor dupes
     // ===============================================================
-    const normalizedQuery = query.toUpperCase().trim();
-    const queryLastPart = normalizedQuery.split(/\s+/).pop() || normalizedQuery;
     
-    const PRIORITY_BRANDS = [
-      "GILDAN", "PORT & COMPANY", "PORT AND COMPANY", "BELLA + CANVAS", 
-      "BELLA+CANVAS", "BELLACANVAS", "NEXT LEVEL", "NEXT LEVEL APPAREL",
-      "HANES", "JERZEES", "FRUIT OF THE LOOM", "CHAMPION", "AMERICAN APPAREL"
-    ];
+    /** Strip known vendor prefixes if remainder starts with digit */
+    const KNOWN_PREFIXES = ["SAN", "BC", "NL", "PC", "CP", "DT", "CC", "SS", "G", "J", "H"];
+    const normalizeStyleNumber = (sn: string): string => {
+      const upper = sn.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      for (const prefix of KNOWN_PREFIXES) {
+        if (upper.startsWith(prefix) && upper.length > prefix.length) {
+          const rest = upper.slice(prefix.length);
+          if (/^\d/.test(rest)) return rest;
+        }
+      }
+      return upper;
+    };
+
+    /** Normalize brand: strip suffixes, non-alphanum */
+    const normBrand = (b: string): string => {
+      return b.toUpperCase()
+        .replace(/\b(APPAREL|CLOTHING|MADE|USA)\b/g, "")
+        .replace(/[^A-Z0-9]/g, "");
+    };
     
     const getProductField = (product: unknown, field: string): string => {
       if (!product || typeof product !== "object") return "";
@@ -229,69 +242,71 @@ serve(async (req) => {
       }
       return total;
     };
+
+    // Build a normalized fingerprint for each successful result
+    // Products with the same fingerprint are the SAME product from different distributors
+    const normalizedQuery = query.toUpperCase().trim();
+    const queryLastPart = normalizedQuery.split(/\s+/).pop() || normalizedQuery;
+    const queryFingerprint = normalizeStyleNumber(queryLastPart);
+
+    // Group results by normalized fingerprint
+    const fingerprintGroups = new Map<string, DistributorResult[]>();
     
-    const getBrandPriority = (b: string): number => {
-      const idx = PRIORITY_BRANDS.findIndex(pb => b.includes(pb) || pb.includes(b));
-      return idx !== -1 ? idx : 999;
-    };
-    
-    interface ScoredResult {
-      result: DistributorResult;
-      styleNumber: string;
-      brand: string;
-      tier: number;
-      brandPriority: number;
-      inventory: number;
+    for (const r of results) {
+      if (r.status !== "success" || !r.product) continue;
+      
+      const styleNumber = getProductField(r.product, "styleNumber");
+      const b = getProductField(r.product, "brand");
+      const fp = `${normBrand(b)}::${normalizeStyleNumber(styleNumber)}`;
+      
+      const group = fingerprintGroups.get(fp) || [];
+      group.push(r);
+      fingerprintGroups.set(fp, group);
     }
-    
-    const scoredResults: ScoredResult[] = results
-      .filter(r => r.status === "success" && r.product)
-      .map(r => {
-        const styleNumber = getProductField(r.product, "styleNumber");
-        const b = getProductField(r.product, "brand");
-        const inventory = getTotalInventory(r.product);
-        
-        let tier = 3;
-        if (styleNumber === normalizedQuery || styleNumber === queryLastPart) {
-          tier = 1;
-        } else if (styleNumber.includes(queryLastPart) || queryLastPart.includes(styleNumber)) {
-          tier = 2;
-        }
-        
-        return { 
-          result: r, 
-          styleNumber, 
-          brand: b, 
-          tier, 
-          brandPriority: getBrandPriority(b), 
-          inventory 
-        };
-      });
-    
-    scoredResults.sort((a, b) => {
-      if (a.tier !== b.tier) return a.tier - b.tier;
-      if (a.brandPriority !== b.brandPriority) return a.brandPriority - b.brandPriority;
-      return b.inventory - a.inventory;
-    });
-    
-    const winner = scoredResults[0];
-    const winnerKey = winner ? `${winner.styleNumber}|${winner.brand}` : null;
-    
-    console.log(`[sourcing-engine] Winner product: ${winnerKey || "none"}`);
-    if (winner) {
-      console.log(`[sourcing-engine] Winner details: tier=${winner.tier}, brand=${winner.brand}, brandPri=${winner.brandPriority}, inv=${winner.inventory}`);
+
+    // Find the winning fingerprint group (best match to query)
+    let winnerFingerprint: string | null = null;
+    let bestTier = 999;
+    let bestInventory = -1;
+
+    for (const [fp, group] of fingerprintGroups) {
+      const fpNorm = fp.split("::")[1] || "";
+      
+      // Tier: 1=exact, 2=partial match, 3=other
+      let tier = 3;
+      if (fpNorm === queryFingerprint) {
+        tier = 1;
+      } else if (fpNorm.includes(queryFingerprint) || queryFingerprint.includes(fpNorm)) {
+        tier = 2;
+      }
+
+      const totalInv = group.reduce((sum, r) => sum + getTotalInventory(r.product), 0);
+
+      if (tier < bestTier || (tier === bestTier && totalInv > bestInventory)) {
+        bestTier = tier;
+        bestInventory = totalInv;
+        winnerFingerprint = fp;
+      }
     }
-    
+
+    console.log(`[sourcing-engine] Winner fingerprint: ${winnerFingerprint || "none"} (tier=${bestTier})`);
+    if (winnerFingerprint) {
+      const winners = fingerprintGroups.get(winnerFingerprint) || [];
+      console.log(`[sourcing-engine] Winner group has ${winners.length} distributors: ${winners.map(w => w.distributorName).join(", ")}`);
+    }
+
+    // Keep all results in the winning fingerprint group, null out others
+    const winnerGroup = winnerFingerprint ? fingerprintGroups.get(winnerFingerprint) || [] : [];
+    const winnerDistributorIds = new Set(winnerGroup.map(r => r.distributorId));
+
     const finalResults: DistributorResult[] = results.map(r => {
+      // Keep pending/error results as-is
       if (r.status !== "success" || !r.product) {
         return r;
       }
       
-      const styleNumber = getProductField(r.product, "styleNumber");
-      const b = getProductField(r.product, "brand");
-      const key = `${styleNumber}|${b}`;
-      
-      if (winnerKey && key === winnerKey) {
+      // Keep if this distributor is in the winner group
+      if (winnerDistributorIds.has(r.distributorId)) {
         const p = r.product as Record<string, unknown>;
         return {
           ...r,
@@ -305,7 +320,8 @@ serve(async (req) => {
         };
       }
       
-      console.log(`[sourcing-engine] Discarding non-winner: ${styleNumber} by ${b} (${r.distributorName})`);
+      const styleNumber = getProductField(r.product, "styleNumber");
+      console.log(`[sourcing-engine] Discarding non-winner: ${styleNumber} (${r.distributorName})`);
       return { ...r, product: null };
     });
 
