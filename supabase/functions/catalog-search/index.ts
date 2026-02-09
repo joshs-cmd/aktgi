@@ -223,6 +223,71 @@ function buildImageUrl(relativePath: string | undefined): string | null {
   return `https://www.ssactivewear.com/${largePath}`;
 }
 
+// ---------- Query Expansion ----------
+
+/** Known brand-prefix mappings for multi-cast search */
+const BRAND_PREFIX_MAP: Record<string, string[]> = {
+  "BC": ["Bella Canvas", "Bella+Canvas"],
+  "G": ["Gildan"],
+  "PC": ["Port & Company", "Port Company"],
+  "NL": ["Next Level"],
+  "SAN": ["SanMar"],
+  "CC": ["Comfort Colors"],
+  "SS": ["Sport-Tek"],
+  "DT": ["District"],
+  "J": ["Jerzees"],
+  "H": ["Hanes"],
+};
+
+/**
+ * Generate expanded search variants for the S&S API.
+ * For a query like "3001", generates: ["3001", "BC3001", "Bella Canvas 3001", "NL3001", "G3001", ...]
+ * For "BC3001", generates: ["BC3001", "3001", "Bella Canvas 3001"]
+ */
+function generateSearchVariants(query: string): string[] {
+  const variants = new Set<string>();
+  const trimmed = query.trim();
+  const upper = trimmed.toUpperCase();
+  
+  // Always include the raw query
+  variants.add(trimmed);
+  
+  // Extract the numeric core
+  const normalizedSKU = normalizeSKU(trimmed);
+  if (normalizedSKU !== upper) {
+    variants.add(normalizedSKU); // stripped version (e.g. "3001" from "BC3001")
+  }
+  
+  // If query is purely numeric or starts with digits, try all brand prefixes
+  const isNumericQuery = /^\d+[A-Z]*$/i.test(normalizedSKU);
+  
+  if (isNumericQuery) {
+    // Add prefixed variants: BC3001, G3001, PC3001, etc.
+    for (const prefix of Object.keys(BRAND_PREFIX_MAP)) {
+      variants.add(`${prefix}${normalizedSKU}`);
+    }
+    
+    // Add "Brand SKU" variants: "Bella Canvas 3001", "Gildan 3001", etc.
+    for (const brands of Object.values(BRAND_PREFIX_MAP)) {
+      variants.add(`${brands[0]} ${normalizedSKU}`);
+    }
+  }
+  
+  // If query has spaces, also try just the last token
+  if (trimmed.includes(" ")) {
+    const parts = trimmed.split(/\s+/);
+    variants.add(parts[parts.length - 1]);
+  }
+  
+  // If query is like "bc3001", try "bc 3001"
+  const alphaNumMatch = trimmed.match(/^([a-zA-Z]+)(\d+.*)$/);
+  if (alphaNumMatch) {
+    variants.add(`${alphaNumMatch[1]} ${alphaNumMatch[2]}`);
+  }
+  
+  return [...variants];
+}
+
 // ---------- S&S Activewear ----------
 
 async function fetchSSActivewearCatalog(
@@ -233,46 +298,51 @@ async function fetchSSActivewearCatalog(
     headers: { Authorization: authHeader, Accept: "application/json" },
   };
 
-  const variants = [query.trim()];
-  const lower = query.trim().toLowerCase();
-  const m = lower.match(/^([a-z]+)(\d+)$/);
-  if (m) variants.push(`${m[1]} ${m[2]}`);
-  if (query.includes(" ")) {
-    const parts = query.trim().split(/\s+/);
-    variants.push(parts[parts.length - 1]);
-  }
+  const variants = generateSearchVariants(query);
+  console.log(`[catalog-search] S&S multi-cast: ${variants.length} search variants`);
 
-  let allStyles: SSStyle[] = [];
-  for (const variant of variants) {
-    try {
-      const url = `${SS_API_BASE}/styles/?search=${encodeURIComponent(variant)}`;
-      console.log(`[catalog-search] S&S styles search: ${url}`);
-      const res = await fetch(url, fetchOpts);
-      if (res.ok) {
-        const data: SSStyle[] = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          console.log(`[catalog-search] S&S found ${data.length} styles for "${variant}"`);
-          for (const s of data) {
-            if (s.styleID && !allStyles.find((x) => x.styleID === s.styleID)) {
-              allStyles.push(s);
-            }
+  // Fire all variant searches in parallel for speed
+  const styleSearchResults = await Promise.allSettled(
+    variants.map(async (variant) => {
+      try {
+        const url = `${SS_API_BASE}/styles/?search=${encodeURIComponent(variant)}`;
+        const res = await fetch(url, fetchOpts);
+        if (res.ok) {
+          const data: SSStyle[] = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            console.log(`[catalog-search] S&S found ${data.length} styles for "${variant}"`);
+            return data;
           }
+        } else {
+          await res.text();
         }
-      } else {
-        await res.text();
+      } catch (err) {
+        console.error(`[catalog-search] S&S styles error for "${variant}":`, err);
       }
-    } catch (err) {
-      console.error(`[catalog-search] S&S styles error for "${variant}":`, err);
+      return [] as SSStyle[];
+    })
+  );
+
+  // Consolidate and deduplicate styles by styleID
+  const seenIds = new Set<number>();
+  const allStyles: SSStyle[] = [];
+  for (const result of styleSearchResults) {
+    if (result.status === "fulfilled") {
+      for (const s of result.value) {
+        if (s.styleID && !seenIds.has(s.styleID)) {
+          seenIds.add(s.styleID);
+          allStyles.push(s);
+        }
+      }
     }
   }
 
   if (allStyles.length === 0) {
-    console.log("[catalog-search] S&S: no styles found");
+    console.log("[catalog-search] S&S: no styles found across all variants");
     return [];
   }
 
-  // NO pre-filter — send all styles to product fetch, let soft ranking handle it
-  console.log(`[catalog-search] S&S: fetching products for ${Math.min(allStyles.length, MAX_STYLES_TO_FETCH)}/${allStyles.length} styles`);
+  console.log(`[catalog-search] S&S: ${allStyles.length} unique styles found, fetching products for ${Math.min(allStyles.length, MAX_STYLES_TO_FETCH)}`);
 
   const stylesToFetch = allStyles.slice(0, MAX_STYLES_TO_FETCH);
 
@@ -345,66 +415,120 @@ async function fetchSSActivewearCatalog(
     .filter((p): p is RawCatalogProduct => p !== null);
 }
 
-// ---------- SanMar ----------
+// ---------- SanMar (with fallback variants) ----------
 
-async function fetchSanMarCatalog(
-  query: string,
-  supabase: ReturnType<typeof createClient>
-): Promise<RawCatalogProduct[]> {
-  try {
-    const { data, error } = await supabase.functions.invoke("provider-sanmar", {
-      body: { query, distributorId: "sanmar-001" },
-    });
-
-    if (error || !data?.product) {
-      if (error) console.error("[catalog-search] SanMar error:", error.message);
-      return [];
+function generateSanMarVariants(query: string): string[] {
+  const variants = new Set<string>();
+  const trimmed = query.trim();
+  const normalizedSKU = normalizeSKU(trimmed);
+  
+  // Raw query
+  variants.add(trimmed);
+  
+  // Normalized (prefix-stripped)
+  if (normalizedSKU !== trimmed.toUpperCase()) {
+    variants.add(normalizedSKU);
+  }
+  
+  // Add common SanMar-style prefixed versions
+  const isNumericCore = /^\d+[A-Z]*$/i.test(normalizedSKU);
+  if (isNumericCore) {
+    for (const prefix of ["BC", "PC", "G", "NL", "DT", "J"]) {
+      variants.add(`${prefix}${normalizedSKU}`);
     }
+  }
+  
+  // If query has spaces, try last token
+  if (trimmed.includes(" ")) {
+    const parts = trimmed.split(/\s+/);
+    variants.add(parts[parts.length - 1].toUpperCase());
+  }
+  
+  return [...variants];
+}
 
-    const product = data.product as Record<string, unknown>;
-    const styleNumber = String(product.styleNumber ?? "");
-    const colors = product.colors as Array<{
-      sizes?: Array<{
-        isProgramPrice?: boolean;
-        inventory?: Array<{ quantity?: number }>;
-      }>;
-    }> | undefined;
+function parseSanMarProduct(product: Record<string, unknown>): RawCatalogProduct | null {
+  const styleNumber = String(product.styleNumber ?? "");
+  if (!styleNumber) return null;
+  
+  const colors = product.colors as Array<{
+    sizes?: Array<{
+      isProgramPrice?: boolean;
+      inventory?: Array<{ quantity?: number }>;
+    }>;
+  }> | undefined;
 
-    const colorCount = Array.isArray(colors) ? colors.length : 0;
-    let totalInventory = 0;
-    let isProgramItem = false;
+  const colorCount = Array.isArray(colors) ? colors.length : 0;
+  let totalInventory = 0;
+  let isProgramItem = false;
 
-    if (Array.isArray(colors)) {
-      for (const c of colors) {
-        if (Array.isArray(c?.sizes)) {
-          for (const s of c.sizes) {
-            if (s?.isProgramPrice) isProgramItem = true;
-            if (Array.isArray(s?.inventory)) {
-              for (const inv of s.inventory) {
-                totalInventory += Number(inv?.quantity || 0);
-              }
+  if (Array.isArray(colors)) {
+    for (const c of colors) {
+      if (Array.isArray(c?.sizes)) {
+        for (const s of c.sizes) {
+          if (s?.isProgramPrice) isProgramItem = true;
+          if (Array.isArray(s?.inventory)) {
+            for (const inv of s.inventory) {
+              totalInventory += Number(inv?.quantity || 0);
             }
           }
         }
       }
     }
-
-    return [{
-      styleNumber,
-      name: String(product.name ?? ""),
-      brand: String(product.brand ?? ""),
-      category: String(product.category ?? ""),
-      imageUrl: product.imageUrl ? String(product.imageUrl) : undefined,
-      colorCount,
-      totalInventory,
-      isProgramItem,
-      distributorCode: "sanmar",
-      distributorName: "SanMar",
-    }];
-  } catch (err) {
-    console.error("[catalog-search] SanMar exception:", err);
-    return [];
   }
+
+  return {
+    styleNumber,
+    name: String(product.name ?? ""),
+    brand: String(product.brand ?? ""),
+    category: String(product.category ?? ""),
+    imageUrl: product.imageUrl ? String(product.imageUrl) : undefined,
+    colorCount,
+    totalInventory,
+    isProgramItem,
+    distributorCode: "sanmar",
+    distributorName: "SanMar",
+  };
+}
+
+async function fetchSanMarCatalog(
+  query: string,
+  supabase: ReturnType<typeof createClient>
+): Promise<RawCatalogProduct[]> {
+  const variants = generateSanMarVariants(query);
+  console.log(`[catalog-search] SanMar multi-cast: ${variants.length} variants: ${variants.join(", ")}`);
+  
+  const allProducts: RawCatalogProduct[] = [];
+  const seenStyles = new Set<string>();
+  
+  // Try variants in parallel
+  const results = await Promise.allSettled(
+    variants.map(async (variant) => {
+      try {
+        const { data, error } = await supabase.functions.invoke("provider-sanmar", {
+          body: { query: variant, distributorId: "sanmar-001" },
+        });
+        if (error || !data?.product) return null;
+        return parseSanMarProduct(data.product as Record<string, unknown>);
+      } catch (err) {
+        console.error(`[catalog-search] SanMar error for "${variant}":`, err);
+        return null;
+      }
+    })
+  );
+  
+  for (const result of results) {
+    if (result.status === "fulfilled" && result.value) {
+      const key = `${result.value.brand}::${normalizeSKU(result.value.styleNumber)}`;
+      if (!seenStyles.has(key)) {
+        seenStyles.add(key);
+        allProducts.push(result.value);
+      }
+    }
+  }
+  
+  console.log(`[catalog-search] SanMar: ${allProducts.length} unique products from ${variants.length} variants`);
+  return allProducts;
 }
 
 // ---------- Handler ----------
