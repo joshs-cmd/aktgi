@@ -64,25 +64,87 @@ interface SSProduct {
   warehouses?: Array<{ warehouseAbbr?: string; qty?: number }>;
 }
 
-// ---------- SKU Normalization & Matching ----------
-
-/** Common distributor prefixes to strip for normalization */
-const DISTRIBUTOR_PREFIXES = ["BC", "NL", "SAN", "PC", "G"];
+// ---------- SKU Normalization & Fingerprinting ----------
 
 /**
- * Strip known distributor prefixes from a style number.
- * e.g. "BC3001" → "3001", "G5000" → "5000", "PC61" → "61", "3001CVC" → "3001CVC"
+ * Brand-aware prefix mapping: prefix → list of brand name variations it belongs to.
+ * A prefix is ONLY stripped when the product's brand matches the mapping.
+ */
+const PREFIX_BRAND_MAP: Record<string, string[]> = {
+  "BC":  ["BELLA+CANVAS", "BELLA + CANVAS", "BELLA CANVAS", "BELLACANVAS"],
+  "NL":  ["NEXT LEVEL", "NEXT LEVEL APPAREL", "NEXTLEVEL"],
+  "G":   ["GILDAN"],
+  "PC":  ["PORT & COMPANY", "PORT AND COMPANY", "PORT COMPANY", "PORTCOMPANY"],
+  "CP":  ["CORNERSTONE", "CORNER STONE"],
+  "DT":  ["DISTRICT", "DISTRICT MADE"],
+  "SAN": ["SANMAR"],
+  "J":   ["JERZEES"],
+  "H":   ["HANES"],
+  "CC":  ["COMFORT COLORS", "COMFORTCOLORS"],
+  "SS":  ["SPORT-TEK", "SPORT TEK", "SPORTEK"],
+};
+
+/** Ordered by length descending so longer prefixes match first (SAN before S) */
+const ORDERED_PREFIXES = Object.keys(PREFIX_BRAND_MAP).sort((a, b) => b.length - a.length);
+
+/** All known prefixes for blind (no-brand) normalization */
+const ALL_PREFIXES = ORDERED_PREFIXES;
+
+/**
+ * Blind SKU normalization (no brand context).
+ * Strips any known prefix if remainder starts with a digit.
+ * Preserves suffixes (CVC, T, B, etc.) — only strips leading vendor codes.
  */
 function normalizeSKU(styleNumber: string): string {
-  const sn = styleNumber.toUpperCase().trim();
-  for (const prefix of DISTRIBUTOR_PREFIXES) {
+  const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  for (const prefix of ORDERED_PREFIXES) {
     if (sn.startsWith(prefix) && sn.length > prefix.length) {
       const rest = sn.slice(prefix.length);
-      // Only strip if remainder starts with a digit (avoids stripping from e.g. "GRAND")
       if (/^\d/.test(rest)) return rest;
     }
   }
   return sn;
+}
+
+/**
+ * Brand-aware fingerprint: only strips prefix when brand actually matches.
+ * This prevents false merges (e.g. "G" prefix on a non-Gildan product).
+ * Suffixes like CVC, T, B are PRESERVED — they differentiate products.
+ */
+function generateFingerprint(styleNumber: string, brand: string): string {
+  // Step A: uppercase, strip non-alphanumeric
+  const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const upperBrand = brand.toUpperCase().replace(/[^A-Z0-9 &+\-]/g, "").trim();
+
+  // Step B: try to strip prefix only if brand matches
+  for (const prefix of ORDERED_PREFIXES) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length) {
+      const rest = sn.slice(prefix.length);
+      if (!/^\d/.test(rest)) continue; // remainder must start with digit
+
+      const allowedBrands = PREFIX_BRAND_MAP[prefix];
+      const brandMatches = allowedBrands.some((b) => {
+        const normalB = b.toUpperCase().replace(/[^A-Z0-9 &+\-]/g, "").trim();
+        return upperBrand.includes(normalB) || normalB.includes(upperBrand);
+      });
+
+      if (brandMatches) return rest; // Step C: stripped fingerprint
+    }
+  }
+
+  // No prefix matched brand — return cleaned SKU as-is
+  return sn;
+}
+
+/**
+ * Normalize brand name for grouping: strip common suffixes like "Apparel", 
+ * remove non-alphanumeric chars. "Next Level Apparel" and "Next Level" both → "NEXTLEVEL"
+ */
+function normalizeBrand(brand: string): string {
+  return brand
+    .toUpperCase()
+    .replace(/\b(APPAREL|CLOTHING|MADE|USA)\b/g, "")
+    .replace(/[^A-Z0-9]/g, "");
 }
 
 /**
@@ -164,9 +226,9 @@ function deduplicateProducts(
     const matchType = matchProduct(p.styleNumber, p.name, querySKU);
     if (!matchType) continue; // Only exclude if zero relevance
 
-    // Group key: normalized brand + normalized style number (merges BC3001 + 3001)
-    const normalizedSKU = normalizeSKU(p.styleNumber);
-    const key = `${p.brand.toUpperCase().trim()}::${normalizedSKU}`;
+    // Group key: normalized brand + fingerprint (merges "Next Level" + "Next Level Apparel")
+    const fingerprint = generateFingerprint(p.styleNumber, p.brand);
+    const key = `${normalizeBrand(p.brand)}::${fingerprint}`;
 
     const existing = groups.get(key);
     if (existing) {
@@ -194,7 +256,7 @@ function deduplicateProducts(
 
     deduped.push({
       styleNumber: primary.styleNumber,
-      normalizedSKU: normalizeSKU(primary.styleNumber),
+      normalizedSKU: generateFingerprint(primary.styleNumber, primary.brand),
       name: primary.name,
       brand: primary.brand,
       category: primary.category,
