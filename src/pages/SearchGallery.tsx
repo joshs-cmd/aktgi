@@ -41,10 +41,13 @@ const SearchGallery = () => {
       {/* Header */}
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">
-              AKT Garment Inventory
-            </h1>
+        <div className="flex items-center gap-3">
+          <h1
+            className="text-2xl font-bold tracking-tight cursor-pointer hover:text-primary transition-colors"
+            onClick={() => navigate("/")}
+          >
+            AKT Garment Inventory
+          </h1>
             <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
               Beta
             </span>
