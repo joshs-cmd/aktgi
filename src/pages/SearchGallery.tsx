@@ -10,7 +10,7 @@ import { useEffect, useRef } from "react";
 const SearchGallery = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { isLoading, response, error, search } = useCatalogSearch();
+  const { isLoading, response, error, search, clearResults } = useCatalogSearch();
   const lastQueryRef = useRef<string | null>(null);
 
   // Restore search from URL param (for back navigation)
@@ -44,7 +44,11 @@ const SearchGallery = () => {
         <div className="flex items-center gap-3">
           <h1
             className="text-2xl font-bold tracking-tight cursor-pointer hover:text-primary transition-colors"
-            onClick={() => navigate("/")}
+            onClick={() => {
+              lastQueryRef.current = null;
+              clearResults();
+              navigate("/", { replace: true });
+            }}
           >
             AKT Garment Inventory
           </h1>
