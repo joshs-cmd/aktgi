@@ -1,7 +1,7 @@
 import { CatalogProduct } from "@/types/catalog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Package, Palette, Boxes } from "lucide-react";
+import { Package, Palette, Boxes, Store } from "lucide-react";
 
 interface ProductCardProps {
   product: CatalogProduct;
@@ -10,6 +10,7 @@ interface ProductCardProps {
 
 export function ProductCard({ product, onClick }: ProductCardProps) {
   const formattedInventory = product.totalInventory.toLocaleString();
+  const sources = product.distributorSources ?? [product.distributorName];
 
   return (
     <Card
@@ -70,6 +71,20 @@ export function ProductCard({ product, onClick }: ProductCardProps) {
               <Boxes className="h-3 w-3" />
               {formattedInventory} In Stock
             </span>
+          </div>
+
+          {/* Distributor Sources */}
+          <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+            <Store className="h-3 w-3 text-muted-foreground shrink-0" />
+            {sources.map((src) => (
+              <Badge
+                key={src}
+                variant="outline"
+                className="text-[10px] px-1.5 py-0 font-normal"
+              >
+                {src}
+              </Badge>
+            ))}
           </div>
         </div>
       </CardContent>
