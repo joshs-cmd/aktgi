@@ -60,9 +60,9 @@ serve(async (req) => {
     const distributorSkuMap: Record<string, string> | undefined = body.distributorSkuMap;
     const brand: string | undefined = body.brand;
 
-    if (!query || typeof query !== "string") {
+    if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
-        JSON.stringify({ error: "Query parameter is required" }),
+        JSON.stringify({ error: "Invalid query format" }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -152,7 +152,7 @@ serve(async (req) => {
                 status: "error" as const,
                 product: null,
                 lastSynced: null,
-                errorMessage: error.message,
+                errorMessage: "Provider temporarily unavailable",
               };
             }
 
@@ -184,7 +184,7 @@ serve(async (req) => {
             status: "error" as const,
             product: null,
             lastSynced: null,
-            errorMessage: err instanceof Error ? err.message : "Unknown error",
+            errorMessage: "Provider temporarily unavailable",
           };
         }
       })
@@ -340,7 +340,7 @@ serve(async (req) => {
     console.error("[sourcing-engine] Fatal error:", error);
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: "Service temporarily unavailable",
       }),
       {
         status: 500,
