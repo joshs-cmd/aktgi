@@ -750,9 +750,9 @@ serve(async (req) => {
   try {
     const { query } = await req.json();
 
-    if (!query || typeof query !== "string") {
+    if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
-        JSON.stringify({ error: "Query parameter is required" }),
+        JSON.stringify({ error: "Invalid query format" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -796,7 +796,7 @@ serve(async (req) => {
     console.error("[catalog-search] Fatal error:", error);
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: "Service temporarily unavailable",
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

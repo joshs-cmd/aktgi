@@ -341,9 +341,9 @@ serve(async (req) => {
   try {
     const { query, distributorId } = await req.json();
 
-    if (!query) {
+    if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
-        JSON.stringify({ error: "Query parameter is required" }),
+        JSON.stringify({ error: "Invalid query format" }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -361,7 +361,7 @@ serve(async (req) => {
       console.error("[provider-ss-activewear] Missing API credentials");
       return new Response(
         JSON.stringify({
-          error: "S&S Activewear API credentials not configured",
+          error: "Service temporarily unavailable",
           product: null,
         }),
         {
@@ -491,7 +491,7 @@ serve(async (req) => {
     console.error("[provider-ss-activewear] Fatal error:", error);
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: "Service temporarily unavailable",
         product: null,
       }),
       {

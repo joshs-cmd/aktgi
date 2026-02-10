@@ -747,9 +747,9 @@ serve(async (req) => {
   try {
     const { query, distributorId } = await req.json();
 
-    if (!query) {
+    if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
-        JSON.stringify({ error: "Query parameter is required" }),
+        JSON.stringify({ error: "Invalid query format" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -763,7 +763,7 @@ serve(async (req) => {
     if (!username || !password) {
       console.error("[provider-sanmar] Missing API credentials");
       return new Response(
-        JSON.stringify({ error: "SanMar API credentials not configured", product: null }),
+        JSON.stringify({ error: "Service temporarily unavailable", product: null }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -913,7 +913,7 @@ serve(async (req) => {
     console.error("[provider-sanmar] Fatal error:", error);
     return new Response(
       JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: "Service temporarily unavailable",
         product: null,
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

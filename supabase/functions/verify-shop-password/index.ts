@@ -23,7 +23,7 @@ serve(async (req) => {
   try {
     const { password } = await req.json();
 
-    if (!password || typeof password !== "string") {
+    if (!password || typeof password !== "string" || password.length > 200) {
       return new Response(
         JSON.stringify({ valid: false, error: "Password is required" } as VerifyResponse),
         {
@@ -98,7 +98,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         valid: false,
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: "Service temporarily unavailable",
       } as VerifyResponse),
       {
         status: 500,
