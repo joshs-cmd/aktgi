@@ -12,6 +12,8 @@ const PREFIX_BRAND_MAP: Record<string, string[]> = {
   "BC":  ["BELLA+CANVAS", "BELLA + CANVAS", "BELLA CANVAS", "BELLACANVAS"],
   "NL":  ["NEXT LEVEL", "NEXT LEVEL APPAREL", "NEXTLEVEL"],
   "G":   ["GILDAN"],
+  "GD":  ["GILDAN"],
+  "OS":  ["ONESTOP", "ONE STOP"],
   "PC":  ["PORT & COMPANY", "PORT AND COMPANY", "PORT COMPANY"],
   "CP":  ["CORNERSTONE", "CORNER STONE"],
   "DT":  ["DISTRICT", "DISTRICT MADE"],
@@ -84,8 +86,8 @@ serve(async (req) => {
     const distributors = [
       { id: "sanmar-001", code: "sanmar", name: "SanMar", is_active: true },
       { id: "ss-activewear-001", code: "ss-activewear", name: "S&S Activewear", is_active: true },
+      { id: "onestop-001", code: "onestop", name: "OneStop", is_active: true },
       { id: "as-colour-001", code: "as-colour", name: "AS Colour", is_active: false },
-      { id: "onestop-001", code: "onestop", name: "OneStop", is_active: false },
       { id: "mccreary-001", code: "mccreary", name: "McCreary's", is_active: false },
     ];
 
@@ -196,7 +198,7 @@ serve(async (req) => {
     // ===============================================================
     
     /** Strip known vendor prefixes if remainder starts with digit */
-    const KNOWN_PREFIXES = ["SAN", "BC", "NL", "PC", "CP", "DT", "CC", "SS", "G", "J", "H"];
+    const KNOWN_PREFIXES = ["SAN", "BC", "NL", "PC", "CP", "DT", "CC", "SS", "GD", "OS", "G", "J", "H"];
     const normalizeStyleNumber = (sn: string): string => {
       const upper = sn.toUpperCase().replace(/[^A-Z0-9]/g, "");
       for (const prefix of KNOWN_PREFIXES) {
