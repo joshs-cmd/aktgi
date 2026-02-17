@@ -75,6 +75,8 @@ const PREFIX_BRAND_MAP: Record<string, string[]> = {
   "BC":  ["BELLA+CANVAS", "BELLA + CANVAS", "BELLA CANVAS", "BELLACANVAS"],
   "NL":  ["NEXT LEVEL", "NEXT LEVEL APPAREL", "NEXTLEVEL"],
   "G":   ["GILDAN"],
+  "GD":  ["GILDAN"],
+  "OS":  ["ONESTOP", "ONE STOP"],
   "PC":  ["PORT & COMPANY", "PORT AND COMPANY", "PORT COMPANY", "PORTCOMPANY"],
   "CP":  ["CORNERSTONE", "CORNER STONE"],
   "DT":  ["DISTRICT", "DISTRICT MADE"],
@@ -90,6 +92,25 @@ const ORDERED_PREFIXES = Object.keys(PREFIX_BRAND_MAP).sort((a, b) => b.length -
 
 /** All known prefixes for blind (no-brand) normalization */
 const ALL_PREFIXES = ORDERED_PREFIXES;
+
+// ---------- OneStop types ----------
+
+interface OneStopItem {
+  mill_id?: string;
+  mill_name?: string;
+  color?: string;
+  color_code?: string;
+  color_hex?: string;
+  size?: string;
+  my_price?: number;
+  on_hand?: number;
+  image?: string;
+  swatch_image?: string;
+  description?: string;
+  category?: string;
+  style?: string;
+  item_number?: string;
+}
 
 /**
  * Blind SKU normalization (no brand context).
@@ -301,6 +322,8 @@ function buildImageUrl(relativePath: string | undefined): string | null {
 const BRAND_PREFIX_MAP: Record<string, string[]> = {
   "BC": ["Bella Canvas", "Bella+Canvas"],
   "G": ["Gildan"],
+  "GD": ["Gildan"],
+  "OS": ["OneStop"],
   "PC": ["Port & Company", "Port Company"],
   "NL": ["Next Level"],
   "SAN": ["SanMar"],
@@ -740,6 +763,95 @@ async function fetchSanMarCatalog(
   return allProducts;
 }
 
+// ---------- OneStop Catalog Fetch ----------
+
+function parseOneStopItem(item: OneStopItem): RawCatalogProduct | null {
+  const style = item.style || item.item_number || "";
+  if (!style) return null;
+
+  return {
+    styleNumber: style,
+    name: item.description || `${item.mill_name || ""} ${style}`.trim(),
+    brand: item.mill_name || "",
+    category: item.category || "",
+    imageUrl: item.image || undefined,
+    colorCount: 1, // Each item is one color—will be aggregated in dedup
+    totalInventory: item.on_hand || 0,
+    isProgramItem: false,
+    distributorCode: "onestop",
+    distributorName: "OneStop",
+  };
+}
+
+async function fetchOneStopCatalog(query: string): Promise<RawCatalogProduct[]> {
+  const apiToken = Deno.env.get("ONESTOP_API_TOKEN");
+  if (!apiToken) {
+    console.log("[catalog-search] OneStop: no API token configured, skipping");
+    return [];
+  }
+
+  const fetchOpts: RequestInit = {
+    headers: {
+      Authorization: `Token ${apiToken}`,
+      Accept: "application/json; version=1.0",
+    },
+  };
+
+  try {
+    const url = `https://api.onestopinc.com/items/?search=${encodeURIComponent(query)}&flat=Y`;
+    console.log(`[catalog-search] OneStop search: ${url}`);
+
+    const res = await fetch(url, fetchOpts);
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(`[catalog-search] OneStop API error ${res.status}: ${body.substring(0, 200)}`);
+      return [];
+    }
+
+    const data = await res.json();
+    const items: OneStopItem[] = Array.isArray(data) ? data : (data.results || []);
+
+    console.log(`[catalog-search] OneStop returned ${items.length} items`);
+
+    // Aggregate items by style to produce one RawCatalogProduct per style
+    const styleGroups = new Map<string, { items: OneStopItem[]; colorSet: Set<string>; totalInv: number }>();
+    for (const item of items) {
+      const style = (item.style || "").toUpperCase().trim();
+      if (!style) continue;
+      if (!styleGroups.has(style)) {
+        styleGroups.set(style, { items: [], colorSet: new Set(), totalInv: 0 });
+      }
+      const g = styleGroups.get(style)!;
+      g.items.push(item);
+      if (item.color) g.colorSet.add(item.color);
+      g.totalInv += item.on_hand || 0;
+    }
+
+    const products: RawCatalogProduct[] = [];
+    for (const [style, group] of styleGroups) {
+      const first = group.items[0];
+      products.push({
+        styleNumber: first.style || style,
+        name: first.description || `${first.mill_name || ""} ${style}`.trim(),
+        brand: first.mill_name || "",
+        category: first.category || "",
+        imageUrl: first.image || undefined,
+        colorCount: group.colorSet.size,
+        totalInventory: group.totalInv,
+        isProgramItem: false,
+        distributorCode: "onestop",
+        distributorName: "OneStop",
+      });
+    }
+
+    console.log(`[catalog-search] OneStop: ${products.length} unique styles`);
+    return products;
+  } catch (err) {
+    console.error("[catalog-search] OneStop fetch error:", err);
+    return [];
+  }
+}
+
 // ---------- Handler ----------
 
 serve(async (req) => {
@@ -769,17 +881,18 @@ serve(async (req) => {
       ? "Basic " + btoa(`${ssUsername}:${ssPassword}`)
       : "";
 
-    const [ssResults, sanmarResults] = await Promise.all([
+    const [ssResults, sanmarResults, onestopResults] = await Promise.all([
       ssAuthHeader
         ? fetchSSActivewearCatalog(query, ssAuthHeader)
         : Promise.resolve([]),
       fetchSanMarCatalog(query, supabase),
+      fetchOneStopCatalog(query),
     ]);
 
-    console.log(`[catalog-search] S&S returned ${ssResults.length}, SanMar returned ${sanmarResults.length}`);
+    console.log(`[catalog-search] S&S returned ${ssResults.length}, SanMar returned ${sanmarResults.length}, OneStop returned ${onestopResults.length}`);
 
     // Combine raw results, then deduplicate + filter + score
-    const allRaw = [...ssResults, ...sanmarResults];
+    const allRaw = [...ssResults, ...sanmarResults, ...onestopResults];
     const querySKU = extractQuerySKU(query);
     const dedupedProducts = deduplicateProducts(allRaw, querySKU);
 

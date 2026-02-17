@@ -2,3 +2,6 @@ project_id = "qvthcgvfpfdonfqxsenn"
 
 [functions.verify-shop-password]
 verify_jwt = false
+
+[functions.provider-onestop]
+verify_jwt = false
