@@ -199,9 +199,12 @@ serve(async (req) => {
 
     const fetchOpts: RequestInit = {
       headers: {
-        Authorization: `Token ${apiToken}`,
-        Accept: "application/json; version=1.0",
+        "Authorization": `Token ${apiToken}`,
+        "Accept": "application/json; version=1.0",
+        "Accept-Language": "en-US,en;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
       },
+      signal: AbortSignal.timeout(10_000),
     };
 
     // Search OneStop items API
@@ -212,7 +215,11 @@ serve(async (req) => {
 
     if (!res.ok) {
       const body = await res.text();
-      console.error(`[provider-onestop] API error ${res.status}: ${body.substring(0, 200)}`);
+      if (res.status === 403) {
+        console.error(`[provider-onestop] Cloudflare Block (403) — not retrying to avoid IP ban. Body: ${body.substring(0, 300)}`);
+      } else {
+        console.error(`[provider-onestop] API error ${res.status}: ${body.substring(0, 200)}`);
+      }
       return new Response(
         JSON.stringify({ error: "Service temporarily unavailable", product: null }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -221,8 +228,25 @@ serve(async (req) => {
 
     const data = await res.json();
 
-    // OneStop may return { results: [...] } or a flat array
-    const items: OneStopItem[] = Array.isArray(data) ? data : (data.results || []);
+    // Debug: log the shape of the response to understand structure
+    const dataType = Array.isArray(data) ? "array" : typeof data;
+    const topKeys = data && typeof data === "object" && !Array.isArray(data) ? Object.keys(data).slice(0, 10) : [];
+    console.log(`[provider-onestop] Response type: ${dataType}, top keys: [${topKeys.join(", ")}]`);
+
+    // OneStop may return { results: [...] }, { count, results: [...] }, or a flat array
+    let items: OneStopItem[];
+    if (Array.isArray(data)) {
+      items = data;
+    } else if (data && typeof data === "object") {
+      // Try common pagination wrappers
+      items = data.results || data.items || data.data || [];
+      if (!Array.isArray(items)) {
+        console.log(`[provider-onestop] Unexpected response structure, wrapping single object`);
+        items = [data as OneStopItem];
+      }
+    } else {
+      items = [];
+    }
 
     console.log(`[provider-onestop] Got ${items.length} items for "${query}"`);
 
@@ -236,6 +260,7 @@ serve(async (req) => {
     // Filter items to those matching the query style
     const queryUpper = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
     const relevantItems = items.filter((item) => {
+      if (!item || typeof item !== "object") return false;
       const style = (item.style || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
       const itemNum = (item.item_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
       return style.includes(queryUpper) || itemNum.includes(queryUpper) || queryUpper.includes(style);
@@ -260,7 +285,11 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("[provider-onestop] Fatal error:", error);
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      console.error("[provider-onestop] Request timed out after 10s");
+    } else {
+      console.error("[provider-onestop] Fatal error:", error);
+    }
     return new Response(
       JSON.stringify({ error: "Service temporarily unavailable", product: null }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
