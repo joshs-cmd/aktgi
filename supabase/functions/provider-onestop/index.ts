@@ -209,16 +209,21 @@ serve(async (req) => {
 
     // Search OneStop items API
     const searchUrl = `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
-    console.log(`[provider-onestop] Fetching: ${searchUrl}`);
+    console.log(`[provider-onestop] Attempting request to OneStop — URL: ${searchUrl}`);
 
     const res = await fetch(searchUrl, fetchOpts);
 
     if (!res.ok) {
       const body = await res.text();
+      const cfRay = res.headers.get("cf-ray") || "N/A";
       if (res.status === 403) {
-        console.error(`[provider-onestop] Cloudflare Block (403) — not retrying to avoid IP ban. Body: ${body.substring(0, 300)}`);
+        console.error(`[provider-onestop] ===== CLOUDFLARE 403 BLOCK =====`);
+        console.error(`[provider-onestop] CF-Ray ID: ${cfRay}`);
+        console.error(`[provider-onestop] Status: ${res.status}`);
+        console.error(`[provider-onestop] Response Body (first 500 chars): ${body.substring(0, 500)}`);
+        console.error(`[provider-onestop] ===== END CLOUDFLARE BLOCK =====`);
       } else {
-        console.error(`[provider-onestop] API error ${res.status}: ${body.substring(0, 200)}`);
+        console.error(`[provider-onestop] API error ${res.status} | CF-Ray: ${cfRay} | Body: ${body.substring(0, 200)}`);
       }
       return new Response(
         JSON.stringify({ error: "Service temporarily unavailable", product: null }),
