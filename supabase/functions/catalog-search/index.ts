@@ -170,13 +170,33 @@ function normalizeBrand(brand: string): string {
 }
 
 /**
- * Extract the "SKU part" from a query: last whitespace-separated token, then normalize.
- * e.g. "Bella Canvas 3001" → "3001", "BC3001" → "3001"
+ * Extract the "SKU part" from a query.
+ * If the last token contains digits, normalize it as a SKU (e.g. "Bella Canvas 3001" → "3001").
+ * If no numeric SKU is found (pure brand query like "Gildan"), return the full query uppercased
+ * so brand-level discovery can proceed.
  */
 function extractQuerySKU(query: string): string {
   const parts = query.trim().split(/\s+/);
-  const raw = (parts.pop() || query.trim()).toUpperCase();
-  return normalizeSKU(raw);
+  const lastToken = (parts.pop() || query.trim()).toUpperCase();
+  const normalized = normalizeSKU(lastToken);
+  // If normalized result has at least one digit, it's a real SKU
+  if (/\d/.test(normalized)) return normalized;
+  // No numeric SKU found — return the full query for brand-level matching
+  return query.trim().toUpperCase().replace(/[^A-Z0-9 &+\-]/g, "");
+}
+
+/** Check if a query matches a known brand name from BRAND_PREFIX_MAP */
+function detectBrandQuery(query: string): string | null {
+  const upper = query.trim().toUpperCase();
+  for (const brands of Object.values(BRAND_PREFIX_MAP)) {
+    for (const b of brands) {
+      const normalB = b.toUpperCase();
+      if (upper === normalB || upper.includes(normalB) || normalB.includes(upper)) {
+        return brands[0]; // Return the canonical brand name
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -192,7 +212,8 @@ function extractQuerySKU(query: string): string {
 function matchProduct(
   styleNumber: string,
   productName: string,
-  querySKU: string
+  querySKU: string,
+  productBrand?: string
 ): "exact" | "starts" | "contains" | "title" | null {
   const normalized = normalizeSKU(styleNumber);
   const q = querySKU.toUpperCase().trim();
@@ -216,6 +237,12 @@ function matchProduct(
   const upperName = productName.toUpperCase();
   if (upperName.includes(q)) return "title";
 
+  // Tier 4: Brand name matches query (for brand-level discovery)
+  if (productBrand) {
+    const upperBrand = productBrand.toUpperCase();
+    if (upperBrand.includes(q) || q.includes(upperBrand)) return "title";
+  }
+
   return null;
 }
 
@@ -224,12 +251,18 @@ function matchProduct(
 function calculateScore(
   matchType: "exact" | "starts" | "contains" | "title",
   colorCount: number,
-  totalInventory: number
+  totalInventory: number,
+  isBrandQuery = false
 ): number {
   const tierPoints = matchType === "exact" ? 2000
     : matchType === "starts" ? 1000
     : matchType === "contains" ? 500
     : 250;
+  // For brand-level queries, heavily boost popularity signals within Tier 4
+  // so the most popular items (highest inventory + colors) float to the top
+  if (isBrandQuery && matchType === "title") {
+    return tierPoints + (colorCount * 50) + Math.floor(totalInventory / 10);
+  }
   return tierPoints + (colorCount * 10) + Math.floor(totalInventory / 100);
 }
 
@@ -237,7 +270,8 @@ function calculateScore(
 
 function deduplicateProducts(
   products: RawCatalogProduct[],
-  querySKU: string
+  querySKU: string,
+  isBrandQuery = false
 ): DedupedCatalogProduct[] {
   const groups = new Map<string, {
     items: RawCatalogProduct[];
@@ -245,7 +279,7 @@ function deduplicateProducts(
   }>();
 
   for (const p of products) {
-    const matchType = matchProduct(p.styleNumber, p.name, querySKU);
+    const matchType = matchProduct(p.styleNumber, p.name, querySKU, p.brand);
     if (!matchType) continue; // Only exclude if zero relevance
 
     // Group key: normalized brand + fingerprint (merges "Next Level" + "Next Level Apparel")
@@ -282,7 +316,7 @@ function deduplicateProducts(
       }
     }
 
-    const score = calculateScore(group.matchType, colorCount, totalInventory);
+    const score = calculateScore(group.matchType, colorCount, totalInventory, isBrandQuery);
 
     deduped.push({
       styleNumber: primary.styleNumber,
@@ -581,18 +615,58 @@ async function fetchSSActivewearCatalog(
   };
 
   const querySKU = extractQuerySKU(query);
+  const brandName = detectBrandQuery(query);
   const variants = generateSearchVariants(query);
-  console.log(`[catalog-search] S&S multi-cast: ${variants.length} search variants`);
+  console.log(`[catalog-search] S&S multi-cast: ${variants.length} search variants, brandQuery=${brandName || "none"}`);
+
+  // Phase 0: If query is a brand name, directly fetch brand styles from S&S
+  let brandStyles: SSStyle[] = [];
+  if (brandName) {
+    console.log(`[catalog-search] S&S brand discovery for: ${brandName}`);
+    const brandVariants = [
+      brandName,
+      brandName.replace(/\+/g, "and"),
+      brandName.replace(/&/g, "and"),
+    ];
+    for (const bv of [...new Set(brandVariants)]) {
+      try {
+        const url = `${SS_API_BASE}/styles/${encodeURIComponent(bv)}`;
+        console.log(`[catalog-search] S&S brand styles fetch: ${url}`);
+        const res = await fetch(url, fetchOpts);
+        if (res.ok) {
+          const data: SSStyle[] = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            console.log(`[catalog-search] S&S brand "${bv}": ${data.length} styles`);
+            brandStyles = data;
+            break;
+          }
+        } else {
+          await res.text();
+        }
+      } catch (err) {
+        console.error(`[catalog-search] S&S brand fetch error for "${bv}":`, err);
+      }
+    }
+  }
 
   // Phase 1: Multi-cast search
   const phase1Styles = await fetchSSStylesBySearch(variants, fetchOpts);
+
+  // Merge brand styles into phase1 (deduped)
+  const existingIds = new Set(phase1Styles.map((s) => s.styleID!).filter(Boolean));
+  for (const bs of brandStyles) {
+    if (bs.styleID && !existingIds.has(bs.styleID)) {
+      existingIds.add(bs.styleID);
+      phase1Styles.push(bs);
+    }
+  }
 
   if (phase1Styles.length === 0) {
     console.log("[catalog-search] S&S: no styles found across all variants");
     return [];
   }
 
-  console.log(`[catalog-search] S&S Phase 1: ${phase1Styles.length} unique styles from search`);
+  console.log(`[catalog-search] S&S Phase 1: ${phase1Styles.length} unique styles (incl. brand discovery)`);
 
   // Phase 2: Brand-level family fetch for ALL matching brands
   // Collect all unique brands from exact/starts-with matches (not just the first one)
@@ -610,22 +684,24 @@ async function fetchSSActivewearCatalog(
 
   console.log(`[catalog-search] S&S family brands: ${[...matchingBrands].join(", ")}`);
 
-  const existingIds = new Set(phase1Styles.map((s) => s.styleID!).filter(Boolean));
-  
-  // Fetch families for ALL matching brands in parallel
-  const familyResults = await Promise.all(
-    [...matchingBrands].map((brand) =>
-      fetchSSFamilyStyles(brand, querySKU, existingIds, fetchOpts)
-    )
-  );
-  const familyStyles = familyResults.flat();
-  
-  // Dedupe family styles against existing
-  const uniqueFamilyStyles = familyStyles.filter((s) => {
-    if (!s.styleID || existingIds.has(s.styleID)) return false;
-    existingIds.add(s.styleID);
-    return true;
-  });
+  // For brand queries, skip family fetch (we already have brand styles)
+  let uniqueFamilyStyles: SSStyle[] = [];
+  if (!brandName) {
+    // Fetch families for ALL matching brands in parallel
+    const familyResults = await Promise.all(
+      [...matchingBrands].map((brand) =>
+        fetchSSFamilyStyles(brand, querySKU, existingIds, fetchOpts)
+      )
+    );
+    const familyStyles = familyResults.flat();
+    
+    // Dedupe family styles against existing
+    uniqueFamilyStyles = familyStyles.filter((s) => {
+      if (!s.styleID || existingIds.has(s.styleID)) return false;
+      existingIds.add(s.styleID);
+      return true;
+    });
+  }
 
   // Combine and limit
   const allStyles = [...phase1Styles, ...uniqueFamilyStyles];
@@ -894,7 +970,9 @@ serve(async (req) => {
     // Combine raw results, then deduplicate + filter + score
     const allRaw = [...ssResults, ...sanmarResults, ...onestopResults];
     const querySKU = extractQuerySKU(query);
-    const dedupedProducts = deduplicateProducts(allRaw, querySKU);
+    const isBrandQuery = !!detectBrandQuery(query);
+    console.log(`[catalog-search] querySKU="${querySKU}", isBrandQuery=${isBrandQuery}`);
+    const dedupedProducts = deduplicateProducts(allRaw, querySKU, isBrandQuery);
 
     console.log(`[catalog-search] After dedup/filter: ${dedupedProducts.length} products`);
 
