@@ -3,15 +3,6 @@ import { Search, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-// Brand-only terms that require a SKU
-const BRAND_ONLY_TERMS = [
-  'gildan', 'bella', 'canvas', 'bella+canvas', 'bella canvas',
-  'next level', 'nextlevel', 'port', 'port & company', 'port and company',
-  'hanes', 'fruit', 'fruit of the loom', 'champion', 'american apparel',
-  'comfort colors', 'jerzees', 'anvil', 'alstyle', 'district', 'sport-tek',
-  'bayside', 'sanmar', 'ss activewear', 'alphabroder'
-];
-
 interface SearchBarProps {
   onSearch: (query: string) => void;
   isLoading: boolean;
@@ -26,27 +17,17 @@ export interface SearchValidation {
 export function validateSearch(query: string): SearchValidation {
   const trimmed = query.trim();
   
-  // Minimum length check
   if (trimmed.length < 3) {
     return { 
       isValid: false, 
-      error: "Please enter a specific SKU for comparison (at least 3 characters)." 
-    };
-  }
-  
-  // Brand-only check
-  const lowerQuery = trimmed.toLowerCase();
-  if (BRAND_ONLY_TERMS.includes(lowerQuery)) {
-    return { 
-      isValid: false, 
-      error: "Please enter a specific SKU for comparison (e.g., 'Gildan 5000' not just 'Gildan')." 
+      error: "Please enter at least 3 characters to search." 
     };
   }
   
   return { isValid: true, error: null };
 }
 
-export function SearchBar({ onSearch, isLoading, placeholder = "Style or SKU (e.g., Gildan 5000, 3001, 00760)" }: SearchBarProps) {
+export function SearchBar({ onSearch, isLoading, placeholder = "Search by SKU or Brand (e.g. Gildan 5000 or Next Level)" }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
 
