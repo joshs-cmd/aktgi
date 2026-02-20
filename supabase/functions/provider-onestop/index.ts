@@ -7,10 +7,11 @@ const corsHeaders = {
 };
 
 const ONESTOP_API_BASE = "https://api.onestopinc.com";
+const ONESTOP_MEDIA_BASE = "https://media.onestopinc.com/";
 
 // Size order mapping for sorting
 const SIZE_ORDER: Record<string, number> = {
-  XS: 1, S: 2, M: 3, L: 4, XL: 5,
+  XS: 1, SM: 2, S: 2, M: 3, MD: 3, L: 4, LG: 4, XL: 5,
   "2XL": 6, "3XL": 7, "4XL": 8, "5XL": 9, "6XL": 10,
   "2X": 6, "3X": 7, "4X": 8, "5X": 9, "6X": 10,
   XXL: 6, XXXL: 7, XXXXL: 8,
@@ -48,88 +49,92 @@ interface StandardProduct {
   colors: StandardColor[];
 }
 
-// OneStop API item shape (partial — only fields we use)
+// OneStop item from /items/?style= endpoint
 interface OneStopItem {
-  mill_id?: string;
-  mill_name?: string;
-  color?: string;
-  color_code?: string;
-  color_hex?: string;
-  size?: string;
-  my_price?: number;       // price in CENTS
-  on_hand?: number;
-  image?: string;
-  swatch_image?: string;
+  uid?: string;
+  code?: string;            // "NL-207-90-LG"
+  mill_code?: string;
+  style_code?: string;      // "207"
+  color_code?: string;      // "90"
+  size_code?: string;       // "LG"
+  color_name?: string;      // "White"
   description?: string;
-  category?: string;
-  style?: string;          // e.g. "3600"
-  item_number?: string;    // e.g. "GD-110-36-XL" (raw OneStop code)
+  on_hand?: number;
+  mill_name?: string;       // "Next Level Apparel"
+  mill_style_code?: string;
+  style?: string;           // "NL207"
+  web_name?: string;        // "Unisex Cotton T-Shirt"
+  images?: {
+    main?: string;
+    front?: string;
+    back?: string;
+    swatch?: string;
+    side?: string;
+    other?: string;
+  };
+  filters?: string;
+  size_number?: string;     // Numeric sort order from API
+  active_flag?: string;
 }
 
 function getSizeOrder(sizeCode: string): number {
   const normalized = sizeCode.toUpperCase().trim();
-  if (SIZE_ORDER[normalized]) return SIZE_ORDER[normalized];
-  if (normalized === "XXL") return SIZE_ORDER["2XL"];
-  if (normalized === "XXXL") return SIZE_ORDER["3XL"];
-  return 99;
+  return SIZE_ORDER[normalized] ?? 99;
+}
+
+function resolveImageUrl(path: string | undefined): string | null {
+  if (!path) return null;
+  if (path.startsWith("http")) return path;
+  return `${ONESTOP_MEDIA_BASE}${path}`;
 }
 
 /**
- * Aggregate flat OneStop items into a color-grouped StandardProduct
+ * Aggregate flat OneStop items into a color-grouped StandardProduct.
+ * OneStop items come from /items/?style={code} — one row per color+size combo.
+ * No pricing data is available from this endpoint.
  */
 function aggregateItems(items: OneStopItem[]): StandardProduct | null {
   if (!items || items.length === 0) return null;
 
   const first = items[0];
 
-  // Group by color
+  // Group by color_name
   const colorMap = new Map<string, {
     code: string;
     name: string;
-    hexCode: string | null;
     swatchUrl: string | null;
     imageUrl: string | null;
-    sizesMap: Map<string, { code: string; order: number; price: number; quantity: number }>;
+    sizesMap: Map<string, { code: string; order: number; quantity: number }>;
   }>();
 
   for (const item of items) {
-    const colorName = item.color || "Default";
+    if (item.active_flag && item.active_flag !== "Y") continue;
+
+    const colorName = item.color_name || "Default";
     const colorCode = item.color_code || "00";
 
     if (!colorMap.has(colorName)) {
       colorMap.set(colorName, {
         code: colorCode,
         name: colorName,
-        hexCode: item.color_hex ? `#${item.color_hex}` : null,
-        swatchUrl: item.swatch_image || null,
-        imageUrl: item.image || null,
+        swatchUrl: resolveImageUrl(item.images?.swatch),
+        imageUrl: resolveImageUrl(item.images?.front),
         sizesMap: new Map(),
       });
     }
 
     const colorEntry = colorMap.get(colorName)!;
-    const sizeName = item.size || "OS";
+    const sizeName = item.size_code || "OS";
 
     if (!colorEntry.sizesMap.has(sizeName)) {
       colorEntry.sizesMap.set(sizeName, {
         code: sizeName,
-        order: getSizeOrder(sizeName),
-        price: 0,
+        order: item.size_number ? parseInt(item.size_number, 10) : getSizeOrder(sizeName),
         quantity: 0,
       });
     }
 
     const sizeEntry = colorEntry.sizesMap.get(sizeName)!;
-
-    // my_price is in cents → convert to dollars
-    if (item.my_price && item.my_price > 0) {
-      const dollars = item.my_price / 100;
-      if (sizeEntry.price === 0 || dollars < sizeEntry.price) {
-        sizeEntry.price = Math.round(dollars * 100) / 100;
-      }
-    }
-
-    // Accumulate on_hand inventory
     sizeEntry.quantity += item.on_hand || 0;
   }
 
@@ -139,7 +144,7 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
       .map((s) => ({
         code: s.code,
         order: s.order,
-        price: s.price,
+        price: 0, // OneStop API does not expose pricing
         inventory: [
           {
             warehouseCode: "OS-WH",
@@ -153,7 +158,7 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
     return {
       code: c.code,
       name: c.name,
-      hexCode: c.hexCode,
+      hexCode: null,
       swatchUrl: c.swatchUrl,
       imageUrl: c.imageUrl,
       sizes,
@@ -161,23 +166,22 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
   }).sort((a, b) => a.name.localeCompare(b.name));
 
   return {
-    styleNumber: first.style || first.item_number || "",
-    name: first.description || `${first.mill_name || ""} ${first.style || ""}`.trim(),
+    styleNumber: first.mill_style_code || first.style_code || first.style || "",
+    name: first.web_name || first.description || "",
     brand: first.mill_name || "",
-    category: first.category || "",
-    imageUrl: first.image || undefined,
+    category: first.filters || "",
+    imageUrl: resolveImageUrl(first.images?.main),
     colors,
   };
 }
 
 serve(async (req) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const { query, distributorId } = await req.json();
+    const { query } = await req.json();
 
     if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
@@ -201,59 +205,83 @@ serve(async (req) => {
       headers: {
         "Authorization": `Token ${apiToken}`,
         "Accept": "application/json; version=1.0",
-        "Accept-Language": "en-US,en;q=0.9",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
       },
       signal: AbortSignal.timeout(10_000),
     };
 
-    // Search OneStop items API
+    // Step 1: Search catalog to find matching style codes
     const searchUrl = `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
-    console.log(`[provider-onestop] Attempting request to OneStop — URL: ${searchUrl}`);
+    console.log(`[provider-onestop] Catalog search: ${searchUrl}`);
 
-    const res = await fetch(searchUrl, fetchOpts);
-
-    if (!res.ok) {
-      const body = await res.text();
-      const cfRay = res.headers.get("cf-ray") || "N/A";
-      if (res.status === 403) {
-        console.error(`[provider-onestop] ===== CLOUDFLARE 403 BLOCK =====`);
-        console.error(`[provider-onestop] CF-Ray ID: ${cfRay}`);
-        console.error(`[provider-onestop] Status: ${res.status}`);
-        console.error(`[provider-onestop] Response Body (first 500 chars): ${body.substring(0, 500)}`);
-        console.error(`[provider-onestop] ===== END CLOUDFLARE BLOCK =====`);
-      } else {
-        console.error(`[provider-onestop] API error ${res.status} | CF-Ray: ${cfRay} | Body: ${body.substring(0, 200)}`);
-      }
+    const catalogRes = await fetch(searchUrl, fetchOpts);
+    if (!catalogRes.ok) {
+      const body = await catalogRes.text();
+      console.error(`[provider-onestop] Catalog search failed ${catalogRes.status}: ${body.substring(0, 500)}`);
       return new Response(
         JSON.stringify({ error: "Service temporarily unavailable", product: null }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const data = await res.json();
+    const catalogData = await catalogRes.json();
 
-    // Debug: log the shape of the response to understand structure
-    const dataType = Array.isArray(data) ? "array" : typeof data;
-    const topKeys = data && typeof data === "object" && !Array.isArray(data) ? Object.keys(data).slice(0, 10) : [];
-    console.log(`[provider-onestop] Response type: ${dataType}, top keys: [${topKeys.join(", ")}]`);
+    // Catalog returns { results: { "STYLE_CODE": {...}, ... }, count, status }
+    const styleEntries = catalogData.results && typeof catalogData.results === "object" && !Array.isArray(catalogData.results)
+      ? Object.entries(catalogData.results) as [string, Record<string, unknown>][]
+      : [];
 
-    // OneStop may return { results: [...] }, { count, results: [...] }, or a flat array
-    let items: OneStopItem[];
-    if (Array.isArray(data)) {
-      items = data;
-    } else if (data && typeof data === "object") {
-      // Try common pagination wrappers
-      items = data.results || data.items || data.data || [];
-      if (!Array.isArray(items)) {
-        console.log(`[provider-onestop] Unexpected response structure, wrapping single object`);
-        items = [data as OneStopItem];
-      }
-    } else {
-      items = [];
+    console.log(`[provider-onestop] Catalog returned ${styleEntries.length} styles`);
+
+    if (styleEntries.length === 0) {
+      return new Response(
+        JSON.stringify({ product: null }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    console.log(`[provider-onestop] Got ${items.length} items for "${query}"`);
+    // Find the best matching style (prefer exact mill_style_code match)
+    const queryUpper = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    let bestEntry = styleEntries[0];
+    for (const entry of styleEntries) {
+      const info = entry[1] as Record<string, unknown>;
+      const millStyle = ((info.mill_style_code as string) || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const fullStyle = (entry[0]).toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (millStyle === queryUpper || fullStyle === queryUpper) {
+        bestEntry = entry;
+        break;
+      }
+    }
+
+    const [bestStyleCode, bestInfoRaw] = bestEntry;
+    const bestInfo = bestInfoRaw as Record<string, unknown>;
+    console.log(`[provider-onestop] Best match: ${bestStyleCode} (${bestInfo.web_name})`);
+
+    // Step 2: Fetch item-level inventory using /items/?style={styleCode}
+    const inventoryUrl = `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(bestStyleCode)}`;
+    console.log(`[provider-onestop] Fetching inventory: ${inventoryUrl}`);
+
+    const invRes = await fetch(inventoryUrl, fetchOpts);
+    if (!invRes.ok) {
+      console.error(`[provider-onestop] Inventory fetch failed: ${invRes.status}`);
+      // Return catalog-level data as fallback
+      return new Response(
+        JSON.stringify({
+          product: {
+            styleNumber: (bestInfo.mill_style_code as string) || bestStyleCode,
+            name: (bestInfo.web_name as string) || "",
+            brand: (bestInfo.mill_name as string) || "",
+            category: (bestInfo.filters as string) || "",
+            imageUrl: resolveImageUrl(bestInfo.generic_image as string),
+            colors: [],
+          },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const invData = await invRes.json();
+    const items: OneStopItem[] = Array.isArray(invData.results) ? invData.results : [];
+    console.log(`[provider-onestop] Got ${items.length} inventory items for ${bestStyleCode}`);
 
     if (items.length === 0) {
       return new Response(
@@ -262,19 +290,7 @@ serve(async (req) => {
       );
     }
 
-    // Filter items to those matching the query style
-    const queryUpper = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const relevantItems = items.filter((item) => {
-      if (!item || typeof item !== "object") return false;
-      const style = (item.style || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const itemNum = (item.item_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      return style.includes(queryUpper) || itemNum.includes(queryUpper) || queryUpper.includes(style);
-    });
-
-    const itemsToAggregate = relevantItems.length > 0 ? relevantItems : items;
-    console.log(`[provider-onestop] Using ${itemsToAggregate.length} relevant items (filtered from ${items.length})`);
-
-    const product = aggregateItems(itemsToAggregate);
+    const product = aggregateItems(items);
 
     if (!product) {
       return new Response(
@@ -283,7 +299,12 @@ serve(async (req) => {
       );
     }
 
-    console.log(`[provider-onestop] Returning: ${product.brand} ${product.styleNumber} with ${product.colors.length} colors`);
+    // Ensure styleNumber uses the mill_style_code (e.g. "3600") not internal code
+    if (bestInfo.mill_style_code && typeof bestInfo.mill_style_code === "string" && bestInfo.mill_style_code.length > 0) {
+      product.styleNumber = bestInfo.mill_style_code;
+    }
+
+    console.log(`[provider-onestop] Returning: ${product.brand} ${product.styleNumber} — ${product.colors.length} colors, ${product.colors.reduce((sum, c) => sum + c.sizes.length, 0)} size rows`);
 
     return new Response(
       JSON.stringify({ product }),
