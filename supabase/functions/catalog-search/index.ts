@@ -280,22 +280,41 @@ function deduplicateProducts(
 
   for (const p of products) {
     const matchType = matchProduct(p.styleNumber, p.name, querySKU, p.brand);
-    if (!matchType) continue; // Only exclude if zero relevance
+    if (!matchType) continue;
 
-    // Group key: normalized brand + fingerprint (merges "Next Level" + "Next Level Apparel")
+    // Primary key: normalized brand + fingerprint
     const fingerprint = generateFingerprint(p.styleNumber, p.brand);
-    const key = `${normalizeBrand(p.brand)}::${fingerprint}`;
+    const brandKey = normalizeBrand(p.brand);
+    const primaryKey = `${brandKey}::${fingerprint}`;
 
-    const existing = groups.get(key);
+    // Also compute a "numeric root" key for aggressive cross-distributor merging.
+    // Extract just the leading digits from the fingerprint (e.g. "3001CVC" -> "3001", "3600" -> "3600")
+    const numericRoot = fingerprint.match(/^(\d+)/)?.[1] ?? "";
+    // Use numeric root key ONLY when the root is long enough (3+ digits) AND brands match
+    const aggressiveKey = numericRoot.length >= 3 ? `${brandKey}::${numericRoot}` : "";
+
+    // Try to find an existing group: first by primary key, then by aggressive numeric root
+    let groupKey = primaryKey;
+    if (!groups.has(primaryKey) && aggressiveKey && groups.has(aggressiveKey)) {
+      groupKey = aggressiveKey;
+    } else if (aggressiveKey && !groups.has(primaryKey)) {
+      // Register under aggressive key so future items with same root merge here
+      groupKey = aggressiveKey;
+    }
+
+    const existing = groups.get(groupKey);
     if (existing) {
       existing.items.push(p);
-      // Promote to best match type
       const rank = { exact: 4, starts: 3, contains: 2, title: 1 };
       if (rank[matchType] > rank[existing.matchType]) {
         existing.matchType = matchType;
       }
     } else {
-      groups.set(key, { items: [p], matchType });
+      groups.set(groupKey, { items: [p], matchType });
+      // Also register under primary key if different from groupKey
+      if (aggressiveKey && groupKey === aggressiveKey && primaryKey !== aggressiveKey) {
+        // Don't double-register, the aggressive key is canonical
+      }
     }
   }
 
@@ -308,7 +327,6 @@ function deduplicateProducts(
     const colorCount = Math.max(...group.items.map((i) => i.colorCount));
     const isProgramItem = group.items.some((i) => i.isProgramItem);
 
-    // Build distributorSkuMap: { "sanmar": "NL3600", "ss-activewear": "3600" }
     const distributorSkuMap: Record<string, string> = {};
     for (const item of group.items) {
       if (!distributorSkuMap[item.distributorCode]) {
@@ -336,7 +354,6 @@ function deduplicateProducts(
     });
   }
 
-  // Sort: score descending
   deduped.sort((a, b) => b.score - a.score);
   return deduped;
 }
@@ -348,6 +365,36 @@ function buildImageUrl(relativePath: string | undefined): string | null {
   if (relativePath.startsWith("http")) return relativePath;
   const largePath = relativePath.replace(/_fm\./i, "_fl.");
   return `https://www.ssactivewear.com/${largePath}`;
+}
+
+// ---------- Semantic Keyword Expansion ----------
+
+/** Map semantic keywords to search terms for distributor APIs */
+const KEYWORD_EXPANSIONS: Record<string, string[]> = {
+  "CVC": ["CVC", "60/40"],
+  "SLEEVELESS": ["Tank Top", "Tank", "Sleeveless"],
+  "TANK": ["Tank Top", "Tank", "Sleeveless"],
+  "HOODIE": ["Hooded Sweatshirt", "Hoodie", "Pullover Hood"],
+  "CREWNECK": ["Crewneck Sweatshirt", "Crew Sweatshirt"],
+  "LONG SLEEVE": ["Long Sleeve", "LS"],
+  "POLO": ["Polo", "Pique"],
+};
+
+/** Expand a query with semantic synonyms */
+function expandQueryKeywords(query: string): string[] {
+  const upper = query.toUpperCase();
+  const expansions = new Set<string>();
+  expansions.add(query);
+  
+  for (const [keyword, synonyms] of Object.entries(KEYWORD_EXPANSIONS)) {
+    if (upper.includes(keyword)) {
+      for (const syn of synonyms) {
+        expansions.add(`${query} ${syn}`);
+        expansions.add(syn);
+      }
+    }
+  }
+  return [...expansions];
 }
 
 // ---------- Query Expansion ----------
@@ -370,8 +417,6 @@ const BRAND_PREFIX_MAP: Record<string, string[]> = {
 
 /**
  * Generate expanded search variants for the S&S API.
- * For a query like "3001", generates: ["3001", "BC3001", "Bella Canvas 3001", "NL3001", "G3001", ...]
- * For "BC3001", generates: ["BC3001", "3001", "Bella Canvas 3001"]
  */
 function generateSearchVariants(query: string): string[] {
   const variants = new Set<string>();
@@ -381,34 +426,34 @@ function generateSearchVariants(query: string): string[] {
   // Always include the raw query
   variants.add(trimmed);
   
+  // Add semantic expansions
+  for (const expanded of expandQueryKeywords(trimmed)) {
+    variants.add(expanded);
+  }
+  
   // Extract the numeric core
   const normalizedSKU = normalizeSKU(trimmed);
   if (normalizedSKU !== upper) {
-    variants.add(normalizedSKU); // stripped version (e.g. "3001" from "BC3001")
+    variants.add(normalizedSKU);
   }
   
   // If query is purely numeric or starts with digits, try all brand prefixes
   const isNumericQuery = /^\d+[A-Z]*$/i.test(normalizedSKU);
   
   if (isNumericQuery) {
-    // Add prefixed variants: BC3001, G3001, PC3001, etc.
     for (const prefix of Object.keys(BRAND_PREFIX_MAP)) {
       variants.add(`${prefix}${normalizedSKU}`);
     }
-    
-    // Add "Brand SKU" variants: "Bella Canvas 3001", "Gildan 3001", etc.
     for (const brands of Object.values(BRAND_PREFIX_MAP)) {
       variants.add(`${brands[0]} ${normalizedSKU}`);
     }
   }
   
-  // If query has spaces, also try just the last token
   if (trimmed.includes(" ")) {
     const parts = trimmed.split(/\s+/);
     variants.add(parts[parts.length - 1]);
   }
   
-  // If query is like "bc3001", try "bc 3001"
   const alphaNumMatch = trimmed.match(/^([a-zA-Z]+)(\d+.*)$/);
   if (alphaNumMatch) {
     variants.add(`${alphaNumMatch[1]} ${alphaNumMatch[2]}`);

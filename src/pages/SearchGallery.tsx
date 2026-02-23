@@ -1,5 +1,6 @@
 import { SearchBar } from "@/components/SearchBar";
 import { ProductCard } from "@/components/ProductCard";
+import { TrendingGrid } from "@/components/TrendingGrid";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
 import { AlertCircle, Search, Loader2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -24,7 +25,6 @@ const SearchGallery = () => {
 
   const handleSearch = (query: string) => {
     lastQueryRef.current = query;
-    // Update URL without navigation so back works
     navigate(`/?q=${encodeURIComponent(query)}`, { replace: true });
     search(query);
   };
@@ -36,6 +36,9 @@ const SearchGallery = () => {
       `/product?style=${encodeURIComponent(styleNumber)}&brand=${encodeURIComponent(brand)}&q=${encodeURIComponent(q)}${skuMapParam}`
     );
   };
+
+  const hasResults = response && response.products.length > 0;
+  const showEmptyState = !response && !error && !isLoading;
 
   return (
     <div className="min-h-screen bg-background">
@@ -109,7 +112,7 @@ const SearchGallery = () => {
           )}
 
           {/* Results Gallery */}
-          {response && response.products.length > 0 && !isLoading && (
+          {hasResults && !isLoading && (
             <div className="w-full max-w-3xl space-y-4">
               <p className="text-sm text-muted-foreground">
                 {response.products.length} result{response.products.length !== 1 ? "s" : ""} for "{response.query}"
@@ -128,12 +131,13 @@ const SearchGallery = () => {
             </div>
           )}
 
-          {/* Empty State */}
-          {!response && !error && !isLoading && (
-            <div className="py-12 text-center">
-              <p className="text-lg text-muted-foreground">
-                Enter a SKU or style number to compare prices across distributors
+          {/* Empty State — Trending Grid */}
+          {showEmptyState && (
+            <div className="w-full max-w-3xl space-y-6">
+              <p className="text-center text-lg text-muted-foreground">
+                Enter a SKU or brand name to compare prices across distributors
               </p>
+              <TrendingGrid onSearch={handleSearch} />
             </div>
           )}
         </div>

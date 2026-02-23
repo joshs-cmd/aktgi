@@ -1,7 +1,7 @@
 import { CatalogProduct } from "@/types/catalog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Package, Palette, Boxes, Store } from "lucide-react";
+import { Package, Palette, Boxes } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 
 interface ProductCardProps {
@@ -9,10 +9,13 @@ interface ProductCardProps {
   onClick: () => void;
 }
 
-/**
- * Highlight the query SKU within the style number.
- * e.g. styleNumber="3001CVC", query="3001" → <span class="text-primary font-bold">3001</span>CVC
- */
+/** Short labels for distributor badges */
+const DISTRIBUTOR_LABELS: Record<string, { label: string; className: string }> = {
+  "S&S Activewear": { label: "S&S", className: "bg-blue-500/10 text-blue-700 border-blue-500/30 dark:text-blue-400" },
+  "SanMar": { label: "SanMar", className: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-400" },
+  "OneStop": { label: "OneStop", className: "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-400" },
+};
+
 function HighlightedSKU({ styleNumber, query }: { styleNumber: string; query: string }) {
   if (!query) return <>{styleNumber}</>;
 
@@ -102,18 +105,20 @@ export function ProductCard({ product, onClick }: ProductCardProps) {
             </span>
           </div>
 
-          {/* Distributor Sources */}
+          {/* Distributor Source Badges */}
           <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-            <Store className="h-3 w-3 text-muted-foreground shrink-0" />
-            {sources.map((src) => (
-              <Badge
-                key={src}
-                variant="outline"
-                className="text-[10px] px-1.5 py-0 font-normal"
-              >
-                {src}
-              </Badge>
-            ))}
+            {sources.map((src) => {
+              const config = DISTRIBUTOR_LABELS[src];
+              return (
+                <Badge
+                  key={src}
+                  variant="outline"
+                  className={`text-[10px] px-1.5 py-0 font-medium ${config?.className ?? ""}`}
+                >
+                  {config?.label ?? src}
+                </Badge>
+              );
+            })}
           </div>
         </div>
       </CardContent>

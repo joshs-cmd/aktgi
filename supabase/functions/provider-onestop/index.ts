@@ -9,6 +9,24 @@ const corsHeaders = {
 const ONESTOP_API_BASE = "https://api.onestopinc.com";
 const ONESTOP_MEDIA_BASE = "https://media.onestopinc.com/";
 
+// ---------- Size Normalization ----------
+
+/** Map OneStop shorthand size codes to industry-standard codes used by S&S/SanMar */
+function normalizeSize(sizeCode: string): string {
+  const upper = sizeCode.toUpperCase().trim();
+  const SIZE_MAP: Record<string, string> = {
+    SM: "S",
+    MD: "M",
+    LG: "L",
+    "2X": "2XL",
+    "3X": "3XL",
+    "4X": "4XL",
+    "5X": "5XL",
+    "6X": "6XL",
+  };
+  return SIZE_MAP[upper] ?? upper;
+}
+
 // Size order mapping for sorting
 const SIZE_ORDER: Record<string, number> = {
   XS: 1, SM: 2, S: 2, M: 3, MD: 3, L: 4, LG: 4, XL: 5,
@@ -17,6 +35,8 @@ const SIZE_ORDER: Record<string, number> = {
   XXL: 6, XXXL: 7, XXXXL: 8,
   OSFA: 50, OS: 50, "ONE SIZE": 50,
 };
+
+// ---------- Interfaces ----------
 
 interface StandardInventory {
   warehouseCode: string;
@@ -52,18 +72,18 @@ interface StandardProduct {
 // OneStop item from /items/?style= endpoint
 interface OneStopItem {
   uid?: string;
-  code?: string;            // "NL-207-90-LG"
+  code?: string;
   mill_code?: string;
-  style_code?: string;      // "207"
-  color_code?: string;      // "90"
-  size_code?: string;       // "LG"
-  color_name?: string;      // "White"
+  style_code?: string;
+  color_code?: string;
+  size_code?: string;
+  color_name?: string;
   description?: string;
   on_hand?: number;
-  mill_name?: string;       // "Next Level Apparel"
+  mill_name?: string;
   mill_style_code?: string;
-  style?: string;           // "NL207"
-  web_name?: string;        // "Unisex Cotton T-Shirt"
+  style?: string;
+  web_name?: string;
   images?: {
     main?: string;
     front?: string;
@@ -73,13 +93,27 @@ interface OneStopItem {
     other?: string;
   };
   filters?: string;
-  size_number?: string;     // Numeric sort order from API
+  size_number?: string;
   active_flag?: string;
+  // Pricing fields
+  my_price?: number;
+  piece?: number;
+  dozen?: number;
+  case_qty?: number;
+  case_price?: number;
+  price_factor?: number;
+  pricing?: {
+    my_price?: number;
+    piece?: number;
+    dozen?: number;
+    case?: number;
+    price_factor?: number;
+  };
 }
 
 function getSizeOrder(sizeCode: string): number {
-  const normalized = sizeCode.toUpperCase().trim();
-  return SIZE_ORDER[normalized] ?? 99;
+  const normalized = normalizeSize(sizeCode).toUpperCase().trim();
+  return SIZE_ORDER[normalized] ?? SIZE_ORDER[sizeCode.toUpperCase().trim()] ?? 99;
 }
 
 function resolveImageUrl(path: string | undefined): string | null {
@@ -89,22 +123,45 @@ function resolveImageUrl(path: string | undefined): string | null {
 }
 
 /**
+ * Extract wholesale price from a OneStop item.
+ * Prices are integers in cents; divide by 10^price_factor (default 100).
+ * Priority: my_price > piece > dozen/12 > case/case_qty
+ */
+function extractPrice(item: OneStopItem): number {
+  const priceFactor = item.price_factor ?? item.pricing?.price_factor ?? 2;
+  const divisor = Math.pow(10, priceFactor);
+
+  // Check top-level fields first, then nested pricing object
+  const myPrice = item.my_price ?? item.pricing?.my_price ?? 0;
+  if (myPrice > 0) return myPrice / divisor;
+
+  const piece = item.piece ?? item.pricing?.piece ?? 0;
+  if (piece > 0) return piece / divisor;
+
+  const dozen = item.dozen ?? item.pricing?.dozen ?? 0;
+  if (dozen > 0) return (dozen / 12) / divisor;
+
+  const casePrice = item.case_price ?? item.pricing?.case ?? 0;
+  const caseQty = item.case_qty ?? 1;
+  if (casePrice > 0 && caseQty > 0) return (casePrice / caseQty) / divisor;
+
+  return 0;
+}
+
+/**
  * Aggregate flat OneStop items into a color-grouped StandardProduct.
- * OneStop items come from /items/?style={code} — one row per color+size combo.
- * No pricing data is available from this endpoint.
  */
 function aggregateItems(items: OneStopItem[]): StandardProduct | null {
   if (!items || items.length === 0) return null;
 
   const first = items[0];
 
-  // Group by color_name
   const colorMap = new Map<string, {
     code: string;
     name: string;
     swatchUrl: string | null;
     imageUrl: string | null;
-    sizesMap: Map<string, { code: string; order: number; quantity: number }>;
+    sizesMap: Map<string, { code: string; order: number; quantity: number; price: number }>;
   }>();
 
   for (const item of items) {
@@ -124,18 +181,26 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
     }
 
     const colorEntry = colorMap.get(colorName)!;
-    const sizeName = item.size_code || "OS";
+    const rawSize = item.size_code || "OS";
+    const normalizedSizeCode = normalizeSize(rawSize);
 
-    if (!colorEntry.sizesMap.has(sizeName)) {
-      colorEntry.sizesMap.set(sizeName, {
-        code: sizeName,
-        order: item.size_number ? parseInt(item.size_number, 10) : getSizeOrder(sizeName),
+    if (!colorEntry.sizesMap.has(normalizedSizeCode)) {
+      colorEntry.sizesMap.set(normalizedSizeCode, {
+        code: normalizedSizeCode,
+        order: item.size_number ? parseInt(item.size_number, 10) : getSizeOrder(rawSize),
         quantity: 0,
+        price: 0,
       });
     }
 
-    const sizeEntry = colorEntry.sizesMap.get(sizeName)!;
+    const sizeEntry = colorEntry.sizesMap.get(normalizedSizeCode)!;
     sizeEntry.quantity += item.on_hand || 0;
+
+    // Use the best available price (non-zero wins)
+    const itemPrice = extractPrice(item);
+    if (itemPrice > 0 && sizeEntry.price === 0) {
+      sizeEntry.price = itemPrice;
+    }
   }
 
   // Convert to StandardColor array
@@ -144,7 +209,7 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
       .map((s) => ({
         code: s.code,
         order: s.order,
-        price: 0, // OneStop API does not expose pricing
+        price: s.price,
         inventory: [
           {
             warehouseCode: "OS-WH",
@@ -209,7 +274,7 @@ serve(async (req) => {
       signal: AbortSignal.timeout(10_000),
     };
 
-    // Step 1: Search catalog to find matching style codes
+    // Step 1: Search catalog
     const searchUrl = `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
     console.log(`[provider-onestop] Catalog search: ${searchUrl}`);
 
@@ -225,7 +290,6 @@ serve(async (req) => {
 
     const catalogData = await catalogRes.json();
 
-    // Catalog returns { results: { "STYLE_CODE": {...}, ... }, count, status }
     const styleEntries = catalogData.results && typeof catalogData.results === "object" && !Array.isArray(catalogData.results)
       ? Object.entries(catalogData.results) as [string, Record<string, unknown>][]
       : [];
@@ -239,7 +303,7 @@ serve(async (req) => {
       );
     }
 
-    // Find the best matching style (prefer exact mill_style_code match)
+    // Find best matching style
     const queryUpper = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
     let bestEntry = styleEntries[0];
     for (const entry of styleEntries) {
@@ -256,14 +320,13 @@ serve(async (req) => {
     const bestInfo = bestInfoRaw as Record<string, unknown>;
     console.log(`[provider-onestop] Best match: ${bestStyleCode} (${bestInfo.web_name})`);
 
-    // Step 2: Fetch item-level inventory using /items/?style={styleCode}
+    // Step 2: Fetch item-level inventory
     const inventoryUrl = `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(bestStyleCode)}`;
     console.log(`[provider-onestop] Fetching inventory: ${inventoryUrl}`);
 
     const invRes = await fetch(inventoryUrl, fetchOpts);
     if (!invRes.ok) {
       console.error(`[provider-onestop] Inventory fetch failed: ${invRes.status}`);
-      // Return catalog-level data as fallback
       return new Response(
         JSON.stringify({
           product: {
@@ -299,12 +362,12 @@ serve(async (req) => {
       );
     }
 
-    // Ensure styleNumber uses the mill_style_code (e.g. "3600") not internal code
     if (bestInfo.mill_style_code && typeof bestInfo.mill_style_code === "string" && bestInfo.mill_style_code.length > 0) {
       product.styleNumber = bestInfo.mill_style_code;
     }
 
-    console.log(`[provider-onestop] Returning: ${product.brand} ${product.styleNumber} — ${product.colors.length} colors, ${product.colors.reduce((sum, c) => sum + c.sizes.length, 0)} size rows`);
+    const totalPricedSizes = product.colors.reduce((sum, c) => sum + c.sizes.filter(s => s.price > 0).length, 0);
+    console.log(`[provider-onestop] Returning: ${product.brand} ${product.styleNumber} — ${product.colors.length} colors, ${product.colors.reduce((sum, c) => sum + c.sizes.length, 0)} size rows, ${totalPricedSizes} priced`);
 
     return new Response(
       JSON.stringify({ product }),
