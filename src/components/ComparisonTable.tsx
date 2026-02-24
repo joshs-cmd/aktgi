@@ -99,9 +99,14 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
   };
 
   // Format total stock with + if any warehouse was capped
-  const formatTotalStock = (sizes: StandardSize[]) => {
+  const formatTotalStock = (sizes: StandardSize[], distributorCode?: string) => {
     const { total, hasCapped } = getTotalStock(sizes);
     const formatted = total.toLocaleString();
+    const isSS = distributorCode === "ss-activewear";
+    // S&S caps each size at 500
+    if (isSS && sizes.some(s => s.inventory.reduce((sum, inv) => sum + inv.quantity, 0) === 500)) {
+      return `${formatted}+`;
+    }
     return hasCapped ? `${formatted}+` : formatted;
   };
 
@@ -170,7 +175,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                 <TableCell className="text-right">
                   {result.status === "success" && sizes.length > 0 ? (
                     <span className="font-semibold tabular-nums">
-                      {formatTotalStock(sizes)}
+                      {formatTotalStock(sizes, result.distributorCode)}
                     </span>
                   ) : (
                     <span className="text-muted-foreground">--</span>
@@ -179,6 +184,70 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
               </TableRow>
             );
           })}
+
+          {/* Aggregate Total Row */}
+          {results.some(r => r.status === "success") && (
+            <TableRow className="bg-muted/50 font-semibold border-t-2">
+              <TableCell className="font-bold">Total</TableCell>
+              <TableCell />
+              {allSizes.map((sizeCode) => {
+                let total = 0;
+                let hasSSCap = false;
+                let hasSanMarCap = false;
+
+                results.forEach((result) => {
+                  if (result.status !== "success") return;
+                  const sizes = getSizesForResult(result);
+                  const size = sizes.find((s) => s.code === sizeCode);
+                  if (!size) return;
+
+                  const sizeTotal = size.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
+                  total += sizeTotal;
+
+                  if (result.distributorCode === "ss-activewear" && sizeTotal === 500) {
+                    hasSSCap = true;
+                  }
+                  if (size.inventory.some(inv => inv.isCapped)) {
+                    hasSanMarCap = true;
+                  }
+                });
+
+                const hasCap = hasSSCap || hasSanMarCap;
+
+                return (
+                  <TableCell key={sizeCode} className="text-center">
+                    {total > 0 ? (
+                      <span className="tabular-nums font-semibold">
+                        {total.toLocaleString()}{hasCap ? "+" : ""}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">--</span>
+                    )}
+                  </TableCell>
+                );
+              })}
+              <TableCell className="text-right">
+                <span className="font-bold tabular-nums">
+                  {(() => {
+                    let grandTotal = 0;
+                    let hasCap = false;
+                    results.forEach((result) => {
+                      if (result.status !== "success") return;
+                      const sizes = getSizesForResult(result);
+                      const { total, hasCapped } = getTotalStock(sizes);
+                      grandTotal += total;
+                      if (hasCapped) hasCap = true;
+                      if (result.distributorCode === "ss-activewear") {
+                        const ssTotal = sizes.reduce((sum, s) => sum + s.inventory.reduce((a, i) => a + i.quantity, 0), 0);
+                        if (ssTotal === 500 * sizes.length) hasCap = true;
+                      }
+                    });
+                    return `${grandTotal.toLocaleString()}${hasCap ? "+" : ""}`;
+                  })()}
+                </span>
+              </TableCell>
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>

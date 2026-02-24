@@ -15,10 +15,15 @@ interface PriceCellProps {
 /**
  * Format inventory total with 3,000+ notation for capped values
  */
-function formatInventoryTotal(inventory: StandardInventory[]): string {
+function formatInventoryTotal(inventory: StandardInventory[], distributorCode?: string): string {
   const totalStock = inventory.reduce((sum, inv) => sum + inv.quantity, 0);
   const hasCapped = inventory.some(inv => inv.isCapped);
+  const isSS = distributorCode === "ss-activewear";
   
+  // S&S caps at 500, SanMar caps at 3000
+  if (isSS && totalStock === 500) {
+    return "500+";
+  }
   if (hasCapped) {
     return `${totalStock.toLocaleString()}+`;
   }
@@ -33,7 +38,7 @@ export function PriceCell({
   isProgramPrice = false,
   distributorCode
 }: PriceCellProps) {
-  const stockDisplay = formatInventoryTotal(inventory);
+  const stockDisplay = formatInventoryTotal(inventory, distributorCode);
   const isSanMar = distributorCode === "sanmar";
 
   return (
@@ -62,7 +67,7 @@ export function PriceCell({
           </span>
         )}
         <span className="text-xs text-muted-foreground tabular-nums">
-          {stockDisplay} in stock
+          {stockDisplay}
         </span>
       </button>
     </WarehouseTooltip>
