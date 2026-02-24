@@ -20,9 +20,9 @@ function formatInventoryTotal(inventory: StandardInventory[], distributorCode?: 
   const hasCapped = inventory.some(inv => inv.isCapped);
   const isSS = distributorCode === "ss-activewear";
   
-  // S&S caps at 500, SanMar caps at 3000
-  if (isSS && totalStock === 500) {
-    return "500+";
+  // S&S caps at 500 per warehouse, SanMar caps at 3000
+  if (isSS && inventory.some(inv => inv.quantity >= 500)) {
+    return `${totalStock.toLocaleString()}+`;
   }
   if (hasCapped) {
     return `${totalStock.toLocaleString()}+`;

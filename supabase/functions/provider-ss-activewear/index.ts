@@ -296,6 +296,7 @@ function aggregateProducts(products: SSProduct[], styleInfo?: SSStyle): Standard
             warehouseCode: code,
             warehouseName: WAREHOUSE_NAMES[code] || code,
             quantity: qty,
+            isCapped: qty >= 500,
           }))
           .sort((a, b) => b.quantity - a.quantity),
       }))
