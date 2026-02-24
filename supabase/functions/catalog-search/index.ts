@@ -93,6 +93,36 @@ const ORDERED_PREFIXES = Object.keys(PREFIX_BRAND_MAP).sort((a, b) => b.length -
 /** All known prefixes for blind (no-brand) normalization */
 const ALL_PREFIXES = ORDERED_PREFIXES;
 
+// ---------- OneStop SKU Translation Dictionary ----------
+// Maps OneStop proprietary style codes to manufacturer mill codes.
+// Add new entries here as they are discovered.
+const ONESTOP_ALIAS_MAP: Record<string, string> = {
+  "GD210": "5000",   // Gildan 5000
+  "GD207": "18000",  // Gildan 18000
+  "GD200": "2000",   // Gildan 2000
+  "GD208": "8000",   // Gildan 8000
+  "CV207": "3001",   // Bella+Canvas 3001
+  "CV208": "3001CVC",// Bella+Canvas 3001CVC
+  "CV213": "3413",   // Bella+Canvas 3413
+  "CV200": "3480",   // Bella+Canvas 3480
+  "CF208": "1717",   // Comfort Colors 1717
+  "CF200": "1717",   // Comfort Colors 1717 (alt)
+  "NX200": "3600",   // Next Level 3600
+  "NX207": "6210",   // Next Level 6210
+  "NX208": "6010",   // Next Level 6010
+  "IT200": "IND4000",// Independent Trading Co IND4000
+  "IT207": "SS4500", // Independent Trading Co SS4500
+  "JZ200": "29M",    // Jerzees 29M
+  "HN200": "5250",   // Hanes 5250
+  "PC200": "PC61",   // Port & Company PC61
+};
+
+/** Translate a OneStop proprietary code to its mill equivalent if known */
+function translateOneStopSKU(onestopCode: string): string {
+  const upper = onestopCode.toUpperCase().trim();
+  return ONESTOP_ALIAS_MAP[upper] ?? upper;
+}
+
 // ---------- OneStop types ----------
 
 interface OneStopItem {
@@ -159,13 +189,17 @@ function generateFingerprint(styleNumber: string, brand: string): string {
 }
 
 /**
- * Normalize brand name for grouping: strip common suffixes like "Apparel", 
- * remove non-alphanumeric chars. "Next Level Apparel" and "Next Level" both → "NEXTLEVEL"
+ * Strict brand normalizer: strips punctuation, spaces, and corporate suffixes
+ * to ensure brands match across distributors.
+ * "Next Level Apparel" / "Next Level" → "NEXTLEVEL"
+ * "Bella + Canvas" / "Bella Canvas" / "Bella/Canvas" → "BELLACANVAS"
+ * "Comfort Colors" / "ComfortColors" → "COMFORTCOLORS"
+ * "Independent Trading Co" / "Independent Trading Company" → "INDEPENDENTTRADING"
  */
 function normalizeBrand(brand: string): string {
   return brand
     .toUpperCase()
-    .replace(/\b(APPAREL|CLOTHING|MADE|USA)\b/g, "")
+    .replace(/\b(APPAREL|CLOTHING|MADE|USA|INC|LLC|CO|COMPANY|CORP|CORPORATION)\b/g, "")
     .replace(/[^A-Z0-9]/g, "");
 }
 
@@ -951,8 +985,10 @@ async function fetchOneStopCatalog(query: string): Promise<RawCatalogProduct[]> 
     const products: RawCatalogProduct[] = [];
     for (const [style, group] of styleGroups) {
       const first = group.items[0];
+      // Translate OneStop proprietary code to manufacturer mill code for dedup
+      const translatedStyle = translateOneStopSKU(first.style || style);
       products.push({
-        styleNumber: first.style || style,
+        styleNumber: translatedStyle,
         name: first.description || `${first.mill_name || ""} ${style}`.trim(),
         brand: first.mill_name || "",
         category: first.category || "",

@@ -126,17 +126,29 @@ function resolveImageUrl(path: string | undefined): string | null {
  * Extract wholesale price from a OneStop item.
  * Prices are integers in cents; divide by 10^price_factor (default 100).
  * Priority: my_price > piece > dozen/12 > case/case_qty
+ * Also checks top-level 'price' field and nested pricing variants.
  */
 function extractPrice(item: OneStopItem): number {
   const priceFactor = item.price_factor ?? item.pricing?.price_factor ?? 2;
   const divisor = Math.pow(10, priceFactor);
 
+  // Cast to any to probe for unexpected field names
+  const raw = item as Record<string, unknown>;
+
   // Check top-level fields first, then nested pricing object
   const myPrice = item.my_price ?? item.pricing?.my_price ?? 0;
   if (myPrice > 0) return myPrice / divisor;
 
+  // Check plain 'price' field (some API versions use this)
+  const plainPrice = (raw.price as number) ?? 0;
+  if (plainPrice > 0) return plainPrice / divisor;
+
   const piece = item.piece ?? item.pricing?.piece ?? 0;
   if (piece > 0) return piece / divisor;
+
+  // Check 'unit_price' / 'wholesale' / 'cost' as additional fallbacks
+  const unitPrice = (raw.unit_price as number) ?? (raw.wholesale as number) ?? (raw.cost as number) ?? 0;
+  if (unitPrice > 0) return unitPrice / divisor;
 
   const dozen = item.dozen ?? item.pricing?.dozen ?? 0;
   if (dozen > 0) return (dozen / 12) / divisor;
@@ -144,6 +156,17 @@ function extractPrice(item: OneStopItem): number {
   const casePrice = item.case_price ?? item.pricing?.case ?? 0;
   const caseQty = item.case_qty ?? 1;
   if (casePrice > 0 && caseQty > 0) return (casePrice / caseQty) / divisor;
+
+  // Final fallback: check all nested pricing fields
+  if (item.pricing) {
+    const pricingRaw = item.pricing as Record<string, unknown>;
+    for (const key of Object.keys(pricingRaw)) {
+      const val = pricingRaw[key];
+      if (typeof val === "number" && val > 0 && key !== "price_factor") {
+        return val / divisor;
+      }
+    }
+  }
 
   return 0;
 }
@@ -163,6 +186,26 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
     imageUrl: string | null;
     sizesMap: Map<string, { code: string; order: number; quantity: number; price: number }>;
   }>();
+
+  // Log first 3 items for raw diagnostics
+  for (let i = 0; i < Math.min(items.length, 3); i++) {
+    const di = items[i];
+    const raw = di as Record<string, unknown>;
+    console.log(`[OneStop Raw Item Diagnostics #${i}]:`, JSON.stringify({
+      style: di.style_code,
+      color: di.color_name,
+      size: di.size_code,
+      my_price: di.my_price,
+      price: raw.price,
+      piece: di.piece,
+      dozen: di.dozen,
+      unit_price: raw.unit_price,
+      wholesale: raw.wholesale,
+      cost: raw.cost,
+      pricing: di.pricing,
+      price_factor: di.price_factor,
+    }));
+  }
 
   for (const item of items) {
     if (item.active_flag && item.active_flag !== "Y") continue;
