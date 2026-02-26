@@ -10,6 +10,7 @@ const corsHeaders = {
 // SanMar SOAP endpoints
 const PRODUCT_INFO_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarProductInfoServicePort";
 const INVENTORY_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarWebServicePort";
+const PROMOSTANDARDS_PRICING_ENDPOINT = "https://ws.sanmar.com:8080/promostandards/PricingServiceBindingV2_0_0Port";
 
 // SanMar warehouse mapping
 const WAREHOUSE_NAMES: Record<string, string> = {
@@ -174,6 +175,128 @@ function buildProductInfoRequest(
 }
 
 /**
+ * Build PromoStandards getPricingAndConfiguration request for customer-specific pricing.
+ * priceType="Customer" returns negotiated account rates.
+ */
+function buildPricingRequest(
+  style: string,
+  customerNumber: string,
+  username: string,
+  password: string
+): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:ns="http://www.promostandards.org/WSDL/PricingService/2.0.0/"
+                  xmlns:shar="http://www.promostandards.org/WSDL/PricingService/2.0.0/SharedObjects/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:GetPricingAndConfigurationRequest>
+      <shar:wsVersion>2.0.0</shar:wsVersion>
+      <shar:id>${escapeXml(username)}</shar:id>
+      <shar:password>${escapeXml(password)}</shar:password>
+      <shar:productId>${escapeXml(style)}</shar:productId>
+      <shar:currency>USD</shar:currency>
+      <shar:fobId>1</shar:fobId>
+      <shar:priceType>Customer</shar:priceType>
+      <shar:localizationCountry>US</shar:localizationCountry>
+      <shar:localizationLanguage>en</shar:localizationLanguage>
+      <shar:configurationType>Decorated</shar:configurationType>
+    </ns:GetPricingAndConfigurationRequest>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+}
+
+/**
+ * Fetch customer-specific pricing from SanMar's PromoStandards endpoint.
+ * Returns a map of sizeCode -> price for priceType="Customer".
+ */
+async function fetchCustomerPricing(
+  style: string,
+  customerNumber: string,
+  username: string,
+  password: string,
+  parser: XMLParser
+): Promise<Map<string, number>> {
+  const priceMap = new Map<string, number>();
+  try {
+    const body = buildPricingRequest(style, customerNumber, username, password);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(PROMOSTANDARDS_PRICING_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": "" },
+      body,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      console.log(`[provider-sanmar] PromoStandards pricing HTTP ${response.status}`);
+      return priceMap;
+    }
+
+    const xmlText = await response.text();
+    console.log(`[provider-sanmar] PromoStandards pricing XML length: ${xmlText.length}`);
+
+    const result = parser.parse(xmlText);
+    const envelope = result["soapenv:Envelope"] || result["S:Envelope"] || result["soap:Envelope"] || result.Envelope;
+    const bodyEl = envelope?.["soapenv:Body"] || envelope?.["S:Body"] || envelope?.["soap:Body"] || envelope?.Body;
+    if (!bodyEl) return priceMap;
+
+    const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("pricingandconfiguration"));
+    if (!respKey) {
+      console.log(`[provider-sanmar] PromoStandards: no pricing response key, keys=${Object.keys(bodyEl).join(", ")}`);
+      return priceMap;
+    }
+
+    const resp = bodyEl[respKey];
+    // Navigate into Configuration > Part > PartPriceArray > PartPrice
+    const configuration = resp?.Configuration || resp?.["ns2:Configuration"] || resp?.configuration;
+    const parts = configuration?.Part || configuration?.part;
+    if (!parts) {
+      console.log(`[provider-sanmar] PromoStandards: no Part in Configuration`);
+      return priceMap;
+    }
+
+    const partArray = Array.isArray(parts) ? parts : [parts];
+    for (const part of partArray) {
+      const partId = String(part?.partId || part?.PartId || "").toUpperCase().trim();
+      const priceArrays = part?.PartPriceArray || part?.partPriceArray;
+      if (!priceArrays) continue;
+
+      const prices = priceArrays?.PartPrice || priceArrays?.partPrice;
+      if (!prices) continue;
+
+      const priceList = Array.isArray(prices) ? prices : [prices];
+      // Take the first (qty=1) price
+      for (const p of priceList) {
+        const minQty = parseFloat(String(p?.minQuantity || p?.MinQuantity || "0"));
+        if (minQty <= 1 || !priceMap.has(partId)) {
+          const price = parseFloat(String(p?.price || p?.Price || p?.unitPrice || "0"));
+          if (price > 0) {
+            priceMap.set(partId, price);
+          }
+        }
+      }
+    }
+
+    console.log(`[provider-sanmar] PromoStandards customer pricing: ${priceMap.size} size prices found`);
+    if (priceMap.size > 0) {
+      const sample = Array.from(priceMap.entries()).slice(0, 3).map(([k, v]) => `${k}=$${v}`).join(", ");
+      console.log(`[provider-sanmar] Sample customer prices: ${sample}`);
+    }
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      console.log("[provider-sanmar] PromoStandards pricing timed out");
+    } else {
+      console.error("[provider-sanmar] PromoStandards pricing error:", err);
+    }
+  }
+  return priceMap;
+}
+
+/**
  * Build SOAP request for getInventoryQtyForStyleColorSize
  */
 function buildInventoryRequest(
@@ -234,7 +357,7 @@ function findAllPriceFields(obj: any, prefix = ""): Record<string, any> {
  * Parse product info from SOAP response
  * IMPORTANT: This extracts ALL pricing fields and prioritizes benefitPrice/contractPrice
  */
-function parseProductResponse(xmlData: string, parser: XMLParser, logRaw = false): any[] {
+function parseProductResponse(xmlData: string, parser: XMLParser, logRaw = false, customerPricingMap: Map<string, number> = new Map()): any[] {
   try {
     // Log a sample of raw XML to understand structure
     if (logRaw) {
@@ -309,9 +432,24 @@ function parseProductResponse(xmlData: string, parser: XMLParser, logRaw = false
       // Check direct fields
       let benefitPrice = parseFloat(price.benefitPrice || price.BenefitPrice || item.benefitPrice || "") || null;
       let contractPrice = parseFloat(price.contractPrice || price.ContractPrice || item.contractPrice || "") || null;
-      let customerPrice = parseFloat(price.customerPrice || price.CustomerPrice || item.customerPrice || "") || null;
       let piecePrice = parseFloat(price.piecePrice || price.PiecePrice || item.piecePrice || "") || null;
       let listPrice = parseFloat(price.listPrice || price.ListPrice || item.listPrice || "") || null;
+
+      // Inject customer-specific price from PromoStandards endpoint (priceType="Customer")
+      // The partId in PromoStandards corresponds to the size code (e.g., "S", "M", "XL")
+      const sizeCode = (basic.size || item.size || "").toString().toUpperCase().trim();
+      let customerPrice: number | null = null;
+      if (customerPricingMap.size > 0) {
+        customerPrice = customerPricingMap.get(sizeCode) || customerPricingMap.get(sizeCode.replace("XL", "EXL")) || null;
+        // Fallback: if size not found, use the smallest size price as a baseline
+        if (!customerPrice && idx === 0) {
+          const firstVal = Array.from(customerPricingMap.values())[0];
+          if (firstVal) customerPrice = firstVal;
+        }
+      }
+      if (!customerPrice) {
+        customerPrice = parseFloat(price.customerPrice || price.CustomerPrice || item.customerPrice || "") || null;
+      }
       
       // Check nested pricingArray/programPricing for tiered pricing
       const pricingArrays = [
@@ -785,6 +923,11 @@ serve(async (req) => {
     let matchedVariant = "";
     let isFirstVariant = true;
 
+    // Fetch customer-specific pricing from PromoStandards in parallel with product info loop
+    // We kick this off early using the first variant (most likely the style number)
+    const firstVariant = variants[0];
+    const customerPricingPromise = fetchCustomerPricing(firstVariant, customerNumber, username, password, parser);
+
     // Get product info using getProductInfoByStyleColorSize
     for (const variant of variants) {
       try {
@@ -819,7 +962,9 @@ serve(async (req) => {
         }
         
         // Log raw XML for first variant to debug pricing structure
-        const parsed = parseProductResponse(xmlText, parser, isFirstVariant);
+        // Await the customer pricing map (resolved by now since product info takes ~2s)
+        const customerPricingMap = isFirstVariant ? await customerPricingPromise : new Map<string, number>();
+        const parsed = parseProductResponse(xmlText, parser, isFirstVariant, customerPricingMap);
         isFirstVariant = false;
         
         if (parsed && parsed.length > 0) {
