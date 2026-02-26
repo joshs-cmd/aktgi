@@ -339,6 +339,9 @@ function parseProductResponse(xmlData: string, parser: XMLParser, logRaw = false
       }
       
       // Determine final price and whether it's a program price
+      // Priority order per SanMar docs:
+      //   benefitPrice (program enrolled) > contractPrice (contract enrolled) >
+      //   customerPrice (account-specific "Customer" rate) > piecePrice (standard net) > listPrice
       let finalPrice = 0;
       let isProgramPrice = false;
       
@@ -350,12 +353,13 @@ function parseProductResponse(xmlData: string, parser: XMLParser, logRaw = false
         finalPrice = contractPrice;
         isProgramPrice = true;
         if (idx === 0) console.log(`[provider-sanmar] Using CONTRACT price: $${contractPrice}`);
+      } else if (customerPrice && customerPrice > 0) {
+        // "Customer" price — account-specific negotiated rate; preferred over piece price
+        finalPrice = customerPrice;
+        if (idx === 0) console.log(`[provider-sanmar] Using CUSTOMER price: $${customerPrice}`);
       } else if (piecePrice && piecePrice > 0) {
         finalPrice = piecePrice;
         if (idx === 0) console.log(`[provider-sanmar] Using PIECE price: $${piecePrice}`);
-      } else if (customerPrice && customerPrice > 0) {
-        finalPrice = customerPrice;
-        if (idx === 0) console.log(`[provider-sanmar] Using CUSTOMER price: $${customerPrice}`);
       } else if (listPrice && listPrice > 0) {
         finalPrice = listPrice;
         if (idx === 0) console.log(`[provider-sanmar] Using LIST price: $${listPrice}`);
