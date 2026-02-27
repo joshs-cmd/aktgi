@@ -176,6 +176,7 @@ serve(async (req) => {
             status: "success" as const,
             product: data?.product || null,
             lastSynced: new Date().toISOString(),
+            promoDiagnostic: data?.promoDiagnostic || undefined,
           };
         } catch (err) {
           console.error(`[sourcing-engine] Exception for ${distributor.code}:`, err);

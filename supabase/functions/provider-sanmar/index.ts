@@ -216,8 +216,9 @@ async function fetchCustomerPricing(
   username: string,
   password: string,
   parser: XMLParser
-): Promise<Map<string, number>> {
+): Promise<{ priceMap: Map<string, number>; diagnostic: string }> {
   const priceMap = new Map<string, number>();
+  let diagnostic = "";
   try {
     const body = buildPricingRequest(style, customerNumber, username, password);
     const controller = new AbortController();
@@ -232,8 +233,9 @@ async function fetchCustomerPricing(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
+      diagnostic = `PromoStandards HTTP ${response.status} error`;
       console.log(`[provider-sanmar] PromoStandards pricing HTTP ${response.status}`);
-      return priceMap;
+      return { priceMap, diagnostic };
     }
 
     const xmlText = await response.text();
@@ -246,8 +248,9 @@ async function fetchCustomerPricing(
 
     const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("pricingandconfiguration"));
     if (!respKey) {
-      console.log(`[provider-sanmar] PromoStandards: no pricing response key, keys=${Object.keys(bodyEl).join(", ")}`);
-      return priceMap;
+      diagnostic = `PromoStandards: no pricing response key. Body keys: ${Object.keys(bodyEl).join(", ")}`;
+      console.log(`[provider-sanmar] ${diagnostic}`);
+      return { priceMap, diagnostic };
     }
 
     const resp = bodyEl[respKey];
@@ -255,8 +258,11 @@ async function fetchCustomerPricing(
     const configuration = resp?.Configuration || resp?.["ns2:Configuration"] || resp?.configuration;
     const parts = configuration?.Part || configuration?.part;
     if (!parts) {
-      console.log(`[provider-sanmar] PromoStandards: no Part in Configuration`);
-      return priceMap;
+      const configKeys = configuration ? Object.keys(configuration).join(", ") : "null";
+      const respKeys = resp ? Object.keys(resp).join(", ") : "null";
+      diagnostic = `PromoStandards: no Part in Configuration. Resp keys: ${respKeys}. Config keys: ${configKeys}`;
+      console.log(`[provider-sanmar] ${diagnostic}`);
+      return { priceMap, diagnostic };
     }
 
     const partArray = Array.isArray(parts) ? parts : [parts];
@@ -283,17 +289,22 @@ async function fetchCustomerPricing(
 
     console.log(`[provider-sanmar] PromoStandards customer pricing: ${priceMap.size} size prices found`);
     if (priceMap.size > 0) {
-      const sample = Array.from(priceMap.entries()).slice(0, 3).map(([k, v]) => `${k}=$${v}`).join(", ");
+      const sample = Array.from(priceMap.entries()).slice(0, 5).map(([k, v]) => `${k}=$${v}`).join(", ");
+      diagnostic = `PromoStandards success. Found ${priceMap.size} size prices: ${sample}`;
       console.log(`[provider-sanmar] Sample customer prices: ${sample}`);
+    } else {
+      diagnostic = `PromoStandards returned 0 size prices (XML parsed OK, but no Part/PartPrice data found)`;
     }
   } catch (err: any) {
     if (err.name === "AbortError") {
+      diagnostic = "PromoStandards request timed out after 5s";
       console.log("[provider-sanmar] PromoStandards pricing timed out");
     } else {
+      diagnostic = `PromoStandards exception: ${err.message || String(err)}`;
       console.error("[provider-sanmar] PromoStandards pricing error:", err);
     }
   }
-  return priceMap;
+  return { priceMap, diagnostic };
 }
 
 /**
@@ -927,6 +938,7 @@ serve(async (req) => {
     // We kick this off early using the first variant (most likely the style number)
     const firstVariant = variants[0];
     const customerPricingPromise = fetchCustomerPricing(firstVariant, customerNumber, username, password, parser);
+    let promoDiagnostic = "";
 
     // Get product info using getProductInfoByStyleColorSize
     for (const variant of variants) {
@@ -963,7 +975,9 @@ serve(async (req) => {
         
         // Log raw XML for first variant to debug pricing structure
         // Await the customer pricing map (resolved by now since product info takes ~2s)
-        const customerPricingMap = isFirstVariant ? await customerPricingPromise : new Map<string, number>();
+        const customerPricingResult = isFirstVariant ? await customerPricingPromise : { priceMap: new Map<string, number>(), diagnostic: "" };
+        if (isFirstVariant) promoDiagnostic = customerPricingResult.diagnostic;
+        const customerPricingMap = customerPricingResult.priceMap;
         const parsed = parseProductResponse(xmlText, parser, isFirstVariant, customerPricingMap);
         isFirstVariant = false;
         
@@ -1055,7 +1069,7 @@ serve(async (req) => {
     console.log(`[provider-sanmar] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
 
     return new Response(
-      JSON.stringify({ product: standardProduct }),
+      JSON.stringify({ product: standardProduct, promoDiagnostic }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
