@@ -71,6 +71,12 @@ export function ProductHeader({
           <p className="mt-2 text-xs text-muted-foreground">
             Searched for "{query}" at {formattedTime}
           </p>
+          {/* DEBUG: Show raw PromoStandards response */}
+          {product.description && (
+            <pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 text-[10px] text-muted-foreground whitespace-pre-wrap break-all">
+              {product.description}
+            </pre>
+          )}
         </div>
       </div>
 
