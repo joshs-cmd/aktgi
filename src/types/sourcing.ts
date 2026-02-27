@@ -31,6 +31,7 @@ export interface StandardProduct {
   brand: string;
   category: string;
   imageUrl?: string;
+  description?: string;          // Debug/informational field
   colors?: StandardColor[];      // Color-specific pricing/inventory
   sizes?: StandardSize[];        // Backward compat for non-color distributors
 }

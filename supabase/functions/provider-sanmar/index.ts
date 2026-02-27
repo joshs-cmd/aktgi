@@ -216,8 +216,9 @@ async function fetchCustomerPricing(
   username: string,
   password: string,
   parser: XMLParser
-): Promise<Map<string, number>> {
+): Promise<{ priceMap: Map<string, number>; debugXml: string }> {
   const priceMap = new Map<string, number>();
+  let debugXml = "";
   try {
     const body = buildPricingRequest(style, customerNumber, username, password);
     const controller = new AbortController();
@@ -232,11 +233,13 @@ async function fetchCustomerPricing(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
+      debugXml = `DEBUG ERROR: HTTP ${response.status} from PromoStandards endpoint`;
       console.log(`[provider-sanmar] PromoStandards pricing HTTP ${response.status}`);
-      return priceMap;
+      return { priceMap, debugXml };
     }
 
     const xmlText = await response.text();
+    debugXml = "DEBUG PROMO: " + xmlText.substring(0, 800);
     console.log(`[provider-sanmar] PromoStandards pricing XML length: ${xmlText.length}`);
 
     const result = parser.parse(xmlText);
@@ -288,12 +291,14 @@ async function fetchCustomerPricing(
     }
   } catch (err: any) {
     if (err.name === "AbortError") {
+      debugXml = "DEBUG ERROR: PromoStandards request timed out after 5s";
       console.log("[provider-sanmar] PromoStandards pricing timed out");
     } else {
+      debugXml = `DEBUG ERROR: ${err.message || String(err)}`;
       console.error("[provider-sanmar] PromoStandards pricing error:", err);
     }
   }
-  return priceMap;
+  return { priceMap, debugXml };
 }
 
 /**
@@ -926,6 +931,7 @@ serve(async (req) => {
     // Fetch customer-specific pricing from PromoStandards in parallel with product info loop
     // We kick this off early using the first variant (most likely the style number)
     const firstVariant = variants[0];
+    let promoDebugXml = "";
     const customerPricingPromise = fetchCustomerPricing(firstVariant, customerNumber, username, password, parser);
 
     // Get product info using getProductInfoByStyleColorSize
@@ -963,7 +969,8 @@ serve(async (req) => {
         
         // Log raw XML for first variant to debug pricing structure
         // Await the customer pricing map (resolved by now since product info takes ~2s)
-        const customerPricingMap = isFirstVariant ? await customerPricingPromise : new Map<string, number>();
+        const { priceMap: customerPricingMap, debugXml: promoXml } = isFirstVariant ? await customerPricingPromise : { priceMap: new Map<string, number>(), debugXml: "" };
+        if (isFirstVariant) promoDebugXml = promoXml;
         const parsed = parseProductResponse(xmlText, parser, isFirstVariant, customerPricingMap);
         isFirstVariant = false;
         
@@ -1042,7 +1049,7 @@ serve(async (req) => {
     const inventoryMap = buildInventoryMap(inventoryList);
 
     // Aggregate into normalized structure
-    const standardProduct = aggregateProducts(productList, inventoryMap);
+    const standardProduct = aggregateProducts(productList, inventoryMap) as any;
 
     if (!standardProduct) {
       console.log(`[provider-sanmar] Failed to aggregate products`);
@@ -1051,6 +1058,9 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // DEBUG: Inject raw PromoStandards XML into description for frontend visibility
+    standardProduct.description = promoDebugXml || "DEBUG: PromoStandards call was not made";
 
     console.log(`[provider-sanmar] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
 
