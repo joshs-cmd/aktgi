@@ -200,7 +200,7 @@ function buildPricingRequest(
       <shar:priceType>Customer</shar:priceType>
       <shar:localizationCountry>US</shar:localizationCountry>
       <shar:localizationLanguage>en</shar:localizationLanguage>
-      <shar:configurationType>Decorated</shar:configurationType>
+      <shar:configurationType>Blank</shar:configurationType>
     </ns:GetPricingAndConfigurationRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
