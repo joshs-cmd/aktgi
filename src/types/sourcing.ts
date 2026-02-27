@@ -45,7 +45,6 @@ export interface DistributorResult {
   product: StandardProduct | null;
   lastSynced: string | null;
   errorMessage?: string;
-  promoDiagnostic?: string;
 }
 
 export interface SourcingResponse {

@@ -52,9 +52,6 @@ const Index = ({ userRole }: IndexProps) => {
   // Get failed distributors for warning message
   const failedDistributors = response?.results?.filter(r => r.status === "error") || [];
 
-  // Get SanMar promo diagnostic message if present
-  const sanmarDiagnostic = response?.results?.find(r => r.distributorCode === "sanmar")?.promoDiagnostic || null;
-
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -144,15 +141,6 @@ const Index = ({ userRole }: IndexProps) => {
                   selectedColor={selectedColor}
                   onColorSelect={setSelectedColor}
                 />
-              )}
-
-              {/* SanMar PromoStandards Diagnostic Banner */}
-              {sanmarDiagnostic && (
-                <Alert className={`border-2 font-mono text-xs ${sanmarDiagnostic.startsWith("PromoStandards success") ? "border-green-500/50 bg-green-500/10" : "border-yellow-500/50 bg-yellow-500/10"}`}>
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle className="text-xs font-bold">SanMar PromoStandards Diagnostic</AlertTitle>
-                  <AlertDescription className="break-all">{sanmarDiagnostic}</AlertDescription>
-                </Alert>
               )}
 
               {/* Single Master Comparison Table with ALL distributors */}
