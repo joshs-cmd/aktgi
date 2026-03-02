@@ -38,8 +38,9 @@ async function fetchCsvText(): Promise<string> {
     );
   }
 
-  // Use basic-ftp for FTP download
+  // Use basic-ftp for FTP download — stream partial content to avoid timeouts on large files
   const { Client } = await import("npm:basic-ftp@5.0.5");
+  const { Writable } = await import("node:stream");
   const client = new Client();
   client.ftp.verbose = false;
 
@@ -51,30 +52,90 @@ async function fetchCsvText(): Promise<string> {
       secure: false,
     });
 
-    // List files to find the EPDD CSV
-    const files = await client.list();
-    const epddFile = files.find(
-      (f: any) =>
-        f.name.toLowerCase().includes("epdd") && f.name.toLowerCase().endsWith(".csv")
-    );
+    // Search root and subdirectories for the EPDD CSV
+    let epddFile: any = null;
+    let epddDir = "/";
+
+    const searchDir = async (dir: string) => {
+      await client.cd(dir);
+      const entries = await client.list();
+      for (const f of entries) {
+        if (f.isDirectory) {
+          if (dir === "/") {
+            await searchDir(`/${f.name}`);
+            if (epddFile) return;
+            await client.cd(dir);
+          }
+        } else if (
+          f.name.toLowerCase().endsWith(".csv") &&
+          (f.name.toLowerCase().includes("epdd") || f.name.toLowerCase().includes("pdd"))
+        ) {
+          epddFile = f;
+          epddDir = dir;
+          return;
+        }
+      }
+    };
+
+    await searchDir("/");
+
     if (!epddFile) {
-      const names = files.map((f: any) => f.name).join(", ");
-      throw new Error(`No EPDD CSV found on FTP. Files: ${names}`);
+      await client.cd("/");
+      const rootFiles = await client.list();
+      const allNames: string[] = [];
+      for (const f of rootFiles) {
+        if (f.isDirectory) {
+          await client.cd(`/${f.name}`);
+          const sub = await client.list();
+          allNames.push(`${f.name}/: ${sub.map((s: any) => s.name).join(", ")}`);
+          await client.cd("/");
+        } else {
+          allNames.push(f.name);
+        }
+      }
+      throw new Error(`No EPDD/PDD CSV found on FTP. Structure: ${allNames.join(" | ")}`);
     }
 
-    console.log(`[ingest-sanmar] Downloading FTP file: ${epddFile.name}`);
-    const chunks: Uint8Array[] = [];
-    const writable = new WritableStream({
-      write(chunk) {
-        chunks.push(chunk);
+    await client.cd(epddDir);
+    console.log(`[ingest-sanmar] Found CSV: ${epddDir}/${epddFile.name}`);
+
+    // Stream only enough lines for our ROW_LIMIT (header + N data rows)
+    // This avoids downloading the entire 50MB+ file
+    const MAX_LINES = ROW_LIMIT + 500; // extra headroom for dedup
+    let lineCount = 0;
+    let csvChunks: string[] = [];
+    let done = false;
+
+    console.log(`[ingest-sanmar] Streaming first ${MAX_LINES} lines from FTP...`);
+    const writable = new Writable({
+      write(chunk: Buffer, _encoding: string, callback: () => void) {
+        if (done) { callback(); return; }
+        const text = chunk.toString("utf-8");
+        csvChunks.push(text);
+        lineCount += (text.match(/\n/g) || []).length;
+        if (lineCount >= MAX_LINES) {
+          done = true;
+          // Close connection to stop transfer
+          try { client.close(); } catch { /* expected */ }
+        }
+        callback();
       },
     });
-    await client.downloadTo(writable, epddFile.name);
-    const decoder = new TextDecoder();
-    return chunks.map((c) => decoder.decode(c, { stream: true })).join("") +
-      decoder.decode();
+
+    try {
+      await client.downloadTo(writable, epddFile.name);
+    } catch (e: any) {
+      // If we intentionally closed, that's fine
+      if (!done) throw e;
+    }
+
+    const fullText = csvChunks.join("");
+    // Trim to MAX_LINES actual lines
+    const lines = fullText.split("\n").slice(0, MAX_LINES);
+    console.log(`[ingest-sanmar] Captured ${lines.length} lines`);
+    return lines.join("\n");
   } finally {
-    client.close();
+    try { client.close(); } catch { /* already closed */ }
   }
 }
 
