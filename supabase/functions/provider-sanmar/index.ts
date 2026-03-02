@@ -176,7 +176,7 @@ function buildProductInfoRequest(
 
 /**
  * Build PromoStandards getPricingAndConfiguration request for customer-specific pricing.
- * priceType="Customer" returns negotiated account rates.
+ * Uses inline xmlns declarations (no prefixes) matching SanMar's expected schema.
  */
 function buildPricingRequest(
   style: string,
@@ -184,24 +184,20 @@ function buildPricingRequest(
   username: string,
   password: string
 ): string {
-  // PromoStandards PricingAndConfiguration v2.0.0
-  // Namespace prefix must be "pric:" for the operation element, "shar:" for shared objects
   return `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:pric="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/"
-                  xmlns:shar="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
    <soapenv:Header/>
    <soapenv:Body>
-      <pric:GetConfigurationAndPricingRequest>
-         <shar:wsVersion>2.0.0</shar:wsVersion>
-         <shar:id>${escapeXml(username)}</shar:id>
-         <shar:password>${escapeXml(password)}</shar:password>
-         <shar:productId>${escapeXml(style)}</shar:productId>
-         <shar:localizationCountry>US</shar:localizationCountry>
-         <shar:localizationLanguage>en</shar:localizationLanguage>
-         <shar:configurationType>Blank</shar:configurationType>
-         <shar:priceType>Customer</shar:priceType>
-      </pric:GetConfigurationAndPricingRequest>
+      <GetConfigurationAndPricingRequest xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/">
+         <wsVersion xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">2.0.0</wsVersion>
+         <id xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">${escapeXml(username)}</id>
+         <password xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">${escapeXml(password)}</password>
+         <productId xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">${escapeXml(style)}</productId>
+         <localizationCountry xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">US</localizationCountry>
+         <localizationLanguage xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">en</localizationLanguage>
+         <configurationType xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">Blank</configurationType>
+         <priceType xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">Customer</priceType>
+      </GetConfigurationAndPricingRequest>
    </soapenv:Body>
 </soapenv:Envelope>`;
 }
