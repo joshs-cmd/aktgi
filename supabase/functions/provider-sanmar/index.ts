@@ -479,21 +479,21 @@ function parseProductResponse(xmlData: string, parser: XMLParser, logRaw = false
       let listPrice = parseFloat(price.listPrice || price.ListPrice || item.listPrice || "") || null;
 
       // Inject customer-specific price from PromoStandards endpoint (priceType="Customer")
-      // The partId in PromoStandards = inventoryKey from the product info response
-      // Look up negotiated customer price by inventoryKey first, then fall back to sizeCode
+      // PromoStandards partId = inventoryKey + sizeIndex (string concat)
+      // e.g. inventoryKey=47901, sizeIndex=3 → partId="479013"
       const inventoryKey = String(basic.inventoryKey || item.inventoryKey || "").trim();
+      const sizeIndex = String(basic.sizeIndex || item.sizeIndex || "").trim();
+      const partIdKey = inventoryKey && sizeIndex ? inventoryKey + sizeIndex : inventoryKey;
       const sizeCode = (basic.size || item.size || "").toString().toUpperCase().trim();
       let customerPrice: number | null = null;
       if (customerPricingMap.size > 0) {
-        // Primary: match by inventoryKey (e.g. "479013")
-        customerPrice = customerPricingMap.get(inventoryKey) ?? null;
-        if (!customerPrice) {
-          // Fallback: if only one part price returned (e.g. OSFA products), use it for all sizes
-          if (customerPricingMap.size === 1) {
-            customerPrice = Array.from(customerPricingMap.values())[0];
-          }
+        // Primary: match by inventoryKey+sizeIndex composite key
+        customerPrice = customerPricingMap.get(partIdKey) ?? customerPricingMap.get(inventoryKey) ?? null;
+        if (!customerPrice && customerPricingMap.size === 1) {
+          // Fallback for OSFA/single-size products
+          customerPrice = Array.from(customerPricingMap.values())[0];
         }
-        if (idx === 0) console.log(`[provider-sanmar] Price lookup: inventoryKey=${inventoryKey} size=${sizeCode} => customer=$${customerPrice}`);
+        if (idx === 0) console.log(`[provider-sanmar] Price lookup: inventoryKey=${inventoryKey} sizeIndex=${sizeIndex} partIdKey=${partIdKey} => customer=$${customerPrice}`);
       }
       if (!customerPrice) {
         customerPrice = parseFloat(price.customerPrice || price.CustomerPrice || item.customerPrice || "") || null;
