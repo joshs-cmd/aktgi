@@ -125,42 +125,47 @@ function resolveImageUrl(path: string | undefined): string | null {
 
 /**
  * Extract wholesale price from a OneStop item.
- * Prices are integers in cents; divide by 10^price_factor (default 100).
- * Priority: my_price > piece > dozen/12 > case/case_qty
- * Also checks top-level 'price' field and nested pricing variants.
+ * Catch-all: checks every known price field name in priority order.
+ * OneStop inventory endpoint (/items/?style=) does NOT include pricing —
+ * pricing must be fetched separately from /pricing/?style= and injected.
  */
 function extractPrice(item: OneStopItem): number {
-  const priceFactor = item.price_factor ?? item.pricing?.price_factor ?? 2;
-  const divisor = Math.pow(10, priceFactor);
-
-  // Cast to any to probe for unexpected field names
   const raw = item as Record<string, unknown>;
 
-  // Check top-level fields first, then nested pricing object
-  const myPrice = item.my_price ?? item.customer_price ?? item.pricing?.my_price ?? 0;
-  if (myPrice > 0) return myPrice / divisor;
+  // Determine divisor: price_factor=2 means price is in cents (divide by 100)
+  const priceFactor = Number(item.price_factor ?? (item.pricing as Record<string,unknown>)?.price_factor ?? 2);
+  const divisor = Math.pow(10, priceFactor);
 
-  // Check plain 'price' field (some API versions use this)
-  const plainPrice = (raw.price as number) ?? 0;
-  if (plainPrice > 0) return plainPrice / divisor;
+  // Priority order of known OneStop price field names
+  const topLevelFields = [
+    "customerPrice", "customer_price", "piecePrice", "piece_price",
+    "netPrice", "net_price", "my_price", "price", "unitPrice", "unit_price",
+    "salePrice", "sale_price", "wholesale", "cost", "piece",
+  ];
+  for (const field of topLevelFields) {
+    const val = raw[field];
+    if (typeof val === "number" && val > 0) {
+      console.log(`[provider-onestop] extractPrice: found ${field}=${val} (divisor=${divisor})`);
+      return val / divisor;
+    }
+  }
 
-  const piece = item.piece ?? item.pricing?.piece ?? 0;
-  if (piece > 0) return piece / divisor;
-
-  // Check 'unit_price' / 'wholesale' / 'cost' as additional fallbacks
-  const unitPrice = (raw.unit_price as number) ?? (raw.wholesale as number) ?? (raw.cost as number) ?? 0;
-  if (unitPrice > 0) return unitPrice / divisor;
-
-  const dozen = item.dozen ?? item.pricing?.dozen ?? 0;
-  if (dozen > 0) return (dozen / 12) / divisor;
-
-  const casePrice = item.case_price ?? item.pricing?.case ?? 0;
-  const caseQty = item.case_qty ?? 1;
-  if (casePrice > 0 && caseQty > 0) return (casePrice / caseQty) / divisor;
-
-  // Final fallback: check all nested pricing fields
-  if (item.pricing) {
+  // Check nested pricing object
+  if (item.pricing && typeof item.pricing === "object") {
     const pricingRaw = item.pricing as Record<string, unknown>;
+    const nestedFields = [
+      "customerPrice", "customer_price", "piecePrice", "piece_price",
+      "netPrice", "net_price", "my_price", "price", "unitPrice", "unit_price",
+      "piece", "wholesale", "cost",
+    ];
+    for (const field of nestedFields) {
+      const val = pricingRaw[field];
+      if (typeof val === "number" && val > 0 && field !== "price_factor") {
+        console.log(`[provider-onestop] extractPrice nested pricing.${field}=${val}`);
+        return val / divisor;
+      }
+    }
+    // Fallback: any numeric field in pricing
     for (const key of Object.keys(pricingRaw)) {
       const val = pricingRaw[key];
       if (typeof val === "number" && val > 0 && key !== "price_factor") {
@@ -168,6 +173,35 @@ function extractPrice(item: OneStopItem): number {
       }
     }
   }
+
+  // Check nested prices array: item.prices[0].price / item.prices[0].customerPrice
+  const pricesArr = (raw.prices as Record<string, unknown>[]) ?? null;
+  if (Array.isArray(pricesArr) && pricesArr.length > 0) {
+    const first = pricesArr[0] as Record<string, unknown>;
+    for (const field of topLevelFields) {
+      const val = first[field];
+      if (typeof val === "number" && val > 0) return val / divisor;
+    }
+  }
+
+  // Check price_info / price_data nested objects
+  for (const containerKey of ["price_info", "price_data"]) {
+    const container = raw[containerKey] as Record<string, unknown> | null;
+    if (container && typeof container === "object") {
+      for (const field of ["customer_cost", "customerPrice", "price", "cost"]) {
+        const val = container[field];
+        if (typeof val === "number" && val > 0) return val / divisor;
+      }
+    }
+  }
+
+  // Dozen / case fallback
+  const dozen = item.dozen ?? (item.pricing as Record<string,unknown>)?.dozen ?? 0;
+  if (Number(dozen) > 0) return (Number(dozen) / 12) / divisor;
+
+  const casePrice = item.case_price ?? (item.pricing as Record<string,unknown>)?.case ?? 0;
+  const caseQty = item.case_qty ?? 1;
+  if (Number(casePrice) > 0) return (Number(casePrice) / Number(caseQty)) / divisor;
 
   return 0;
 }
@@ -391,9 +425,58 @@ serve(async (req) => {
       );
     }
 
-    const invData = await invRes.json();
-    const items: OneStopItem[] = Array.isArray(invData.results) ? invData.results : [];
+    // Step 2b: Fetch pricing in parallel with inventory processing
+    const pricingUrl = `${ONESTOP_API_BASE}/pricing/?style=${encodeURIComponent(bestStyleCode)}`;
+    const pricingUrl2 = `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(bestStyleCode)}&pricing=Y`;
+    console.log(`[provider-onestop] Fetching pricing: ${pricingUrl}`);
+
+    const [invData, pricingResA, pricingResB] = await Promise.allSettled([
+      invRes.json(),
+      fetch(pricingUrl, fetchOpts).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(pricingUrl2, { ...fetchOpts, signal: AbortSignal.timeout(8_000) }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ]);
+
+    const rawInvData = invData.status === "fulfilled" ? invData.value : {};
+    const items: OneStopItem[] = Array.isArray(rawInvData.results) ? rawInvData.results : [];
     console.log(`[provider-onestop] Got ${items.length} inventory items for ${bestStyleCode}`);
+
+    // Build a price map from the dedicated pricing endpoint
+    const priceMap = new Map<string, number>(); // key: colorCode-sizeCode → price
+
+    // Try /pricing/ endpoint
+    const pricingData = pricingResA.status === "fulfilled" ? pricingResA.value : null;
+    if (pricingData) {
+      console.log(`[provider-onestop] /pricing/ response keys: ${JSON.stringify(Object.keys(pricingData ?? {}))}`);
+      console.log(`[provider-onestop] /pricing/ sample: ${JSON.stringify(pricingData).substring(0, 600)}`);
+      const pricingItems: Record<string, unknown>[] = Array.isArray(pricingData?.results)
+        ? pricingData.results
+        : Array.isArray(pricingData)
+        ? pricingData
+        : [];
+      for (const pi of pricingItems) {
+        const raw = pi as Record<string, unknown>;
+        const cc = String(raw.color_code ?? "");
+        const sc = String(raw.size_code ?? "");
+        const price = extractPrice(pi as OneStopItem);
+        if (price > 0) priceMap.set(`${cc}-${sc}`, price);
+      }
+      console.log(`[provider-onestop] Pricing endpoint gave ${priceMap.size} price entries`);
+    }
+
+    // Try /items/?pricing=Y endpoint as fallback
+    const pricingDataB = pricingResB.status === "fulfilled" ? pricingResB.value : null;
+    if (pricingDataB && priceMap.size === 0) {
+      console.log(`[provider-onestop] /items/?pricing=Y sample: ${JSON.stringify(pricingDataB).substring(0, 600)}`);
+      const pricingItemsB: Record<string, unknown>[] = Array.isArray(pricingDataB?.results)
+        ? pricingDataB.results : [];
+      for (const pi of pricingItemsB) {
+        const raw = pi as Record<string, unknown>;
+        const cc = String(raw.color_code ?? "");
+        const sc = String(raw.size_code ?? "");
+        const price = extractPrice(pi as OneStopItem);
+        if (price > 0) priceMap.set(`${cc}-${sc}`, price);
+      }
+    }
 
     if (items.length === 0) {
       return new Response(
@@ -403,6 +486,19 @@ serve(async (req) => {
     }
 
     const product = aggregateItems(items);
+    
+    // Inject prices from pricing endpoint into aggregated product
+    if (priceMap.size > 0 && product) {
+      for (const color of product.colors) {
+        for (const size of color.sizes) {
+          const key = `${color.code}-${size.code}`;
+          const mappedPrice = priceMap.get(key);
+          if (mappedPrice && mappedPrice > 0 && size.price === 0) {
+            size.price = mappedPrice;
+          }
+        }
+      }
+    }
 
     if (!product) {
       return new Response(
