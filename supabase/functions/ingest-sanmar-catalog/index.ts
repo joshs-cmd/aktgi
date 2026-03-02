@@ -166,8 +166,8 @@ function mapRows(rows: Record<string, string>[]): MappedProduct[] {
   if (rows.length === 0) return [];
 
   const headers = Object.keys(rows[0]);
-  const brandCol = findColumn(headers, "MILL_NAME", "MILL NAME", "BRAND", "BRAND_NAME");
-  const styleCol = findColumn(headers, "STYLE", "UNIQUE_KEY", "STYLE_NUMBER", "STYLE_NUM");
+  const brandCol = findColumn(headers, "MILL", "MILL_NAME", "MILL NAME", "BRAND", "BRAND_NAME");
+  const styleCol = findColumn(headers, "STYLE#", "STYLE", "UNIQUE_KEY", "STYLE_NUMBER");
   const titleCol = findColumn(headers, "PRODUCT_TITLE", "TITLE", "SHORT_DESCRIPTION");
   const descCol = findColumn(headers, "PRODUCT_DESCRIPTION", "DESCRIPTION", "LONG_DESCRIPTION");
   const imgCol = findColumn(
