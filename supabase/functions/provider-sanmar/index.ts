@@ -184,13 +184,16 @@ function buildPricingRequest(
   username: string,
   password: string
 ): string {
+  // PromoStandards PricingAndConfiguration v2.0.0
+  // Operation: GetConfigurationAndPricing  (note: Config BEFORE Pricing in operation name)
+  // Namespace: http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:ns="http://www.promostandards.org/WSDL/PricingService/2.0.0/"
-                  xmlns:shar="http://www.promostandards.org/WSDL/PricingService/2.0.0/SharedObjects/">
+                  xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/"
+                  xmlns:shar="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">
   <soapenv:Header/>
   <soapenv:Body>
-    <ns:GetPricingAndConfigurationRequest>
+    <ns:GetConfigurationAndPricingRequest>
       <shar:wsVersion>2.0.0</shar:wsVersion>
       <shar:id>${escapeXml(username)}</shar:id>
       <shar:password>${escapeXml(password)}</shar:password>
@@ -201,7 +204,7 @@ function buildPricingRequest(
       <shar:localizationCountry>US</shar:localizationCountry>
       <shar:localizationLanguage>en</shar:localizationLanguage>
       <shar:configurationType>Blank</shar:configurationType>
-    </ns:GetPricingAndConfigurationRequest>
+    </ns:GetConfigurationAndPricingRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }

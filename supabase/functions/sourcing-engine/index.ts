@@ -116,7 +116,7 @@ serve(async (req) => {
           console.log(`[sourcing-engine] Calling ${providerFnName} with SKU: "${queryForProvider}" (original: ${originalSku ? "yes" : "no, using query"})`);
 
           const { data, error } = await supabase.functions.invoke(providerFnName, {
-            body: { query: queryForProvider, distributorId: distributor.id },
+            body: { query: queryForProvider, distributorId: distributor.id, brand },
           });
 
           if (error || !data?.product) {
@@ -128,7 +128,7 @@ serve(async (req) => {
                 console.log(`[sourcing-engine] Retrying ${providerFnName} with prefix fallback: "${prefixedQuery}"`);
                 
                 const { data: retryData, error: retryError } = await supabase.functions.invoke(providerFnName, {
-                  body: { query: prefixedQuery, distributorId: distributor.id },
+                  body: { query: prefixedQuery, distributorId: distributor.id, brand },
                 });
 
                 if (!retryError && retryData?.product) {
