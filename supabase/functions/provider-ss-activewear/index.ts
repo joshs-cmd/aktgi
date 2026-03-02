@@ -491,20 +491,8 @@ serve(async (req) => {
       );
     }
 
-    // Brand validation: fuzzy match — only reject if both sides are non-empty AND clearly different
-    if (brandFilter && standardProduct.brand) {
-      const returnedBrand = standardProduct.brand.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const requestedBrand = brandFilter.replace(/[^a-z0-9]/g, "");
-      // Accept if either string contains the other (handles "lat" vs "latapparel", "bellacanvas" vs "bella+canvas")
-      const brandMatch = returnedBrand.includes(requestedBrand) || requestedBrand.includes(returnedBrand);
-      if (!brandMatch) {
-        console.log(`[provider-ss-activewear] Brand mismatch: requested "${brandFilter}" but got "${standardProduct.brand}" — returning null`);
-        return new Response(
-          JSON.stringify({ product: null }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-    }
+    // Brand validation removed — styleNumber uniqueness per distributor is sufficient.
+    // Fuzzy brand checks were causing valid items (e.g. "LAT" vs "LAT Apparel") to be rejected.
 
     console.log(`[provider-ss-activewear] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
 
