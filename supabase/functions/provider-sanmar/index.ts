@@ -245,12 +245,12 @@ async function fetchCustomerPricing(
     const result = parser.parse(xmlText);
     const envelope = result["soapenv:Envelope"] || result["S:Envelope"] || result["soap:Envelope"] || result.Envelope;
     const bodyEl = envelope?.["soapenv:Body"] || envelope?.["S:Body"] || envelope?.["soap:Body"] || envelope?.Body;
-    if (!bodyEl) return priceMap;
+    if (!bodyEl) return { priceMap, debugXml };
 
     const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("pricingandconfiguration"));
     if (!respKey) {
       console.log(`[provider-sanmar] PromoStandards: no pricing response key, keys=${Object.keys(bodyEl).join(", ")}`);
-      return priceMap;
+      return { priceMap, debugXml };
     }
 
     const resp = bodyEl[respKey];
@@ -259,7 +259,7 @@ async function fetchCustomerPricing(
     const parts = configuration?.Part || configuration?.part;
     if (!parts) {
       console.log(`[provider-sanmar] PromoStandards: no Part in Configuration`);
-      return priceMap;
+      return { priceMap, debugXml };
     }
 
     const partArray = Array.isArray(parts) ? parts : [parts];
@@ -926,13 +926,20 @@ serve(async (req) => {
 
     let productList: any[] = [];
     let matchedVariant = "";
-    let isFirstVariant = true;
 
     // Fetch customer-specific pricing from PromoStandards in parallel with product info loop
     // We kick this off early using the first variant (most likely the style number)
     const firstVariant = variants[0];
     let promoDebugXml = "";
-    const customerPricingPromise = fetchCustomerPricing(firstVariant, customerNumber, username, password, parser);
+
+    // Wrap PromoStandards entirely in try/catch so it never crashes the function
+    let customerPricingPromise: Promise<{ priceMap: Map<string, number>; debugXml: string }>;
+    try {
+      customerPricingPromise = fetchCustomerPricing(firstVariant, customerNumber, username, password, parser);
+    } catch (e: any) {
+      promoDebugXml = `DEBUG FATAL (init): ${e.message}`;
+      customerPricingPromise = Promise.resolve({ priceMap: new Map(), debugXml: promoDebugXml });
+    }
 
     // Get product info — run all variants in parallel and pick first exact match
     const fetchVariant = async (variant: string): Promise<{ variant: string; parsed: any[] } | null> => {
@@ -962,7 +969,6 @@ serve(async (req) => {
     const variantResults = await Promise.all(variants.map(fetchVariant));
     const firstHit = variantResults.find(r => r !== null);
 
-    let isFirstVariant = true;
     if (firstHit) {
       matchedVariant = firstHit.variant;
       // Now await the promo pricing (likely already done by now) and re-parse with price map
