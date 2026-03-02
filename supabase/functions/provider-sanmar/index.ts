@@ -222,6 +222,7 @@ async function fetchCustomerPricing(
   try {
     const body = buildPricingRequest(style, customerNumber, username, password);
     console.log(`[provider-sanmar] PromoStandards request: style=${style}, priceType=Customer`);
+    console.log(`[provider-sanmar] PromoStandards REQUEST BODY:\n${body}`);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
@@ -241,13 +242,21 @@ async function fetchCustomerPricing(
     }
 
     const xmlText = await response.text();
-    debugXml = "DEBUG PROMO: " + xmlText.substring(0, 800);
-    console.log(`[provider-sanmar] PromoStandards pricing XML length: ${xmlText.length}`);
+    // Log full XML for debugging (truncated to 8000 chars to stay within log limits)
+    console.log(`[provider-sanmar] PromoStandards FULL XML (${xmlText.length} chars):\n${xmlText.substring(0, 8000)}`);
+    debugXml = "DEBUG PROMO: " + xmlText.substring(0, 1200);
 
     const result = parser.parse(xmlText);
+    // Log the full parsed JSON so we can see the exact structure
+    const parsedJson = JSON.stringify(result, null, 2);
+    console.log(`[provider-sanmar] PromoStandards PARSED JSON (${parsedJson.length} chars):\n${parsedJson.substring(0, 6000)}`);
+
     const envelope = result["soapenv:Envelope"] || result["S:Envelope"] || result["soap:Envelope"] || result.Envelope;
     const bodyEl = envelope?.["soapenv:Body"] || envelope?.["S:Body"] || envelope?.["soap:Body"] || envelope?.Body;
-    if (!bodyEl) return { priceMap, debugXml };
+    if (!bodyEl) {
+      console.log("[provider-sanmar] PromoStandards: no body element found");
+      return { priceMap, debugXml };
+    }
 
     const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("pricingandconfiguration"));
     if (!respKey) {
@@ -256,15 +265,21 @@ async function fetchCustomerPricing(
     }
 
     const resp = bodyEl[respKey];
+    console.log(`[provider-sanmar] PromoStandards resp keys: ${Object.keys(resp || {}).join(", ")}`);
+
     // Navigate into Configuration > Part > PartPriceArray > PartPrice
     const configuration = resp?.Configuration || resp?.["ns2:Configuration"] || resp?.configuration;
+    console.log(`[provider-sanmar] PromoStandards configuration keys: ${Object.keys(configuration || {}).join(", ")}`);
+
     const parts = configuration?.Part || configuration?.part;
     if (!parts) {
-      console.log(`[provider-sanmar] PromoStandards: no Part in Configuration`);
+      console.log(`[provider-sanmar] PromoStandards: no Part in Configuration. Full resp: ${JSON.stringify(resp).substring(0, 1000)}`);
       return { priceMap, debugXml };
     }
 
     const partArray = Array.isArray(parts) ? parts : [parts];
+    console.log(`[provider-sanmar] PromoStandards: ${partArray.length} parts found`);
+
     for (const part of partArray) {
       const partId = String(part?.partId || part?.PartId || "").toUpperCase().trim();
       const priceArrays = part?.PartPriceArray || part?.partPriceArray;
@@ -274,21 +289,49 @@ async function fetchCustomerPricing(
       if (!prices) continue;
 
       const priceList = Array.isArray(prices) ? prices : [prices];
-      // Take the first (qty=1) price
+      // Log all price entries for first part to find priceType/priceGroupDescription
+      if (partId && !priceMap.size) {
+        console.log(`[provider-sanmar] Part ${partId} price entries (${priceList.length} total):`);
+        priceList.slice(0, 10).forEach((p: any, i: number) => {
+          console.log(`  [${i}] ${JSON.stringify(p)}`);
+        });
+      }
+
+      // Priority: find a price entry where priceType or priceGroupDescription indicates Customer/Net
+      // Fall back to minQuantity=1 price if no Customer-specific entry found
+      let bestPrice = 0;
+      let fallbackPrice = 0;
+
       for (const p of priceList) {
-        const minQty = parseFloat(String(p?.minQuantity || p?.MinQuantity || "0"));
-        if (minQty <= 1 || !priceMap.has(partId)) {
-          const price = parseFloat(String(p?.price || p?.Price || p?.unitPrice || "0"));
-          if (price > 0) {
-            priceMap.set(partId, price);
-          }
+        const priceVal = parseFloat(String(p?.price || p?.Price || p?.unitPrice || p?.unitPrice || "0"));
+        if (priceVal <= 0) continue;
+
+        const priceType = String(p?.priceType || p?.PriceType || "").toLowerCase();
+        const priceGroupDesc = String(p?.priceGroupDescription || p?.PriceGroupDescription || "").toLowerCase();
+        const minQty = parseFloat(String(p?.minQuantity || p?.MinQuantity || "1"));
+
+        console.log(`[provider-sanmar] Part ${partId} price: val=${priceVal}, type="${priceType}", group="${priceGroupDesc}", minQty=${minQty}`);
+
+        // Prefer Customer/Net labeled price
+        if (priceType.includes("customer") || priceType.includes("net") || priceType.includes("special") ||
+            priceGroupDesc.includes("customer") || priceGroupDesc.includes("net") || priceGroupDesc.includes("special")) {
+          if (minQty <= 1 || bestPrice === 0) bestPrice = priceVal;
         }
+
+        // Fallback: lowest minQty price
+        if (minQty <= 1) fallbackPrice = priceVal;
+      }
+
+      const finalPrice = bestPrice > 0 ? bestPrice : fallbackPrice;
+      if (finalPrice > 0) {
+        console.log(`[provider-sanmar] Part ${partId}: using price $${finalPrice} (${bestPrice > 0 ? "Customer/Net match" : "fallback minQty=1"})`);
+        priceMap.set(partId, finalPrice);
       }
     }
 
     console.log(`[provider-sanmar] PromoStandards customer pricing: ${priceMap.size} size prices found`);
     if (priceMap.size > 0) {
-      const sample = Array.from(priceMap.entries()).slice(0, 3).map(([k, v]) => `${k}=$${v}`).join(", ");
+      const sample = Array.from(priceMap.entries()).slice(0, 5).map(([k, v]) => `${k}=$${v}`).join(", ");
       console.log(`[provider-sanmar] Sample customer prices: ${sample}`);
     }
   } catch (err: any) {
