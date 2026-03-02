@@ -425,58 +425,78 @@ serve(async (req) => {
       );
     }
 
-    // Step 2b: Fetch pricing in parallel with inventory processing
-    const pricingUrl = `${ONESTOP_API_BASE}/pricing/?style=${encodeURIComponent(bestStyleCode)}`;
-    const pricingUrl2 = `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(bestStyleCode)}&pricing=Y`;
-    console.log(`[provider-onestop] Fetching pricing: ${pricingUrl}`);
+    // Step 2b: Probe ALL known OneStop pricing endpoints simultaneously
+    const pricingEndpoints = [
+      `${ONESTOP_API_BASE}/pricing/?style=${encodeURIComponent(bestStyleCode)}`,
+      `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(bestStyleCode)}&pricing=Y`,
+      `${ONESTOP_API_BASE}/contract-pricing/?style=${encodeURIComponent(bestStyleCode)}`,
+      `${ONESTOP_API_BASE}/prices/?style=${encodeURIComponent(bestStyleCode)}`,
+      `${ONESTOP_API_BASE}/v2/pricing/?style=${encodeURIComponent(bestStyleCode)}`,
+    ];
 
-    const [invData, pricingResA, pricingResB] = await Promise.allSettled([
+    const probeAndLog = async (url: string): Promise<Record<string, unknown> | null> => {
+      try {
+        const r = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(8_000) });
+        const status = r.status;
+        if (!r.ok) {
+          console.log(`[provider-onestop] PRICING PROBE ${url} → HTTP ${status} (skip)`);
+          return null;
+        }
+        const data = await r.json();
+        const sample = JSON.stringify(data).substring(0, 800);
+        console.log(`[provider-onestop] PRICING PROBE ${url} → HTTP ${status} SAMPLE: ${sample}`);
+        return data;
+      } catch (e) {
+        console.log(`[provider-onestop] PRICING PROBE ${url} → ERROR: ${e}`);
+        return null;
+      }
+    };
+
+    const [invData, ...pricingResults] = await Promise.allSettled([
       invRes.json(),
-      fetch(pricingUrl, fetchOpts).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(pricingUrl2, { ...fetchOpts, signal: AbortSignal.timeout(8_000) }).then(r => r.ok ? r.json() : null).catch(() => null),
+      ...pricingEndpoints.map(url => probeAndLog(url)),
     ]);
+
+    const pricingResA = pricingResults[0];
+    const pricingResB = pricingResults[1];
 
     const rawInvData = invData.status === "fulfilled" ? invData.value : {};
     const items: OneStopItem[] = Array.isArray(rawInvData.results) ? rawInvData.results : [];
     console.log(`[provider-onestop] Got ${items.length} inventory items for ${bestStyleCode}`);
 
-    // Build a price map from the dedicated pricing endpoint
+    // Build a price map from ALL probed pricing endpoints
     const priceMap = new Map<string, number>(); // key: colorCode-sizeCode → price
 
-    // Try /pricing/ endpoint
-    const pricingData = pricingResA.status === "fulfilled" ? pricingResA.value : null;
-    if (pricingData) {
-      console.log(`[provider-onestop] /pricing/ response keys: ${JSON.stringify(Object.keys(pricingData ?? {}))}`);
-      console.log(`[provider-onestop] /pricing/ sample: ${JSON.stringify(pricingData).substring(0, 600)}`);
-      const pricingItems: Record<string, unknown>[] = Array.isArray(pricingData?.results)
-        ? pricingData.results
-        : Array.isArray(pricingData)
-        ? pricingData
-        : [];
+    const extractPricingItems = (data: unknown): Record<string, unknown>[] => {
+      if (!data || typeof data !== "object") return [];
+      const d = data as Record<string, unknown>;
+      if (Array.isArray(d.results)) return d.results as Record<string, unknown>[];
+      if (Array.isArray(d.items)) return d.items as Record<string, unknown>[];
+      if (Array.isArray(d)) return d as Record<string, unknown>[];
+      // OneStop sometimes returns {styleCode: [items]} dict
+      const vals = Object.values(d);
+      if (vals.length > 0 && Array.isArray(vals[0])) return vals.flat() as Record<string, unknown>[];
+      return [];
+    };
+
+    for (let i = 0; i < pricingResults.length; i++) {
+      const res = pricingResults[i];
+      if (res.status !== "fulfilled" || !res.value) continue;
+      const pricingItems = extractPricingItems(res.value);
+      let added = 0;
       for (const pi of pricingItems) {
         const raw = pi as Record<string, unknown>;
         const cc = String(raw.color_code ?? "");
         const sc = String(raw.size_code ?? "");
         const price = extractPrice(pi as OneStopItem);
-        if (price > 0) priceMap.set(`${cc}-${sc}`, price);
+        if (price > 0) { priceMap.set(`${cc}-${sc}`, price); added++; }
       }
-      console.log(`[provider-onestop] Pricing endpoint gave ${priceMap.size} price entries`);
-    }
-
-    // Try /items/?pricing=Y endpoint as fallback
-    const pricingDataB = pricingResB.status === "fulfilled" ? pricingResB.value : null;
-    if (pricingDataB && priceMap.size === 0) {
-      console.log(`[provider-onestop] /items/?pricing=Y sample: ${JSON.stringify(pricingDataB).substring(0, 600)}`);
-      const pricingItemsB: Record<string, unknown>[] = Array.isArray(pricingDataB?.results)
-        ? pricingDataB.results : [];
-      for (const pi of pricingItemsB) {
-        const raw = pi as Record<string, unknown>;
-        const cc = String(raw.color_code ?? "");
-        const sc = String(raw.size_code ?? "");
-        const price = extractPrice(pi as OneStopItem);
-        if (price > 0) priceMap.set(`${cc}-${sc}`, price);
+      if (added > 0) {
+        console.log(`[provider-onestop] Pricing probe[${i}] (${pricingEndpoints[i]}) → ${added} prices added, priceMap now ${priceMap.size}`);
+        break; // stop after first endpoint that returns prices
       }
     }
+    console.log(`[provider-onestop] Final priceMap size: ${priceMap.size}`);
 
     if (items.length === 0) {
       return new Response(
