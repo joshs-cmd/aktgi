@@ -200,6 +200,7 @@ function buildPricingRequest(
          <shar:localizationCountry>US</shar:localizationCountry>
          <shar:localizationLanguage>en</shar:localizationLanguage>
          <shar:configurationType>Blank</shar:configurationType>
+         <shar:priceType>Customer</shar:priceType>
       </pric:GetConfigurationAndPricingRequest>
    </soapenv:Body>
 </soapenv:Envelope>`;
@@ -220,6 +221,7 @@ async function fetchCustomerPricing(
   let debugXml = "";
   try {
     const body = buildPricingRequest(style, customerNumber, username, password);
+    console.log(`[provider-sanmar] PromoStandards request: style=${style}, priceType=Customer`);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
