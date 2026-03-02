@@ -1,0 +1,1 @@
+ALTER TABLE public.catalog_products ADD COLUMN IF NOT EXISTS base_price numeric NULL;

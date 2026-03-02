@@ -15,6 +15,7 @@ export interface CatalogProduct {
   distributorSources: string[]; // e.g. ["SanMar", "S&S Activewear"]
   distributorSkuMap?: Record<string, string>; // e.g. { sanmar: "NL3600", "ss-activewear": "3600" }
   score: number;
+  basePrice?: number | null; // Account-specific piece price from SanMar pricing file
 }
 
 export interface CatalogSearchResponse {
