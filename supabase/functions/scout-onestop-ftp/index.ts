@@ -13,13 +13,17 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  const ftpHost = Deno.env.get("ONESTOP_FTP_HOST")!;
-  const ftpUser = Deno.env.get("ONESTOP_FTP_USER")!;
-  const ftpPass = Deno.env.get("ONESTOP_FTP_PASS")!;
+  // Allow body override for host (useful when DNS hasn't propagated)
+  let body: Record<string, string> = {};
+  try { body = await req.json(); } catch { /* no body */ }
 
-  if (!ftpHost || !ftpUser || !ftpPass) {
+  const ftpHost = body.host_override || Deno.env.get("ONESTOP_FTP_HOST") || "64.72.67.14";
+  const ftpUser = body.user_override || Deno.env.get("ONESTOP_FTP_USER")!;
+  const ftpPass = body.pass_override || Deno.env.get("ONESTOP_FTP_PASS")!;
+
+  if (!ftpUser || !ftpPass) {
     return new Response(
-      JSON.stringify({ error: "Missing ONESTOP_FTP_HOST / USER / PASS secrets" }),
+      JSON.stringify({ error: "Missing ONESTOP_FTP_USER / PASS secrets" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
