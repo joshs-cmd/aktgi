@@ -362,7 +362,20 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      catalog_search_fts: {
+        Args: { query_text: string }
+        Returns: {
+          base_price: number
+          brand: string
+          description: string
+          distributor: string
+          id: string
+          image_url: string
+          rank: number
+          style_number: string
+          title: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
