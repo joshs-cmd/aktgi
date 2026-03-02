@@ -97,6 +97,7 @@ interface OneStopItem {
   active_flag?: string;
   // Pricing fields
   my_price?: number;
+  customer_price?: number;
   piece?: number;
   dozen?: number;
   case_qty?: number;
@@ -136,7 +137,7 @@ function extractPrice(item: OneStopItem): number {
   const raw = item as Record<string, unknown>;
 
   // Check top-level fields first, then nested pricing object
-  const myPrice = item.my_price ?? item.pricing?.my_price ?? 0;
+  const myPrice = item.my_price ?? item.customer_price ?? item.pricing?.my_price ?? 0;
   if (myPrice > 0) return myPrice / divisor;
 
   // Check plain 'price' field (some API versions use this)
@@ -187,8 +188,12 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
     sizesMap: Map<string, { code: string; order: number; quantity: number; price: number }>;
   }>();
 
-  // Log first 3 items for raw diagnostics
-  for (let i = 0; i < Math.min(items.length, 3); i++) {
+  // Log first item FULLY for raw diagnostics (all fields)
+  if (items.length > 0) {
+    console.log(`[OneStop FULL Raw Item #0]:`, JSON.stringify(items[0]));
+  }
+  // Log abbreviated for items 1-2
+  for (let i = 1; i < Math.min(items.length, 3); i++) {
     const di = items[i];
     const raw = di as Record<string, unknown>;
     console.log(`[OneStop Raw Item Diagnostics #${i}]:`, JSON.stringify({
@@ -199,6 +204,7 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
       price: raw.price,
       piece: di.piece,
       dozen: di.dozen,
+      customer_price: raw.customer_price,
       unit_price: raw.unit_price,
       wholesale: raw.wholesale,
       cost: raw.cost,

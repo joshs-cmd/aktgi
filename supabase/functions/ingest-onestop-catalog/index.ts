@@ -117,8 +117,27 @@ Deno.serve(async (req) => {
           const priceFactor = Number(first.price_factor ?? first.pricing?.price_factor ?? 2);
           const divisor = Math.pow(10, priceFactor);
           const pricing = first.pricing as Record<string, number> | null;
+          // OneStop returns cost in my_price (customer price) or piece (piece price)
+          // Log raw pricing fields to diagnose $0 issues
+          const rawFirst = first as Record<string, unknown>;
+          if (!rawFirst._priceLogged) {
+            console.log(`[ingest-onestop] Price fields sample for ${styleKey}:`, JSON.stringify({
+              my_price: first.my_price,
+              piece: first.piece,
+              pricing_my_price: pricing?.my_price,
+              pricing_piece: pricing?.piece,
+              price_factor: first.price_factor,
+              raw_price: rawFirst.price,
+              raw_customer_price: rawFirst.customer_price,
+              raw_unit_price: rawFirst.unit_price,
+              raw_wholesale: rawFirst.wholesale,
+            }));
+          }
           const rawPrice = Number(
-            first.my_price ?? pricing?.my_price ?? first.piece ?? pricing?.piece ?? 0
+            first.my_price ?? pricing?.my_price ?? 
+            (rawFirst.customer_price as number) ?? 
+            first.piece ?? pricing?.piece ?? 
+            (rawFirst.price as number) ?? 0
           );
           const basePrice = rawPrice > 0 ? rawPrice / divisor : null;
 
