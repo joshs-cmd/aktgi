@@ -24,6 +24,7 @@ interface CatalogProduct {
   distributorSources: string[];
   distributorSkuMap: Record<string, string>;
   score: number;
+  basePrice?: number | null;
 }
 
 interface CatalogSearchResponse {
@@ -115,6 +116,7 @@ interface DbRow {
   title: string;
   description: string | null;
   image_url: string | null;
+  base_price: number | null;
 }
 
 function rowToProduct(row: DbRow, querySKU: string): CatalogProduct {
@@ -146,6 +148,7 @@ function rowToProduct(row: DbRow, querySKU: string): CatalogProduct {
     ],
     distributorSkuMap,
     score,
+    basePrice: row.base_price ?? null,
   };
 }
 
@@ -221,6 +224,7 @@ function deduplicateRows(rows: DbRow[], querySKU: string): CatalogProduct[] {
       distributorSources,
       distributorSkuMap,
       score: group.bestTier,
+      basePrice: primary.base_price ?? group.rows.find((r) => r.base_price != null)?.base_price ?? null,
     });
   }
 
@@ -268,13 +272,13 @@ serve(async (req) => {
       // Style number search: ilike on style_number and normalized variants
       supabase
         .from("catalog_products")
-        .select("id, distributor, brand, style_number, title, description, image_url")
+        .select("id, distributor, brand, style_number, title, description, image_url, base_price")
         .ilike("style_number", stylePattern)
         .limit(200),
       // Brand/title search
       supabase
         .from("catalog_products")
-        .select("id, distributor, brand, style_number, title, description, image_url")
+        .select("id, distributor, brand, style_number, title, description, image_url, base_price")
         .or(`brand.ilike.${brandPattern},title.ilike.${brandPattern}`)
         .limit(200),
     ]);

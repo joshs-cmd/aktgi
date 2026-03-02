@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       catalog_products: {
         Row: {
+          base_price: number | null
           brand: string
           description: string | null
           distributor: string
@@ -26,6 +27,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          base_price?: number | null
           brand: string
           description?: string | null
           distributor: string
@@ -36,6 +38,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          base_price?: number | null
           brand?: string
           description?: string | null
           distributor?: string
