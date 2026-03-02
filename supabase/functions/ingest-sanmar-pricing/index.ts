@@ -99,34 +99,47 @@ Deno.serve(async (req) => {
       priceFile = { name: parts[1], size: Number(parts[2] ?? 0) };
       console.log(`[ingest-sanmar-pricing] Resuming: dir=${priceDir} file=${priceFile.name}`);
     } else {
-      // First invocation: scan for the daily pricing CSV
-      // SanMar naming conventions: "Daily_Pricing_File*.csv", "pricing*.csv", "*price*.csv"
+      // First invocation: scan for the account-specific Daily Pricing CSV first,
+      // then fall back to SDL if not found.
+      // Priority order: Daily_Pricing > daily_pricing > SDL
+      const allCandidates: { dir: string; file: any; priority: number }[] = [];
+
       const searchDir = async (dir: string) => {
         await client.cd(dir);
         const entries = await client.list();
         for (const f of entries) {
           if (f.isDirectory && dir === "/") {
             await searchDir(`/${f.name}`);
-            if (priceFile) return;
             await client.cd(dir);
           } else if (!f.isDirectory && f.name.toLowerCase().endsWith(".csv")) {
             const lower = f.name.toLowerCase();
-            if (
-              lower.includes("price") ||
-              lower.includes("pricing") ||
-              lower.includes("daily") ||
-              lower.includes("sdl") ||   // SanMar Standard Distribution List (net pricing)
-              lower.includes("net")
-            ) {
-              priceFile = f;
-              priceDir = dir;
-              console.log(`[ingest-sanmar-pricing] Found pricing file: ${dir}/${f.name} (${(f.size / 1024 / 1024).toFixed(1)}MB)`);
-              return;
+            // Priority 1: account-specific daily pricing file
+            if (lower.includes("daily_pricing") || lower.includes("daily pricing") || lower === "sanmar_daily_pricing.csv") {
+              allCandidates.push({ dir, file: f, priority: 1 });
+              console.log(`[ingest-sanmar-pricing] Found daily pricing (P1): ${dir}/${f.name}`);
+            }
+            // Priority 2: other daily or account files
+            else if (lower.includes("daily") && (lower.includes("price") || lower.includes("pricing"))) {
+              allCandidates.push({ dir, file: f, priority: 2 });
+              console.log(`[ingest-sanmar-pricing] Found daily pricing (P2): ${dir}/${f.name}`);
+            }
+            // Priority 3: SDL / net / standard pricing fallback
+            else if (lower.includes("sdl") || lower.includes("net") || lower.includes("pricing") || lower.includes("price")) {
+              allCandidates.push({ dir, file: f, priority: 3 });
+              console.log(`[ingest-sanmar-pricing] Found pricing (P3/fallback): ${dir}/${f.name}`);
             }
           }
         }
       };
       await searchDir("/");
+
+      if (allCandidates.length > 0) {
+        allCandidates.sort((a, b) => a.priority - b.priority);
+        const best = allCandidates[0];
+        priceFile = best.file;
+        priceDir = best.dir;
+        console.log(`[ingest-sanmar-pricing] Selected file (priority ${best.priority}): ${priceDir}/${priceFile.name} (${(priceFile.size / 1024 / 1024).toFixed(1)}MB)`);
+      }
 
       if (!priceFile) {
         // List all CSVs so we can debug
@@ -213,11 +226,16 @@ Deno.serve(async (req) => {
     const styleIdx = findColumnIndex(headers,
       "STYLE#", "STYLE", "UNIQUE_KEY", "STYLE_NUMBER", "STYLENUMBER"
     );
+    // Account-specific columns first (MY_PRICE, NET_PRICE, ACCOUNT_PRICE),
+    // then fall back to standard PIECE_PRICE from the SDL file.
     const priceIdx = findColumnIndex(headers,
-      "PIECE_PRICE", "PIECE PRICE", "PIECEPRICE",
+      "MY_PRICE", "MYPRICE",
       "NET_PRICE", "NETPRICE",
-      "CUSTOMER_PRICE", "CUSTOMERPRICE",
+      "ACCOUNT_PRICE", "ACCOUNTPRICE",
       "YOUR_PRICE", "YOURPRICE",
+      "NEGOTIATED_PRICE", "NEGOTIATEDPRICE",
+      "CUSTOMER_PRICE", "CUSTOMERPRICE",
+      "PIECE_PRICE", "PIECE PRICE", "PIECEPRICE",
       "PRICE"
     );
 
