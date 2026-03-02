@@ -200,6 +200,7 @@ function buildPricingRequest(
          <shared:productId>${escapeXml(style)}</shared:productId>
          <shared:currency>USD</shared:currency>
          <shared:fobId>1</shared:fobId>
+         <shared:priceType>Customer</shared:priceType>
       </ns:GetConfigurationAndPricingRequest>
    </soapenv:Body>
 </soapenv:Envelope>`;
