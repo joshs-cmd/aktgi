@@ -10,9 +10,7 @@ const corsHeaders = {
 const SS_API_BASE = "https://api.ssactivewear.com/v2";
 
 // Rate limit: 60 req/min → 1 req/sec + buffer
-const REQUEST_DELAY_MS = 1100; // ~54 req/min — safely under limit
-const BATCH_SIZE = 500;        // DB upsert batch size
-const MAX_PAGE_SIZE = 500;     // SS API max page size
+const BATCH_SIZE = 500; // DB upsert batch size
 
 interface SSStyle {
   styleID?: number;
@@ -29,10 +27,6 @@ function buildImageUrl(path: string | undefined): string | null {
   if (!path) return null;
   if (path.startsWith("http")) return path;
   return `https://www.ssactivewear.com/${path.replace(/^\//, "")}`;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 serve(async (req) => {
@@ -63,42 +57,28 @@ serve(async (req) => {
     body = req.method === "POST" ? await req.json() : {};
   } catch { /* no body */ }
 
-  // Support resuming from a specific page offset
-  const startPage: number = typeof body.startPage === "number" ? body.startPage : 1;
-  // Optional: filter by brand (e.g. ?brand=Gildan for targeted runs)
+  // Support optional brand filter (e.g. POST { "brand": "Gildan" } for targeted runs)
   const brandFilter: string | null = typeof body.brand === "string" ? body.brand : null;
 
-  console.log(`[ingest-ss-catalog] Starting — page ${startPage}${brandFilter ? ` brand=${brandFilter}` : ""}`);
+  console.log(`[ingest-ss-catalog] Starting${brandFilter ? ` brand=${brandFilter}` : " (all brands)"}`);
 
-  let page = startPage;
   let totalFetched = 0;
   let totalUpserted = 0;
   let totalErrors = 0;
-  const requestCount = { n: 0 };
 
   /**
-   * Fetch one page of styles from S&S /v2/styles endpoint.
-   * Uses per-page + page params; returns empty array when done.
+   * S&S /v2/styles returns ALL variants (one row per color×size) in a single response.
+   * Pagination params are ignored — we fetch once and deduplicate by styleName.
    */
-  async function fetchStylesPage(p: number): Promise<SSStyle[]> {
-    // Enforce rate limit — 1 request per REQUEST_DELAY_MS
-    if (requestCount.n > 0) await sleep(REQUEST_DELAY_MS);
-    requestCount.n++;
-
-    const params = new URLSearchParams({
-      pageSize: String(MAX_PAGE_SIZE),
-      page: String(p),
-    });
+  async function fetchAllStyles(): Promise<SSStyle[]> {
+    const params = new URLSearchParams();
     if (brandFilter) params.set("brand", brandFilter);
 
-    const url = `${SS_API_BASE}/styles/?${params}`;
+    const url = `${SS_API_BASE}/styles/${params.toString() ? "?" + params : ""}`;
     console.log(`[ingest-ss-catalog] GET ${url}`);
 
     const res = await fetch(url, {
-      headers: {
-        Authorization: authHeader,
-        Accept: "application/json",
-      },
+      headers: { Authorization: authHeader, Accept: "application/json" },
     });
 
     if (!res.ok) {
@@ -107,89 +87,65 @@ serve(async (req) => {
     }
 
     const data = await res.json();
-    // API returns array directly or wrapped in { styles: [] }
     return Array.isArray(data) ? data : (data?.styles ?? []);
   }
 
   try {
-    // Paginate until we get an empty page
-    while (true) {
-      const styles = await fetchStylesPage(page);
+    const allVariants = await fetchAllStyles();
+    totalFetched = allVariants.length;
+    console.log(`[ingest-ss-catalog] Fetched ${totalFetched} variant rows`);
 
-      if (!styles || styles.length === 0) {
-        console.log(`[ingest-ss-catalog] No more styles at page ${page} — done`);
-        break;
-      }
-
-      totalFetched += styles.length;
-      console.log(`[ingest-ss-catalog] Page ${page}: ${styles.length} styles (total so far: ${totalFetched})`);
-
-      // Map to catalog_products rows
-      const rows = styles
-        .filter((s) => s.styleName && s.brandName)
-        .map((s) => ({
+    // Deduplicate by styleName — keep the variant with the best (non-null) colorFrontImage
+    const styleMap = new Map<string, Record<string, unknown>>();
+    for (const s of allVariants) {
+      if (!s.styleName || !s.brandName) continue;
+      const key = s.styleName.trim();
+      const existing = styleMap.get(key);
+      const imageUrl = buildImageUrl(s.colorFrontImage ?? s.styleImage);
+      if (!existing || (!existing.image_url && imageUrl)) {
+        styleMap.set(key, {
           distributor: "ss-activewear",
-          style_number: (s.styleName ?? "").trim(),
-          brand: (s.brandName ?? "").trim(),
-          title: (s.title ?? `${s.brandName ?? ""} ${s.styleName ?? ""}`).trim(),
-          description: null as string | null,
-          // Prefer colorFrontImage for product thumbnails, fall back to styleImage
-          image_url: buildImageUrl(s.colorFrontImage ?? s.styleImage),
+          style_number: key,
+          brand: s.brandName.trim(),
+          title: (s.title ?? `${s.brandName} ${s.styleName}`).trim(),
+          description: null,
+          image_url: imageUrl,
           base_price: s.basePrice ?? null,
           updated_at: new Date().toISOString(),
-        }));
-
-      // Upsert in batches to avoid payload limits
-      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-        const batch = rows.slice(i, i + BATCH_SIZE);
-        const { error } = await supabase
-          .from("catalog_products")
-          .upsert(batch, { onConflict: "distributor,style_number" });
-
-        if (error) {
-          console.error(`[ingest-ss-catalog] Upsert error (page ${page}, batch ${i / BATCH_SIZE + 1}):`, error.message);
-          totalErrors++;
-        } else {
-          totalUpserted += batch.length;
-        }
+        });
       }
+    }
 
-      // If fewer records than page size, this was the last page
-      if (styles.length < MAX_PAGE_SIZE) {
-        console.log(`[ingest-ss-catalog] Last page reached (got ${styles.length} < ${MAX_PAGE_SIZE})`);
-        break;
-      }
+    const rows = Array.from(styleMap.values());
+    console.log(`[ingest-ss-catalog] Deduped to ${rows.length} unique styles`);
 
-      page++;
+    // Upsert in BATCH_SIZE chunks with a 1-second delay between DB calls
+    // (rate limit applies to S&S API calls; we already made exactly 1 above)
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE);
+      const { error } = await supabase
+        .from("catalog_products")
+        .upsert(batch, { onConflict: "distributor,style_number" });
 
-      // Safety: stop after 55 minutes to stay within Supabase's 60s function timeout
-      // For large catalogs the caller should use startPage to resume
-      if (Date.now() - startedAt > 55_000) {
-        console.log(`[ingest-ss-catalog] Approaching timeout — pausing at page ${page}. Resume with startPage=${page}`);
-        return new Response(
-          JSON.stringify({
-            status: "partial",
-            message: `Timeout approaching — resume with startPage=${page}`,
-            totalFetched,
-            totalUpserted,
-            totalErrors,
-            nextPage: page,
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+      if (error) {
+        console.error(`[ingest-ss-catalog] Upsert error batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error.message);
+        totalErrors++;
+      } else {
+        totalUpserted += batch.length;
+        console.log(`[ingest-ss-catalog] Upserted batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(rows.length / BATCH_SIZE)} (${totalUpserted} total)`);
       }
     }
 
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-    console.log(`[ingest-ss-catalog] Done in ${elapsed}s — fetched=${totalFetched} upserted=${totalUpserted} errors=${totalErrors}`);
+    console.log(`[ingest-ss-catalog] Done in ${elapsed}s — fetched=${totalFetched} unique=${rows.length} upserted=${totalUpserted} errors=${totalErrors}`);
 
     return new Response(
       JSON.stringify({
         status: "complete",
-        totalFetched,
+        totalVariantsFetched: totalFetched,
+        uniqueStyles: rows.length,
         totalUpserted,
         totalErrors,
-        pagesProcessed: page - startPage + 1,
         elapsedSeconds: parseFloat(elapsed),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
