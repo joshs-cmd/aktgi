@@ -261,7 +261,11 @@ async function fetchCustomerPricing(
       return { priceMap, debugXml };
     }
 
-    const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("pricingandconfiguration"));
+    const respKey = Object.keys(bodyEl).find(k => 
+      k.toLowerCase().includes("pricingandconfiguration") ||
+      k.toLowerCase().includes("getconfiguration") ||
+      k.toLowerCase().includes("configurationandpricing")
+    );
     if (!respKey) {
       console.log(`[provider-sanmar] PromoStandards: no pricing response key, keys=${Object.keys(bodyEl).join(", ")}`);
       return { priceMap, debugXml };
