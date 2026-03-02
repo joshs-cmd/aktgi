@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      catalog_products: {
+        Row: {
+          brand: string
+          description: string | null
+          distributor: string
+          id: string
+          image_url: string | null
+          style_number: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          brand: string
+          description?: string | null
+          distributor: string
+          id?: string
+          image_url?: string | null
+          style_number: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          brand?: string
+          description?: string | null
+          distributor?: string
+          id?: string
+          image_url?: string | null
+          style_number?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       distributors: {
         Row: {
           api_base_url: string | null
