@@ -203,6 +203,7 @@ function buildPricingRequest(
          <shared:priceType>Customer</shared:priceType>
          <shared:localizationCountry>US</shared:localizationCountry>
          <shared:localizationLanguage>en</shared:localizationLanguage>
+         <shared:configurationType>Blank</shared:configurationType>
       </ns:GetConfigurationAndPricingRequest>
    </soapenv:Body>
 </soapenv:Envelope>`;
