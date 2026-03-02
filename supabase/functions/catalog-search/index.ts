@@ -223,15 +223,11 @@ serve(async (req) => {
     // PostgREST supports: .textSearch('search_vector', prefixTsquery, { type: 'plain', config: 'simple' })
     // but prefix queries need to_tsquery not plainto_tsquery. We'll use the filter approach.
 
-    const ftsResult = await supabase
-      .from("catalog_products")
-      .select("id, distributor, brand, style_number, title, description, image_url, base_price")
-      .filter("search_vector", "@@", `to_tsquery('simple', '${prefixTsquery.replace(/'/g, "''")}')`  )
-      .limit(300);
+    const ftsResult = await supabase.rpc("catalog_search_fts", { query_text: q });
 
     if (ftsResult.error) throw new Error(`DB error (fts): ${ftsResult.error.message}`);
 
-    let allRows: DbRow[] = (ftsResult.data ?? []) as DbRow[];
+    let allRows: DbRow[] = (ftsResult.data ?? []).map((r: any) => ({ ...r, rank: r.rank })) as DbRow[];
     console.log(`[catalog-search] FTS returned ${allRows.length} rows for "${q}"`);
 
     // ---------- Stage 2: ILIKE fallback on style_number (btree index) ----------
