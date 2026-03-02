@@ -10,6 +10,7 @@ const corsHeaders = {
 // SanMar SOAP endpoints
 const PRODUCT_INFO_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarProductInfoServicePort";
 const INVENTORY_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarWebServicePort";
+// SanMar's PromoStandards endpoint is v1.0.0 (confirmed via ?wsdl — targetNamespace is 1.0.0)
 const PROMOSTANDARDS_PRICING_ENDPOINT = "https://ws.sanmar.com:8080/promostandards/PricingAndConfigurationServiceBinding";
 
 // SanMar warehouse mapping
@@ -175,8 +176,10 @@ function buildProductInfoRequest(
 }
 
 /**
- * Build PromoStandards getPricingAndConfiguration request for customer-specific pricing.
- * Uses explicit ns/shared prefixes declared on the Envelope element — required by SanMar v2.0.0.
+ * Build PromoStandards getPricingAndConfiguration request.
+ * SanMar's endpoint is v1.0.0 (confirmed via WSDL: targetNamespace = 1.0.0).
+ * v1.0.0 does NOT have a priceType field — it returns all price tiers in one response.
+ * The customerPrice field in the response contains the negotiated account rate.
  */
 function buildPricingRequest(
   style: string,
@@ -186,19 +189,18 @@ function buildPricingRequest(
 ): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/"
-                  xmlns:shared="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">
+                  xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/"
+                  xmlns:shared="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">
    <soapenv:Header/>
    <soapenv:Body>
       <ns:GetConfigurationAndPricingRequest>
-         <shared:wsVersion>2.0.0</shared:wsVersion>
+         <shared:wsVersion>1.0.0</shared:wsVersion>
          <shared:id>${escapeXml(username)}</shared:id>
          <shared:password>${escapeXml(password)}</shared:password>
          <shared:productId>${escapeXml(style)}</shared:productId>
          <shared:localizationCountry>US</shared:localizationCountry>
          <shared:localizationLanguage>en</shared:localizationLanguage>
          <shared:configurationType>Blank</shared:configurationType>
-         <shared:priceType>Customer</shared:priceType>
       </ns:GetConfigurationAndPricingRequest>
    </soapenv:Body>
 </soapenv:Envelope>`;
