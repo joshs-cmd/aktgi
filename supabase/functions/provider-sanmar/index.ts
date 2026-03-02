@@ -1112,8 +1112,7 @@ serve(async (req) => {
       );
     }
 
-    // DEBUG: Inject raw PromoStandards XML into description for frontend visibility
-    standardProduct.description = promoDebugXml || "DEBUG: PromoStandards call was not made";
+    // PromoStandards pricing successfully integrated — debug injection removed
 
     console.log(`[provider-sanmar] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
 
