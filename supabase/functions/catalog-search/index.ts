@@ -355,7 +355,13 @@ function deduplicateProducts(
   const deduped: DedupedCatalogProduct[] = [];
 
   for (const [, group] of groups) {
-    const primary = group.items[0];
+    // Select the most authoritative primary item: sanmar > ss-activewear > onestop > first
+    const DIST_PRIORITY: Record<string, number> = { "sanmar": 3, "ss-activewear": 2, "onestop": 1 };
+    const primary = group.items.reduce((best, item) => {
+      const bp = DIST_PRIORITY[best.distributorCode] ?? 0;
+      const ip = DIST_PRIORITY[item.distributorCode] ?? 0;
+      return ip > bp ? item : best;
+    }, group.items[0]);
     const sources = [...new Set(group.items.map((i) => i.distributorName))];
     const totalInventory = group.items.reduce((sum, i) => sum + i.totalInventory, 0);
     const colorCount = Math.max(...group.items.map((i) => i.colorCount));

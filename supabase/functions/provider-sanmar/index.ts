@@ -10,7 +10,7 @@ const corsHeaders = {
 // SanMar SOAP endpoints
 const PRODUCT_INFO_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarProductInfoServicePort";
 const INVENTORY_ENDPOINT = "https://ws.sanmar.com:8080/SanMarWebService/SanMarWebServicePort";
-const PROMOSTANDARDS_PRICING_ENDPOINT = "https://ws.sanmar.com:8080/promostandards/PricingServiceBindingV2_0_0Port";
+const PROMOSTANDARDS_PRICING_ENDPOINT = "https://ws.sanmar.com:8080/promostandards/PricingAndConfigurationServiceBinding";
 
 // SanMar warehouse mapping
 const WAREHOUSE_NAMES: Record<string, string> = {
