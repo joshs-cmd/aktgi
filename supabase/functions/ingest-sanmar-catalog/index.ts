@@ -1,5 +1,4 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { parse } from "https://deno.land/std@0.224.0/csv/parse.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,207 +6,50 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-// Limit rows for initial testing
-const ROW_LIMIT = 100;
-const BATCH_SIZE = 50;
+const BATCH_SIZE = 500;
+// Process ~10MB per invocation to stay within CPU/memory limits
+const CHUNK_BYTES = 10 * 1024 * 1024;
 
-/**
- * Fetch the SanMar EPDD CSV.
- * Priority: SANMAR_CSV_URL (direct HTTPS) > FTP (SANMAR_FTP_HOST/USER/PASS)
- */
-async function fetchCsvText(): Promise<string> {
-  const csvUrl = Deno.env.get("SANMAR_CSV_URL");
-  if (csvUrl) {
-    console.log(`[ingest-sanmar] Fetching CSV via HTTPS: ${csvUrl.substring(0, 60)}...`);
-    const resp = await fetch(csvUrl);
-    if (!resp.ok) {
-      const body = await resp.text();
-      throw new Error(`HTTPS fetch failed (${resp.status}): ${body.substring(0, 200)}`);
-    }
-    return await resp.text();
-  }
-
-  // FTP path
-  const ftpHost = Deno.env.get("SANMAR_FTP_HOST");
-  const ftpUser = Deno.env.get("SANMAR_FTP_USER");
-  const ftpPass = Deno.env.get("SANMAR_FTP_PASS");
-
-  if (!ftpHost || !ftpUser || !ftpPass) {
-    throw new Error(
-      "No CSV source configured. Set SANMAR_CSV_URL for HTTPS or SANMAR_FTP_HOST/USER/PASS for FTP."
-    );
-  }
-
-  // Use basic-ftp for FTP download — stream partial content to avoid timeouts on large files
-  const { Client } = await import("npm:basic-ftp@5.0.5");
-  const { Writable } = await import("node:stream");
-  const client = new Client();
-  client.ftp.verbose = false;
-
-  try {
-    await client.access({
-      host: ftpHost,
-      user: ftpUser,
-      password: ftpPass,
-      secure: false,
-    });
-
-    // Search root and subdirectories for the EPDD CSV
-    let epddFile: any = null;
-    let epddDir = "/";
-
-    const searchDir = async (dir: string) => {
-      await client.cd(dir);
-      const entries = await client.list();
-      for (const f of entries) {
-        if (f.isDirectory) {
-          if (dir === "/") {
-            await searchDir(`/${f.name}`);
-            if (epddFile) return;
-            await client.cd(dir);
-          }
-        } else if (
-          f.name.toLowerCase().endsWith(".csv") &&
-          (f.name.toLowerCase().includes("epdd") || f.name.toLowerCase().includes("pdd"))
-        ) {
-          epddFile = f;
-          epddDir = dir;
-          return;
-        }
-      }
-    };
-
-    await searchDir("/");
-
-    if (!epddFile) {
-      await client.cd("/");
-      const rootFiles = await client.list();
-      const allNames: string[] = [];
-      for (const f of rootFiles) {
-        if (f.isDirectory) {
-          await client.cd(`/${f.name}`);
-          const sub = await client.list();
-          allNames.push(`${f.name}/: ${sub.map((s: any) => s.name).join(", ")}`);
-          await client.cd("/");
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
         } else {
-          allNames.push(f.name);
+          inQuotes = false;
         }
+      } else {
+        current += ch;
       }
-      throw new Error(`No EPDD/PDD CSV found on FTP. Structure: ${allNames.join(" | ")}`);
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        fields.push(current.trim());
+        current = "";
+      } else {
+        current += ch;
+      }
     }
-
-    await client.cd(epddDir);
-    console.log(`[ingest-sanmar] Found CSV: ${epddDir}/${epddFile.name}`);
-
-    // Stream only enough lines for our ROW_LIMIT (header + N data rows)
-    // This avoids downloading the entire 50MB+ file
-    const MAX_LINES = ROW_LIMIT + 500; // extra headroom for dedup
-    let lineCount = 0;
-    let csvChunks: string[] = [];
-    let done = false;
-
-    console.log(`[ingest-sanmar] Streaming first ${MAX_LINES} lines from FTP...`);
-    const writable = new Writable({
-      write(chunk: Buffer, _encoding: string, callback: () => void) {
-        if (done) { callback(); return; }
-        const text = chunk.toString("utf-8");
-        csvChunks.push(text);
-        lineCount += (text.match(/\n/g) || []).length;
-        if (lineCount >= MAX_LINES) {
-          done = true;
-          // Close connection to stop transfer
-          try { client.close(); } catch { /* expected */ }
-        }
-        callback();
-      },
-    });
-
-    try {
-      await client.downloadTo(writable, epddFile.name);
-    } catch (e: any) {
-      // If we intentionally closed, that's fine
-      if (!done) throw e;
-    }
-
-    const fullText = csvChunks.join("");
-    // Trim to MAX_LINES actual lines
-    const lines = fullText.split("\n").slice(0, MAX_LINES);
-    console.log(`[ingest-sanmar] Captured ${lines.length} lines`);
-    return lines.join("\n");
-  } finally {
-    try { client.close(); } catch { /* already closed */ }
   }
+  fields.push(current.trim());
+  return fields;
 }
 
-/**
- * Normalize a CSV header to a canonical key.
- * SanMar CSVs have varied column names across revisions.
- */
-function findColumn(headers: string[], ...candidates: string[]): string | null {
+function findColumnIndex(headers: string[], ...candidates: string[]): number {
   const normalized = headers.map((h) => h.trim().toLowerCase().replace(/[\s_-]+/g, ""));
   for (const candidate of candidates) {
     const norm = candidate.toLowerCase().replace(/[\s_-]+/g, "");
     const idx = normalized.indexOf(norm);
-    if (idx !== -1) return headers[idx];
+    if (idx !== -1) return idx;
   }
-  return null;
-}
-
-interface MappedProduct {
-  distributor: string;
-  brand: string;
-  style_number: string;
-  title: string;
-  description: string;
-  image_url: string;
-}
-
-function mapRows(rows: Record<string, string>[]): MappedProduct[] {
-  if (rows.length === 0) return [];
-
-  const headers = Object.keys(rows[0]);
-  const brandCol = findColumn(headers, "MILL", "MILL_NAME", "MILL NAME", "BRAND", "BRAND_NAME");
-  const styleCol = findColumn(headers, "STYLE#", "STYLE", "UNIQUE_KEY", "STYLE_NUMBER");
-  const titleCol = findColumn(headers, "PRODUCT_TITLE", "TITLE", "SHORT_DESCRIPTION");
-  const descCol = findColumn(headers, "PRODUCT_DESCRIPTION", "DESCRIPTION", "LONG_DESCRIPTION");
-  const imgCol = findColumn(
-    headers,
-    "FRONT_MODEL_IMAGE_URL",
-    "COLOR_FRONT_IMAGE_URL",
-    "FRONT_IMAGE_URL",
-    "FRONT_IMAGE",
-    "IMAGE_URL"
-  );
-
-  if (!styleCol) {
-    throw new Error(
-      `Cannot find style column. Available headers: ${headers.join(", ")}`
-    );
-  }
-
-  console.log(
-    `[ingest-sanmar] Column mapping: brand=${brandCol}, style=${styleCol}, title=${titleCol}, desc=${descCol}, img=${imgCol}`
-  );
-
-  const seen = new Set<string>();
-  const mapped: MappedProduct[] = [];
-
-  for (const row of rows) {
-    const style = (row[styleCol!] ?? "").trim();
-    if (!style || seen.has(style)) continue;
-    seen.add(style);
-
-    mapped.push({
-      distributor: "sanmar",
-      brand: (brandCol ? row[brandCol] : "").trim() || "SanMar",
-      style_number: style,
-      title: (titleCol ? row[titleCol] : "").trim() || style,
-      description: (descCol ? row[descCol] : "").trim() || "",
-      image_url: (imgCol ? row[imgCol] : "").trim() || "",
-    });
-  }
-
-  return mapped;
+  return -1;
 }
 
 Deno.serve(async (req) => {
@@ -218,64 +60,231 @@ Deno.serve(async (req) => {
   const startTime = Date.now();
 
   try {
-    // 1. Fetch CSV
-    console.log("[ingest-sanmar] Starting catalog ingest...");
-    const csvText = await fetchCsvText();
-    console.log(`[ingest-sanmar] CSV fetched: ${csvText.length} bytes`);
+    // Accept optional offset parameter to resume from a byte position
+    let startOffset = 0;
+    let headerLine = "";
+    try {
+      const body = await req.json();
+      startOffset = body.offset ?? 0;
+      headerLine = body.headerLine ?? "";
+    } catch { /* no body = start from 0 */ }
 
-    // 2. Parse CSV
-    const rows = parse(csvText, {
-      skipFirstRow: true,
-      strip: true,
-    }) as Record<string, string>[];
-    console.log(`[ingest-sanmar] Parsed ${rows.length} total rows`);
+    console.log(`[ingest-sanmar] Chunk ingest starting at offset=${startOffset}`);
 
-    // 3. Map and limit
-    const allMapped = mapRows(rows);
-    const limited = allMapped.slice(0, ROW_LIMIT);
-    console.log(
-      `[ingest-sanmar] Mapped ${allMapped.length} unique styles, processing first ${limited.length}`
+    const ftpHost = Deno.env.get("SANMAR_FTP_HOST")!;
+    const ftpUser = Deno.env.get("SANMAR_FTP_USER")!;
+    const ftpPass = Deno.env.get("SANMAR_FTP_PASS")!;
+
+    if (!ftpHost || !ftpUser || !ftpPass) {
+      throw new Error("Set SANMAR_FTP_HOST/USER/PASS");
+    }
+
+    const { Client } = await import("npm:basic-ftp@5.0.5");
+    const { Writable } = await import("node:stream");
+    const client = new Client();
+    client.ftp.verbose = false;
+
+    await client.access({ host: ftpHost, user: ftpUser, password: ftpPass, secure: false });
+
+    // Find the CSV file
+    let epddFile: any = null;
+    let epddDir = "/";
+    const searchDir = async (dir: string) => {
+      await client.cd(dir);
+      const entries = await client.list();
+      for (const f of entries) {
+        if (f.isDirectory && dir === "/") {
+          await searchDir(`/${f.name}`);
+          if (epddFile) return;
+          await client.cd(dir);
+        } else if (
+          !f.isDirectory &&
+          f.name.toLowerCase().endsWith(".csv") &&
+          (f.name.toLowerCase().includes("epdd") || f.name.toLowerCase().includes("pdd"))
+        ) {
+          epddFile = f;
+          epddDir = dir;
+          return;
+        }
+      }
+    };
+    await searchDir("/");
+    if (!epddFile) throw new Error("No EPDD CSV found on FTP");
+
+    await client.cd(epddDir);
+    const fileSize = epddFile.size || 0;
+    console.log(`[ingest-sanmar] File: ${epddFile.name} (${(fileSize / 1024 / 1024).toFixed(0)}MB), reading from offset ${startOffset}`);
+
+    // If starting from offset > 0, use REST command to resume
+    if (startOffset > 0) {
+      await client.send(`REST ${startOffset}`);
+    }
+
+    // Stream and collect up to CHUNK_BYTES
+    let bytesRead = 0;
+    let csvChunks: string[] = [];
+    let aborted = false;
+
+    await new Promise<void>((resolve, reject) => {
+      const writable = new Writable({
+        write(chunk: Buffer, _encoding: string, callback: (err?: Error | null) => void) {
+          if (aborted) { callback(); return; }
+          bytesRead += chunk.length;
+          csvChunks.push(chunk.toString("utf-8"));
+          if (bytesRead >= CHUNK_BYTES) {
+            aborted = true;
+            try { client.close(); } catch { /* expected */ }
+          }
+          callback();
+        },
+      });
+
+      writable.on("finish", () => resolve());
+      writable.on("error", (e) => {
+        if (aborted) resolve();
+        else reject(e);
+      });
+
+      client.downloadTo(writable, epddFile.name).then(() => resolve()).catch((e) => {
+        if (aborted) resolve();
+        else reject(e);
+      });
+    });
+
+    try { client.close(); } catch { /* ignore */ }
+
+    const rawText = csvChunks.join("");
+    csvChunks = []; // free memory
+    console.log(`[ingest-sanmar] Read ${(bytesRead / 1024 / 1024).toFixed(1)}MB`);
+
+    // Split into lines
+    const allLines = rawText.split("\n");
+
+    // Parse headers
+    let headers: string[] = [];
+    let brandIdx = -1, styleIdx = -1, titleIdx = -1, descIdx = -1, imgIdx = -1;
+    let dataLines: string[];
+
+    if (startOffset === 0) {
+      // First chunk — first line is the header
+      headerLine = allLines[0];
+      dataLines = allLines.slice(1);
+    } else {
+      // Continuation — first line is partial (skip it), use provided headerLine
+      dataLines = allLines.slice(1); // skip partial first line
+    }
+
+    headers = parseCsvLine(headerLine);
+    brandIdx = findColumnIndex(headers, "MILL", "MILL_NAME", "BRAND");
+    styleIdx = findColumnIndex(headers, "STYLE#", "STYLE", "UNIQUE_KEY");
+    titleIdx = findColumnIndex(headers, "PRODUCT_TITLE", "TITLE");
+    descIdx = findColumnIndex(headers, "PRODUCT_DESCRIPTION", "DESCRIPTION");
+    imgIdx = findColumnIndex(headers, "FRONT_MODEL_IMAGE_URL", "COLOR_FRONT_IMAGE_URL");
+
+    if (styleIdx === -1) throw new Error(`No style column in headers: ${headerLine.substring(0, 200)}`);
+
+    // Last line may be incomplete — don't process it, account for in next offset
+    const lastLineIncomplete = !aborted ? false : true;
+    const lastLineBytes = lastLineIncomplete ? new TextEncoder().encode(allLines[allLines.length - 1]).length : 0;
+    if (lastLineIncomplete && dataLines.length > 0) {
+      dataLines.pop(); // remove incomplete last line
+    }
+
+    // Map and deduplicate
+    const seen = new Set<string>();
+    const now = new Date().toISOString();
+    interface MappedProduct {
+      distributor: string;
+      brand: string;
+      style_number: string;
+      title: string;
+      description: string | null;
+      image_url: string | null;
+      updated_at: string;
+    }
+    const mapped: MappedProduct[] = [];
+
+    for (const line of dataLines) {
+      if (!line.trim()) continue;
+      const fields = parseCsvLine(line);
+      const style = (fields[styleIdx] ?? "").trim();
+      if (!style || seen.has(style)) continue;
+      seen.add(style);
+
+      mapped.push({
+        distributor: "sanmar",
+        brand: (brandIdx >= 0 ? fields[brandIdx] : "").trim() || "SanMar",
+        style_number: style,
+        title: (titleIdx >= 0 ? fields[titleIdx] : "").trim() || style,
+        description: (descIdx >= 0 ? fields[descIdx] : "").trim() || null,
+        image_url: (imgIdx >= 0 ? fields[imgIdx] : "").trim() || null,
+        updated_at: now,
+      });
+    }
+
+    console.log(`[ingest-sanmar] Chunk: ${dataLines.length} data lines, ${mapped.length} unique styles`);
+
+    // Upsert to DB
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
-
-    // 4. Upsert via sync-catalog in batches
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
     let totalUpserted = 0;
     const errors: string[] = [];
 
-    for (let i = 0; i < limited.length; i += BATCH_SIZE) {
-      const batch = limited.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < mapped.length; i += BATCH_SIZE) {
+      const batch = mapped.slice(i, i + BATCH_SIZE);
+      const { error, count } = await supabase
+        .from("catalog_products")
+        .upsert(batch, { onConflict: "distributor,style_number", count: "exact" });
+      if (error) {
+        errors.push(error.message);
+      } else {
+        totalUpserted += count ?? batch.length;
+      }
+    }
 
-      const resp = await fetch(`${supabaseUrl}/functions/v1/sync-catalog`, {
+    // Calculate next offset
+    const nextOffset = startOffset + bytesRead - lastLineBytes;
+    const isComplete = !aborted || nextOffset >= fileSize;
+
+    // If not complete, self-invoke the next chunk
+    let nextChunkStatus = "";
+    if (!isComplete) {
+      console.log(`[ingest-sanmar] Scheduling next chunk at offset=${nextOffset} (${((nextOffset / fileSize) * 100).toFixed(1)}%)`);
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+
+      // Fire-and-forget the next chunk
+      fetch(`${supabaseUrl}/functions/v1/ingest-sanmar-catalog`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${serviceKey}`,
         },
-        body: JSON.stringify(batch),
-      });
+        body: JSON.stringify({ offset: nextOffset, headerLine }),
+      }).catch((e) => console.error(`[ingest-sanmar] Failed to trigger next chunk: ${e.message}`));
 
-      const result = await resp.json();
-      if (resp.ok) {
-        totalUpserted += result.upserted ?? batch.length;
-      } else {
-        errors.push(`Batch ${i / BATCH_SIZE}: ${result.error || resp.statusText}`);
-      }
+      nextChunkStatus = `Next chunk queued at offset ${nextOffset} (${((nextOffset / fileSize) * 100).toFixed(1)}%)`;
+    } else {
+      console.log(`[ingest-sanmar] ALL CHUNKS COMPLETE`);
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const summary = {
-      status: "complete",
-      totalCsvRows: rows.length,
-      uniqueStyles: allMapped.length,
-      processed: limited.length,
+      status: isComplete ? "complete" : "chunk_done",
+      chunkOffset: startOffset,
+      bytesRead,
+      stylesInChunk: mapped.length,
       upserted: totalUpserted,
-      errors,
+      errors: errors.slice(0, 3),
+      nextChunkStatus,
       elapsedSeconds: elapsed,
+      progress: `${((nextOffset / fileSize) * 100).toFixed(1)}%`,
     };
 
-    console.log(`[ingest-sanmar] Done in ${elapsed}s:`, JSON.stringify(summary));
+    console.log(`[ingest-sanmar] ${JSON.stringify(summary)}`);
 
     return new Response(JSON.stringify(summary), {
       status: 200,
