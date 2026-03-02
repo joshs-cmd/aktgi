@@ -176,7 +176,7 @@ function buildProductInfoRequest(
 
 /**
  * Build PromoStandards getPricingAndConfiguration request for customer-specific pricing.
- * Uses inline xmlns declarations (no prefixes) matching SanMar's expected schema.
+ * Uses explicit ns/shared prefixes declared on the Envelope element — required by SanMar v2.0.0.
  */
 function buildPricingRequest(
   style: string,
@@ -185,19 +185,21 @@ function buildPricingRequest(
   password: string
 ): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/"
+                  xmlns:shared="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">
    <soapenv:Header/>
    <soapenv:Body>
-      <GetConfigurationAndPricingRequest xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/">
-         <wsVersion xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">2.0.0</wsVersion>
-         <id xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">${escapeXml(username)}</id>
-         <password xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">${escapeXml(password)}</password>
-         <productId xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">${escapeXml(style)}</productId>
-         <localizationCountry xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">US</localizationCountry>
-         <localizationLanguage xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">en</localizationLanguage>
-         <configurationType xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">Blank</configurationType>
-         <priceType xmlns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">Customer</priceType>
-      </GetConfigurationAndPricingRequest>
+      <ns:GetConfigurationAndPricingRequest>
+         <shared:wsVersion>2.0.0</shared:wsVersion>
+         <shared:id>${escapeXml(username)}</shared:id>
+         <shared:password>${escapeXml(password)}</shared:password>
+         <shared:productId>${escapeXml(style)}</shared:productId>
+         <shared:localizationCountry>US</shared:localizationCountry>
+         <shared:localizationLanguage>en</shared:localizationLanguage>
+         <shared:configurationType>Blank</shared:configurationType>
+         <shared:priceType>Customer</shared:priceType>
+      </ns:GetConfigurationAndPricingRequest>
    </soapenv:Body>
 </soapenv:Envelope>`;
 }
@@ -224,7 +226,7 @@ async function fetchCustomerPricing(
 
     const response = await fetch(PROMOSTANDARDS_PRICING_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": "" },
+      headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": "\"GetConfigurationAndPricing\"" },
       body,
       signal: controller.signal,
     });
