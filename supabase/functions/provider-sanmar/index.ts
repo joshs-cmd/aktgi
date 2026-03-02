@@ -201,6 +201,8 @@ function buildPricingRequest(
          <shared:currency>USD</shared:currency>
          <shared:fobId>1</shared:fobId>
          <shared:priceType>Customer</shared:priceType>
+         <shared:localizationCountry>US</shared:localizationCountry>
+         <shared:localizationLanguage>en</shared:localizationLanguage>
       </ns:GetConfigurationAndPricingRequest>
    </soapenv:Body>
 </soapenv:Envelope>`;
