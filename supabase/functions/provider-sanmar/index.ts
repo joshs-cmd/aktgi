@@ -177,9 +177,9 @@ function buildProductInfoRequest(
 
 /**
  * Build PromoStandards getPricingAndConfiguration request.
- * SanMar's endpoint is v1.0.0 (confirmed via WSDL: targetNamespace = 1.0.0).
- * v1.0.0 does NOT have a priceType field — it returns all price tiers in one response.
- * The customerPrice field in the response contains the negotiated account rate.
+ * SanMar's endpoint is v1.0.0 (confirmed via WSDL).
+ * v1.0.0 schema: wsVersion, id, password, productId, [partId], currency
+ * Returns all price tiers; customerPrice contains negotiated account rate.
  */
 function buildPricingRequest(
   style: string,
@@ -198,9 +198,7 @@ function buildPricingRequest(
          <shared:id>${escapeXml(username)}</shared:id>
          <shared:password>${escapeXml(password)}</shared:password>
          <shared:productId>${escapeXml(style)}</shared:productId>
-         <shared:localizationCountry>US</shared:localizationCountry>
-         <shared:localizationLanguage>en</shared:localizationLanguage>
-         <shared:configurationType>Blank</shared:configurationType>
+         <shared:currency>USD</shared:currency>
       </ns:GetConfigurationAndPricingRequest>
    </soapenv:Body>
 </soapenv:Envelope>`;
