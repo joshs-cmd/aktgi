@@ -340,7 +340,8 @@ serve(async (req) => {
   }
 
   try {
-    const { query, distributorId } = await req.json();
+    const { query, distributorId, brand } = await req.json();
+    const brandFilter = brand ? brand.toLowerCase().trim() : null;
 
     if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
@@ -423,7 +424,17 @@ serve(async (req) => {
             console.log(`[provider-ss-activewear] Found ${styles.length} matching styles`);
             
             // Score and sort styles to find best match
-            const scoredStyles = styles
+            // If brandFilter is set, only consider styles from that brand
+            const candidateStyles = brandFilter
+              ? styles.filter(s => (s.brandName || "").toLowerCase().includes(brandFilter) || brandFilter.includes((s.brandName || "").toLowerCase()))
+              : styles;
+
+            if (candidateStyles.length === 0) {
+              console.log(`[provider-ss-activewear] Brand filter "${brandFilter}" excluded all ${styles.length} results`);
+              continue;
+            }
+
+            const scoredStyles = candidateStyles
               .map((s) => ({ style: s, score: scoreStyleMatch(s, variant) }))
               .sort((a, b) => b.score - a.score);
             
@@ -478,6 +489,19 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
+    }
+
+    // Brand validation: if a brand filter was provided, reject mismatches
+    if (brandFilter && standardProduct.brand) {
+      const returnedBrand = standardProduct.brand.toLowerCase();
+      const brandMatch = returnedBrand.includes(brandFilter) || brandFilter.includes(returnedBrand);
+      if (!brandMatch) {
+        console.log(`[provider-ss-activewear] Brand mismatch: requested "${brandFilter}" but got "${standardProduct.brand}" — returning null`);
+        return new Response(
+          JSON.stringify({ product: null }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     console.log(`[provider-ss-activewear] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
