@@ -380,7 +380,13 @@ serve(async (req) => {
     };
 
     // Generate query variants for fuzzy matching
+    // For prefixed styles like NL3600, also try the numeric part alone
     const variants = generateQueryVariants(query);
+    // If query starts with letters+numbers (e.g. NL3600), add the numeric suffix
+    const numericSuffix = query.match(/^[A-Za-z]+(\d+.*)$/)?.[1];
+    if (numericSuffix && !variants.includes(numericSuffix)) {
+      variants.push(numericSuffix);
+    }
     console.log(`[provider-ss-activewear] Query variants: ${variants.join(", ")}`);
 
     let products: SSProduct[] = [];

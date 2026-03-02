@@ -193,8 +193,11 @@ serve(async (req) => {
     );
 
     // ===============================================================
-    // GLOBAL SKU RESOLVER: Keep all products that match the same
-    // normalized fingerprint — don't discard cross-distributor dupes
+    // MULTI-DISTRIBUTOR MERGE: Keep ALL distributors that returned a 
+    // product for the queried style. Each distributor's data is shown
+    // independently in the comparison table.
+    // We only discard products that clearly belong to a DIFFERENT item
+    // (different brand+style fingerprint that doesn't match the query).
     // ===============================================================
     
     /** Strip known vendor prefixes if remainder starts with digit */
@@ -227,7 +230,6 @@ serve(async (req) => {
       if (!product || typeof product !== "object") return 0;
       const p = product as Record<string, unknown>;
       let total = 0;
-      
       const colors = p.colors as Array<{ sizes?: Array<{ inventory?: Array<{ quantity?: number }> }> }> | undefined;
       if (Array.isArray(colors)) {
         for (const color of colors) {
@@ -245,61 +247,66 @@ serve(async (req) => {
       return total;
     };
 
-    // Build a normalized fingerprint for each successful result
-    // Products with the same fingerprint are the SAME product from different distributors
+    // Normalize the query to find what style we're actually searching for
     const normalizedQuery = query.toUpperCase().trim();
     const queryLastPart = normalizedQuery.split(/\s+/).pop() || normalizedQuery;
     const queryFingerprint = normalizeStyleNumber(queryLastPart);
 
-    // Group results by normalized fingerprint
-    const fingerprintGroups = new Map<string, DistributorResult[]>();
+    // Compute each result's fingerprint and check if it matches the query
+    // A result matches if its normalized styleNumber matches the normalized query
+    const successResults = results.filter(r => r.status === "success" && r.product);
     
-    for (const r of results) {
-      if (r.status !== "success" || !r.product) continue;
-      
-      const styleNumber = getProductField(r.product, "styleNumber");
-      const b = getProductField(r.product, "brand");
-      const fp = `${normBrand(b)}::${normalizeStyleNumber(styleNumber)}`;
-      
-      const group = fingerprintGroups.get(fp) || [];
-      group.push(r);
-      fingerprintGroups.set(fp, group);
-    }
+    // Find the "best" brand for the winner (priority: sanmar > ss-activewear > onestop)
+    // to use as the canonical brand when checking cross-distributor matches
+    const PRIORITY_ORDER = ["sanmar", "ss-activewear", "onestop"];
+    const successByPriority = [...successResults].sort((a, b) => {
+      return PRIORITY_ORDER.indexOf(a.distributorCode) - PRIORITY_ORDER.indexOf(b.distributorCode);
+    });
+    
+    const primaryResult = successByPriority[0];
+    const primaryBrand = primaryResult 
+      ? normBrand(getProductField(primaryResult.product, "brand"))
+      : "";
+    const primaryStyleNorm = primaryResult
+      ? normalizeStyleNumber(getProductField(primaryResult.product, "styleNumber"))
+      : queryFingerprint;
 
-    // Find the winning fingerprint group (best match to query)
-    let winnerFingerprint: string | null = null;
-    let bestTier = 999;
-    let bestInventory = -1;
+    console.log(`[sourcing-engine] Primary: ${primaryBrand}::${primaryStyleNorm} (from ${primaryResult?.distributorName || "none"})`);
 
-    for (const [fp, group] of fingerprintGroups) {
-      const fpNorm = fp.split("::")[1] || "";
+    // A result is a "winner" if:
+    // 1. Its normalized styleNumber matches the primary style (same item from different distributor), OR
+    // 2. Its normalized styleNumber matches the query directly
+    const isWinner = (r: DistributorResult): boolean => {
+      if (!r.product) return false;
+      const styleNorm = normalizeStyleNumber(getProductField(r.product, "styleNumber"));
+      const brandNorm = normBrand(getProductField(r.product, "brand"));
       
-      // Tier: 1=exact, 2=partial match, 3=other
-      let tier = 3;
-      if (fpNorm === queryFingerprint) {
-        tier = 1;
-      } else if (fpNorm.includes(queryFingerprint) || queryFingerprint.includes(fpNorm)) {
-        tier = 2;
+      // Match by style number normalization
+      const styleMatches = styleNorm === primaryStyleNorm 
+        || styleNorm === queryFingerprint
+        || primaryStyleNorm.includes(styleNorm)
+        || styleNorm.includes(primaryStyleNorm);
+      
+      // If primary brand is known, also check brand matches (allow same brand family)
+      // This prevents e.g. a completely different brand's product from being included
+      const brandMatches = !primaryBrand || brandNorm === primaryBrand 
+        || brandNorm.includes(primaryBrand.substring(0, 4))
+        || primaryBrand.includes(brandNorm.substring(0, 4));
+      
+      return styleMatches && brandMatches;
+    };
+
+    const winnerIds = new Set<string>();
+    for (const r of successResults) {
+      if (isWinner(r)) {
+        winnerIds.add(r.distributorId);
+        console.log(`[sourcing-engine] Including winner: ${getProductField(r.product, "styleNumber")} (${r.distributorName})`);
+      } else {
+        console.log(`[sourcing-engine] Discarding non-matching: ${getProductField(r.product, "styleNumber")} (${r.distributorName})`);
       }
-
-      const totalInv = group.reduce((sum, r) => sum + getTotalInventory(r.product), 0);
-
-      if (tier < bestTier || (tier === bestTier && totalInv > bestInventory)) {
-        bestTier = tier;
-        bestInventory = totalInv;
-        winnerFingerprint = fp;
-      }
     }
 
-    console.log(`[sourcing-engine] Winner fingerprint: ${winnerFingerprint || "none"} (tier=${bestTier})`);
-    if (winnerFingerprint) {
-      const winners = fingerprintGroups.get(winnerFingerprint) || [];
-      console.log(`[sourcing-engine] Winner group has ${winners.length} distributors: ${winners.map(w => w.distributorName).join(", ")}`);
-    }
-
-    // Keep all results in the winning fingerprint group, null out others
-    const winnerGroup = winnerFingerprint ? fingerprintGroups.get(winnerFingerprint) || [] : [];
-    const winnerDistributorIds = new Set(winnerGroup.map(r => r.distributorId));
+    console.log(`[sourcing-engine] Winner group has ${winnerIds.size} distributors`);
 
     const finalResults: DistributorResult[] = results.map(r => {
       // Keep pending/error results as-is
@@ -308,7 +315,7 @@ serve(async (req) => {
       }
       
       // Keep if this distributor is in the winner group
-      if (winnerDistributorIds.has(r.distributorId)) {
+      if (winnerIds.has(r.distributorId)) {
         const p = r.product as Record<string, unknown>;
         return {
           ...r,
@@ -323,7 +330,7 @@ serve(async (req) => {
       }
       
       const styleNumber = getProductField(r.product, "styleNumber");
-      console.log(`[sourcing-engine] Discarding non-winner: ${styleNumber} (${r.distributorName})`);
+      console.log(`[sourcing-engine] Nulling non-winner: ${styleNumber} (${r.distributorName})`);
       return { ...r, product: null };
     });
 
