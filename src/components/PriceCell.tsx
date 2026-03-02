@@ -51,16 +51,22 @@ export function PriceCell({
         )}
       >
         {showPrice ? (
-          <div className="flex items-center gap-1">
-            <span className="text-sm font-semibold tabular-nums">
-              ${price.toFixed(2)}
+          price > 0 ? (
+            <div className="flex items-center gap-1">
+              <span className="text-sm font-semibold tabular-nums">
+                ${price.toFixed(2)}
+              </span>
+              {isProgramPrice && isSanMar && (
+                <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 bg-primary/10 text-primary">
+                  Program
+                </Badge>
+              )}
+            </div>
+          ) : (
+            <span className="text-sm font-medium text-muted-foreground" title="Pricing unavailable via API">
+              —
             </span>
-            {isProgramPrice && isSanMar && (
-              <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 bg-primary/10 text-primary">
-                Program
-              </Badge>
-            )}
-          </div>
+          )
         ) : (
           <span className="text-sm font-medium text-muted-foreground">
             ••••
