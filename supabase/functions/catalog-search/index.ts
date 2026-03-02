@@ -316,23 +316,22 @@ function deduplicateProducts(
     const matchType = matchProduct(p.styleNumber, p.name, querySKU, p.brand);
     if (!matchType) continue;
 
-    // Primary key: normalized brand + fingerprint
+    // Group key = normalized brand + fingerprint.
+    // Brand MUST be part of the key — never merge LAT with BELLACANVAS even if numeric root matches.
     const fingerprint = generateFingerprint(p.styleNumber, p.brand);
     const brandKey = normalizeBrand(p.brand);
     const primaryKey = `${brandKey}::${fingerprint}`;
 
-    // Also compute a "numeric root" key for aggressive cross-distributor merging.
-    // Extract just the leading digits from the fingerprint (e.g. "3001CVC" -> "3001", "3600" -> "3600")
+    // Aggressive numeric-root key: only used for SAME brand cross-distributor merging
+    // (e.g. Gildan GD5000 from OneStop merges with Gildan 5000 from S&S)
     const numericRoot = fingerprint.match(/^(\d+)/)?.[1] ?? "";
-    // Use numeric root key ONLY when the root is long enough (3+ digits) AND brands match
     const aggressiveKey = numericRoot.length >= 3 ? `${brandKey}::${numericRoot}` : "";
 
-    // Try to find an existing group: first by primary key, then by aggressive numeric root
+    // Try to find an existing group: first by primary key, then by same-brand numeric root
     let groupKey = primaryKey;
     if (!groups.has(primaryKey) && aggressiveKey && groups.has(aggressiveKey)) {
       groupKey = aggressiveKey;
     } else if (aggressiveKey && !groups.has(primaryKey)) {
-      // Register under aggressive key so future items with same root merge here
       groupKey = aggressiveKey;
     }
 
@@ -345,10 +344,6 @@ function deduplicateProducts(
       }
     } else {
       groups.set(groupKey, { items: [p], matchType });
-      // Also register under primary key if different from groupKey
-      if (aggressiveKey && groupKey === aggressiveKey && primaryKey !== aggressiveKey) {
-        // Don't double-register, the aggressive key is canonical
-      }
     }
   }
 
