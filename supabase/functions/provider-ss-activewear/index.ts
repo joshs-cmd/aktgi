@@ -491,10 +491,12 @@ serve(async (req) => {
       );
     }
 
-    // Brand validation: if a brand filter was provided, reject mismatches
+    // Brand validation: fuzzy match — only reject if both sides are non-empty AND clearly different
     if (brandFilter && standardProduct.brand) {
-      const returnedBrand = standardProduct.brand.toLowerCase();
-      const brandMatch = returnedBrand.includes(brandFilter) || brandFilter.includes(returnedBrand);
+      const returnedBrand = standardProduct.brand.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const requestedBrand = brandFilter.replace(/[^a-z0-9]/g, "");
+      // Accept if either string contains the other (handles "lat" vs "latapparel", "bellacanvas" vs "bella+canvas")
+      const brandMatch = returnedBrand.includes(requestedBrand) || requestedBrand.includes(returnedBrand);
       if (!brandMatch) {
         console.log(`[provider-ss-activewear] Brand mismatch: requested "${brandFilter}" but got "${standardProduct.brand}" — returning null`);
         return new Response(

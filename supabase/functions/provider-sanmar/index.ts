@@ -236,8 +236,9 @@ async function fetchCustomerPricing(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      debugXml = `DEBUG ERROR: HTTP ${response.status} from PromoStandards endpoint`;
-      console.log(`[provider-sanmar] PromoStandards pricing HTTP ${response.status}`);
+      const errorText = await response.text();
+      debugXml = `DEBUG ERROR ${response.status}: ${errorText.substring(0, 800)}`;
+      console.log(`[provider-sanmar] PromoStandards pricing HTTP ${response.status}: ${errorText.substring(0, 300)}`);
       return { priceMap, debugXml };
     }
 
