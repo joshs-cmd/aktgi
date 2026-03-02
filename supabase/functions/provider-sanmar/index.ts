@@ -185,27 +185,23 @@ function buildPricingRequest(
   password: string
 ): string {
   // PromoStandards PricingAndConfiguration v2.0.0
-  // Operation: GetConfigurationAndPricing  (note: Config BEFORE Pricing in operation name)
-  // Namespace: http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/
+  // Namespace prefix must be "pric:" for the operation element, "shar:" for shared objects
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/"
+                  xmlns:pric="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/"
                   xmlns:shar="http://www.promostandards.org/WSDL/PricingAndConfiguration/2.0.0/SharedObjects/">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <ns:GetConfigurationAndPricingRequest>
-      <shar:wsVersion>2.0.0</shar:wsVersion>
-      <shar:id>${escapeXml(username)}</shar:id>
-      <shar:password>${escapeXml(password)}</shar:password>
-      <shar:productId>${escapeXml(style)}</shar:productId>
-      <shar:currency>USD</shar:currency>
-      <shar:fobId>1</shar:fobId>
-      <shar:priceType>Customer</shar:priceType>
-      <shar:localizationCountry>US</shar:localizationCountry>
-      <shar:localizationLanguage>en</shar:localizationLanguage>
-      <shar:configurationType>Blank</shar:configurationType>
-    </ns:GetConfigurationAndPricingRequest>
-  </soapenv:Body>
+   <soapenv:Header/>
+   <soapenv:Body>
+      <pric:GetConfigurationAndPricingRequest>
+         <shar:wsVersion>2.0.0</shar:wsVersion>
+         <shar:id>${escapeXml(username)}</shar:id>
+         <shar:password>${escapeXml(password)}</shar:password>
+         <shar:productId>${escapeXml(style)}</shar:productId>
+         <shar:localizationCountry>US</shar:localizationCountry>
+         <shar:localizationLanguage>en</shar:localizationLanguage>
+         <shar:configurationType>Blank</shar:configurationType>
+      </pric:GetConfigurationAndPricingRequest>
+   </soapenv:Body>
 </soapenv:Envelope>`;
 }
 
@@ -938,65 +934,65 @@ serve(async (req) => {
     let promoDebugXml = "";
     const customerPricingPromise = fetchCustomerPricing(firstVariant, customerNumber, username, password, parser);
 
-    // Get product info using getProductInfoByStyleColorSize
-    for (const variant of variants) {
+    // Get product info — run all variants in parallel and pick first exact match
+    const fetchVariant = async (variant: string): Promise<{ variant: string; parsed: any[] } | null> => {
       try {
-        console.log(`[provider-sanmar] Trying variant: ${variant}`);
-        
         const soapRequest = buildProductInfoRequest(variant, customerNumber, username, password);
-        
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
-        
         const response = await fetch(PRODUCT_INFO_ENDPOINT, {
           method: "POST",
-          headers: {
-            "Content-Type": "text/xml; charset=utf-8",
-            "SOAPAction": "",
-          },
+          headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": "" },
           body: soapRequest,
           signal: controller.signal,
         });
-
         clearTimeout(timeoutId);
         const xmlText = await response.text();
-        
-        if (!response.ok) {
-          console.log(`[provider-sanmar] HTTP ${response.status} for variant ${variant}`);
-          continue;
-        }
-        
-        if (xmlText.includes("Fault") || xmlText.includes("fault")) {
-          console.log(`[provider-sanmar] SOAP fault for variant ${variant}`);
-          continue;
-        }
-        
-        // Log raw XML for first variant to debug pricing structure
-        // Await the customer pricing map (resolved by now since product info takes ~2s)
-        const { priceMap: customerPricingMap, debugXml: promoXml } = isFirstVariant ? await customerPricingPromise : { priceMap: new Map<string, number>(), debugXml: "" };
-        if (isFirstVariant) promoDebugXml = promoXml;
-        const parsed = parseProductResponse(xmlText, parser, isFirstVariant, customerPricingMap);
-        isFirstVariant = false;
-        
-        if (parsed && parsed.length > 0) {
-          const filtered = filterByExactStyle(parsed, variant);
-          
+        if (!response.ok || xmlText.includes("Fault") || xmlText.includes("fault")) return null;
+        const parsed = parseProductResponse(xmlText, parser, false, new Map());
+        const filtered = filterByExactStyle(parsed, variant);
+        if (filtered.length > 0) return { variant, parsed: filtered };
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    // Fire all variant fetches in parallel
+    const variantResults = await Promise.all(variants.map(fetchVariant));
+    const firstHit = variantResults.find(r => r !== null);
+
+    let isFirstVariant = true;
+    if (firstHit) {
+      matchedVariant = firstHit.variant;
+      // Now await the promo pricing (likely already done by now) and re-parse with price map
+      const { priceMap: customerPricingMap, debugXml: promoXml } = await customerPricingPromise;
+      promoDebugXml = promoXml;
+      // Re-parse the winning variant with customer pricing injected
+      try {
+        const soapRequest = buildProductInfoRequest(matchedVariant, customerNumber, username, password);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const response = await fetch(PRODUCT_INFO_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": "" },
+          body: soapRequest,
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (response.ok) {
+          const xmlText = await response.text();
+          const reparsed = parseProductResponse(xmlText, parser, true, customerPricingMap);
+          const filtered = filterByExactStyle(reparsed, matchedVariant);
           if (filtered.length > 0) {
             productList = filtered;
-            matchedVariant = variant;
-            console.log(`[provider-sanmar] Found ${productList.length} products with exact match: ${variant}`);
-            break;
-          } else {
-            console.log(`[provider-sanmar] No exact style match for variant ${variant} (had ${parsed.length} results)`);
+            console.log(`[provider-sanmar] Found ${productList.length} products with exact match: ${matchedVariant}`);
           }
         }
-      } catch (err: any) {
-        if (err.name === 'AbortError') {
-          console.log(`[provider-sanmar] Timeout for variant ${variant}`);
-        } else {
-          console.error(`[provider-sanmar] Error with variant ${variant}:`, err);
-        }
-        continue;
+      } catch { /* fall back to first hit */ }
+      if (productList.length === 0) {
+        productList = firstHit.parsed;
+        console.log(`[provider-sanmar] Using cached result: ${productList.length} products for ${matchedVariant}`);
       }
     }
 
