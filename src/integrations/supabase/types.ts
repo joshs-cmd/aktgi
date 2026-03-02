@@ -22,6 +22,7 @@ export type Database = {
           distributor: string
           id: string
           image_url: string | null
+          search_vector: unknown
           style_number: string
           title: string
           updated_at: string
@@ -33,6 +34,7 @@ export type Database = {
           distributor: string
           id?: string
           image_url?: string | null
+          search_vector?: unknown
           style_number: string
           title: string
           updated_at?: string
@@ -44,6 +46,7 @@ export type Database = {
           distributor?: string
           id?: string
           image_url?: string | null
+          search_vector?: unknown
           style_number?: string
           title?: string
           updated_at?: string

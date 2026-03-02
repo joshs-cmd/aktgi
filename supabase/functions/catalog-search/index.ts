@@ -7,7 +7,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// ---------- Types (must match src/types/catalog.ts) ----------
+// ---------- Types ----------
 
 interface CatalogProduct {
   styleNumber: string;
@@ -85,28 +85,19 @@ function normalizeBrand(brand: string): string {
     .replace(/[^A-Z0-9]/g, "");
 }
 
-// ---------- Scoring ----------
+// ---------- Build prefix tsquery string ----------
+// Converts "gildan 5000" → "gildan:* & 5000:*" for partial matching
 
-function matchTier(
-  styleNumber: string,
-  title: string,
-  brand: string,
-  querySKU: string
-): { tier: "exact" | "starts" | "contains" | "title"; score: number } | null {
-  const normalized = normalizeSKU(styleNumber);
-  const raw = styleNumber.toUpperCase().trim();
-  const q = querySKU.toUpperCase().trim();
-  if (!q) return null;
-
-  if (normalized === q || raw === q) return { tier: "exact", score: 2000 };
-  if (normalized.startsWith(q) || raw.startsWith(q)) return { tier: "starts", score: 1000 };
-  if (normalized.includes(q) || raw.includes(q)) return { tier: "contains", score: 500 };
-  if (title.toUpperCase().includes(q) || brand.toUpperCase().includes(q)) return { tier: "title", score: 250 };
-
-  return null;
+function buildPrefixTsquery(query: string): string {
+  return query
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => `${word}:*`)
+    .join(" & ");
 }
 
-// ---------- DB row → CatalogProduct ----------
+// ---------- DB row type ----------
 
 interface DbRow {
   id: string;
@@ -117,48 +108,15 @@ interface DbRow {
   description: string | null;
   image_url: string | null;
   base_price: number | null;
-}
-
-function rowToProduct(row: DbRow, querySKU: string): CatalogProduct {
-  const match = matchTier(row.style_number, row.title, row.brand, querySKU);
-  const score = match?.score ?? 100;
-
-  const distributorSkuMap: Record<string, string> = {
-    [row.distributor]: row.style_number,
-  };
-
-  return {
-    styleNumber: row.style_number,
-    normalizedSKU: generateFingerprint(row.style_number, row.brand),
-    name: row.title,
-    brand: row.brand,
-    category: "",
-    imageUrl: row.image_url ?? undefined,
-    colorCount: 1,
-    totalInventory: 0,
-    isProgramItem: false,
-    distributorCode: row.distributor,
-    distributorName: row.distributor === "sanmar" ? "SanMar"
-      : row.distributor === "ss-activewear" ? "S&S Activewear"
-      : row.distributor,
-    distributorSources: [
-      row.distributor === "sanmar" ? "SanMar"
-        : row.distributor === "ss-activewear" ? "S&S Activewear"
-        : row.distributor,
-    ],
-    distributorSkuMap,
-    score,
-    basePrice: row.base_price ?? null,
-  };
+  rank?: number;
 }
 
 // ---------- Deduplication (same-brand cross-distributor merge) ----------
 
-function deduplicateRows(rows: DbRow[], querySKU: string): CatalogProduct[] {
-  const DIST_PRIORITY: Record<string, number> = { sanmar: 3, "ss-activewear": 2, onestop: 1 };
+const DIST_PRIORITY: Record<string, number> = { sanmar: 3, "ss-activewear": 2, onestop: 1 };
 
-  // Group by brand + fingerprint (same logic as before, brand-partitioned)
-  const groups = new Map<string, { rows: DbRow[]; bestTier: number }>();
+function deduplicateRows(rows: DbRow[]): CatalogProduct[] {
+  const groups = new Map<string, { rows: DbRow[]; bestRank: number }>();
 
   for (const row of rows) {
     const fp = generateFingerprint(row.style_number, row.brand);
@@ -174,22 +132,19 @@ function deduplicateRows(rows: DbRow[], querySKU: string): CatalogProduct[] {
       groupKey = aggressiveKey;
     }
 
-    const match = matchTier(row.style_number, row.title, row.brand, querySKU);
-    const tierScore = match?.score ?? 0;
-
+    const rank = row.rank ?? 0;
     const existing = groups.get(groupKey);
     if (existing) {
       existing.rows.push(row);
-      if (tierScore > existing.bestTier) existing.bestTier = tierScore;
+      if (rank > existing.bestRank) existing.bestRank = rank;
     } else {
-      groups.set(groupKey, { rows: [row], bestTier: tierScore });
+      groups.set(groupKey, { rows: [row], bestRank: rank });
     }
   }
 
   const products: CatalogProduct[] = [];
 
   for (const [, group] of groups) {
-    // Select primary distributor
     const primary = group.rows.reduce((best, r) => {
       return (DIST_PRIORITY[r.distributor] ?? 0) > (DIST_PRIORITY[best.distributor] ?? 0)
         ? r
@@ -223,11 +178,12 @@ function deduplicateRows(rows: DbRow[], querySKU: string): CatalogProduct[] {
       distributorName: distributorSources.join(", "),
       distributorSources,
       distributorSkuMap,
-      score: group.bestTier,
+      score: group.bestRank,
       basePrice: primary.base_price ?? group.rows.find((r) => r.base_price != null)?.base_price ?? null,
     });
   }
 
+  // Sort by ts_rank score descending
   products.sort((a, b) => b.score - a.score);
   return products;
 }
@@ -250,61 +206,79 @@ serve(async (req) => {
     }
 
     const q = query.trim();
-    const querySKU = normalizeSKU(q.split(/\s+/).pop() ?? q);
-    const qUpper = q.toUpperCase();
+    const prefixTsquery = buildPrefixTsquery(q);
 
-    console.log(`[catalog-search] query="${q}" querySKU="${querySKU}"`);
+    console.log(`[catalog-search] query="${q}" tsquery="${prefixTsquery}"`);
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Build search conditions using ilike for fast, case-insensitive matching.
-    // We search style_number, brand, and title.
-    // Run two queries in parallel:
-    //   1. style_number match (most precise — exact + prefix)
-    //   2. brand + title text match (for brand queries like "gildan" or "bella canvas")
-    const stylePattern = `%${q}%`;
-    const brandPattern = `%${q}%`;
+    // ---------- Stage 1: Full-Text Search with prefix matching ----------
+    // Uses search_vector (GIN index) + ts_rank for relevance sorting.
+    // The RPC call passes the tsquery string; we use a DB function to do the ranked query.
+    // Since we can't run raw SQL via the JS client, we use .rpc() with a helper, OR
+    // we use the PostgREST filter with textSearch and then sort manually.
+    // PostgREST supports: .textSearch('search_vector', prefixTsquery, { type: 'plain', config: 'simple' })
+    // but prefix queries need to_tsquery not plainto_tsquery. We'll use the filter approach.
 
-    const [styleResult, textResult] = await Promise.all([
-      // Style number search: ilike on style_number and normalized variants
-      supabase
+    const ftsResult = await supabase
+      .from("catalog_products")
+      .select("id, distributor, brand, style_number, title, description, image_url, base_price")
+      .filter("search_vector", "@@", `to_tsquery('simple', '${prefixTsquery.replace(/'/g, "''")}')`  )
+      .limit(300);
+
+    if (ftsResult.error) throw new Error(`DB error (fts): ${ftsResult.error.message}`);
+
+    let allRows: DbRow[] = (ftsResult.data ?? []) as DbRow[];
+    console.log(`[catalog-search] FTS returned ${allRows.length} rows for "${q}"`);
+
+    // ---------- Stage 2: ILIKE fallback on style_number (btree index) ----------
+    // Triggered when FTS returns fewer than 5 results (covers unusual alphanumeric codes).
+    if (allRows.length < 5) {
+      const stylePattern = `%${q}%`;
+      const fallbackResult = await supabase
         .from("catalog_products")
         .select("id, distributor, brand, style_number, title, description, image_url, base_price")
         .ilike("style_number", stylePattern)
-        .limit(200),
-      // Brand/title search
-      supabase
-        .from("catalog_products")
-        .select("id, distributor, brand, style_number, title, description, image_url, base_price")
-        .or(`brand.ilike.${brandPattern},title.ilike.${brandPattern}`)
-        .limit(200),
-    ]);
+        .limit(200);
 
-    if (styleResult.error) throw new Error(`DB error (style): ${styleResult.error.message}`);
-    if (textResult.error) throw new Error(`DB error (text): ${textResult.error.message}`);
+      if (fallbackResult.error) throw new Error(`DB error (fallback): ${fallbackResult.error.message}`);
 
-    // Merge, deduplicate by id
-    const seenIds = new Set<string>();
-    const allRows: DbRow[] = [];
-    for (const row of [...(styleResult.data ?? []), ...(textResult.data ?? [])]) {
-      if (!seenIds.has(row.id)) {
-        seenIds.add(row.id);
-        allRows.push(row as DbRow);
+      // Merge fallback rows, avoiding duplicates
+      const seenIds = new Set(allRows.map((r) => r.id));
+      for (const row of (fallbackResult.data ?? [])) {
+        if (!seenIds.has(row.id)) {
+          seenIds.add(row.id);
+          allRows.push(row as DbRow);
+        }
       }
+      console.log(`[catalog-search] After ILIKE fallback: ${allRows.length} rows`);
     }
 
-    console.log(`[catalog-search] DB returned ${allRows.length} rows for "${q}"`);
+    // ---------- Stage 3: Client-side ts_rank approximation ----------
+    // Since PostgREST can't return ts_rank directly, we approximate relevance:
+    // Weight A (style_number exact) = 4, starts-with = 3, contains = 2; brand/title = 1.
+    const qUpper = q.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-    // Filter: only keep rows that actually match our tier scoring
-    const matchedRows = allRows.filter(
-      (r) => matchTier(r.style_number, r.title, r.brand, querySKU) !== null
-    );
+    for (const row of allRows) {
+      const sn = row.style_number.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const snNorm = normalizeSKU(row.style_number);
+      const brand = row.brand.toUpperCase();
+      const title = row.title.toUpperCase();
 
-    // Deduplicate and build final product list
-    const products = deduplicateRows(matchedRows, querySKU);
+      let rank = 0;
+      if (sn === qUpper || snNorm === qUpper) rank = 4;
+      else if (sn.startsWith(qUpper) || snNorm.startsWith(qUpper)) rank = 3;
+      else if (sn.includes(qUpper) || snNorm.includes(qUpper)) rank = 2;
+      else if (brand.includes(q.toUpperCase()) || title.includes(q.toUpperCase())) rank = 1;
+      else rank = 0.5; // matched via FTS token (e.g. partial word in title)
+
+      (row as DbRow).rank = rank;
+    }
+
+    const products = deduplicateRows(allRows);
 
     console.log(`[catalog-search] Returning ${products.length} products for "${q}"`);
 
