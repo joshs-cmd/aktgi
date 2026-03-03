@@ -143,22 +143,23 @@ function getEnvelopeBody(parsed: any): any | null {
 
 // ---------------------------------------------------------------------------
 // PromoStandards Inventory v2.0.0 request
+// NOTE: alias must be "shar" not "shared" — ACC validates namespace prefixes strictly
 // ---------------------------------------------------------------------------
 function buildInventoryRequest(productId: string, username: string, password: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ns="http://www.promostandards.org/WSDL/Inventory/2.0.0/"
-                  xmlns:shared="http://www.promostandards.org/WSDL/Inventory/2.0.0/SharedObjects/">
+                  xmlns:shar="http://www.promostandards.org/WSDL/Inventory/2.0.0/SharedObjects/">
   <soapenv:Header/>
   <soapenv:Body>
     <ns:GetInventoryLevelsRequest>
-      <shared:wsVersion>2.0.0</shared:wsVersion>
-      <shared:id>${escapeXml(username)}</shared:id>
-      <shared:password>${escapeXml(password)}</shared:password>
-      <shared:productId>${escapeXml(productId)}</shared:productId>
-      <shared:Filter>
-        <shared:partIdArray/>
-      </shared:Filter>
+      <shar:wsVersion>2.0.0</shar:wsVersion>
+      <shar:id>${escapeXml(username)}</shar:id>
+      <shar:password>${escapeXml(password)}</shar:password>
+      <shar:productId>${escapeXml(productId)}</shar:productId>
+      <shar:Filter>
+        <shar:partIdArray/>
+      </shar:Filter>
     </ns:GetInventoryLevelsRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
@@ -166,25 +167,21 @@ function buildInventoryRequest(productId: string, username: string, password: st
 
 // ---------------------------------------------------------------------------
 // PromoStandards Pricing v1.0.0 request
+// Minimal required fields per ACC docs: wsVersion, id, password, productId, priceType
 // ---------------------------------------------------------------------------
 function buildPricingRequest(productId: string, username: string, password: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/"
-                  xmlns:shared="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">
+                  xmlns:shar="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">
   <soapenv:Header/>
   <soapenv:Body>
     <ns:GetConfigurationAndPricingRequest>
-      <shared:wsVersion>1.0.0</shared:wsVersion>
-      <shared:id>${escapeXml(username)}</shared:id>
-      <shared:password>${escapeXml(password)}</shared:password>
-      <shared:productId>${escapeXml(productId)}</shared:productId>
-      <shared:currency>USD</shared:currency>
-      <shared:fobId>1</shared:fobId>
-      <shared:priceType>Customer</shared:priceType>
-      <shared:localizationCountry>US</shared:localizationCountry>
-      <shared:localizationLanguage>en</shared:localizationLanguage>
-      <shared:configurationType>Blank</shared:configurationType>
+      <shar:wsVersion>1.0.0</shar:wsVersion>
+      <shar:id>${escapeXml(username)}</shar:id>
+      <shar:password>${escapeXml(password)}</shar:password>
+      <shar:productId>${escapeXml(productId)}</shar:productId>
+      <shar:priceType>Customer</shar:priceType>
     </ns:GetConfigurationAndPricingRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
