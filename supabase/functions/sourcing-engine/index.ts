@@ -7,31 +7,83 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-/** Brand-aware prefix mapping for fallback retries */
-const PREFIX_BRAND_MAP: Record<string, string[]> = {
-  "BC":  ["BELLA+CANVAS", "BELLA + CANVAS", "BELLA CANVAS", "BELLACANVAS"],
-  "NL":  ["NEXT LEVEL", "NEXT LEVEL APPAREL", "NEXTLEVEL"],
-  "G":   ["GILDAN"],
-  "GD":  ["GILDAN"],
-  "OS":  ["ONESTOP", "ONE STOP"],
-  "PC":  ["PORT & COMPANY", "PORT AND COMPANY", "PORT COMPANY"],
-  "CP":  ["CORNERSTONE", "CORNER STONE"],
-  "DT":  ["DISTRICT", "DISTRICT MADE"],
-  "J":   ["JERZEES"],
-  "H":   ["HANES"],
-  "CC":  ["COMFORT COLORS", "COMFORTCOLORS"],
-  "SS":  ["SPORT-TEK", "SPORT TEK"],
+// ---------------------------------------------------------------------------
+// Canonical style normalization (mirrors src/lib/styleNormalization.ts)
+// ---------------------------------------------------------------------------
+
+const BRAND_ALIASES: [RegExp, string][] = [
+  [/bella\s*[\+&]\s*canvas|bellacanvas/i,         "BELLA+CANVAS"],
+  [/next\s*level(\s*apparel)?/i,                   "NEXT LEVEL"],
+  [/sport[\s\-]?tek/i,                             "SPORT-TEK"],
+  [/port\s*&?\s*company/i,                         "PORT & COMPANY"],
+  [/comfort\s*colors?/i,                           "COMFORT COLORS"],
+  [/gildan/i,                                      "GILDAN"],
+  [/hanes/i,                                       "HANES"],
+  [/jerzees/i,                                     "JERZEES"],
+  [/a4/i,                                          "A4"],
+  [/district(\s*made)?/i,                          "DISTRICT"],
+  [/new\s*era/i,                                   "NEW ERA"],
+  [/independent\s*trading(\s*co\.?)?/i,            "INDEPENDENT TRADING"],
+  [/alternative(\s*apparel)?/i,                    "ALTERNATIVE"],
+];
+
+/** Longest-first so "BST" is tried before "B". */
+const BRAND_PREFIX_MAP: Record<string, string[]> = {
+  "BELLA+CANVAS":        ["BC"],
+  "NEXT LEVEL":          ["NL"],
+  "A4":                  ["A4"],
+  "GILDAN":              ["GH400", "GH000", "G"],
+  "SPORT-TEK":           ["BST", "ST"],
+  "PORT & COMPANY":      ["PC"],
+  "COMFORT COLORS":      ["CC"],
+  "DISTRICT":            ["DT"],
+  "JERZEES":             ["J"],
+  "HANES":               ["H"],
+  "NEW ERA":             ["NE"],
+  "INDEPENDENT TRADING": ["IND"],
+  "ALTERNATIVE":         ["AA"],
 };
 
-/** Get the appropriate vendor prefix for a brand */
-function getPrefixForBrand(brand: string): string | null {
-  const upper = brand.toUpperCase().trim();
-  for (const [prefix, brands] of Object.entries(PREFIX_BRAND_MAP)) {
-    if (brands.some((b) => upper.includes(b) || b.includes(upper))) {
-      return prefix;
+function normalizeBrandName(brand: string): string {
+  const s = brand.trim();
+  for (const [pattern, canonical] of BRAND_ALIASES) {
+    if (pattern.test(s)) return canonical;
+  }
+  return s.toUpperCase();
+}
+
+/** Strip brand prefix → bare numeric+suffix (e.g. "BC3001" → "3001"). */
+function getCanonicalBase(styleNumber: string, brand: string): string {
+  const normalBrand = normalizeBrandName(brand);
+  const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const prefixes = BRAND_PREFIX_MAP[normalBrand] ?? [];
+  for (const prefix of prefixes) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length) {
+      const rest = sn.slice(prefix.length);
+      if (/^\d/.test(rest)) return rest;
     }
   }
-  return null;
+  return sn;
+}
+
+/**
+ * Returns the style number a specific distributor expects.
+ * SanMar → prefixed form (e.g. "BC3001").
+ * S&S / OneStop → bare numeric form (e.g. "3001").
+ */
+function getDistributorStyle(canonicalBase: string, brand: string, distributor: string): string {
+  const normalBrand = normalizeBrandName(brand);
+  if (distributor === "sanmar") {
+    const prefixes = BRAND_PREFIX_MAP[normalBrand];
+    if (prefixes && prefixes.length > 0) {
+      // Primary prefix = last entry (shortest)
+      const primaryPrefix = prefixes[prefixes.length - 1];
+      if (!canonicalBase.startsWith(primaryPrefix)) {
+        return `${primaryPrefix}${canonicalBase}`;
+      }
+    }
+  }
+  return canonicalBase;
 }
 
 interface DistributorResult {
@@ -107,9 +159,19 @@ serve(async (req) => {
           };
         }
 
-        // Determine the SKU to use for this distributor
+        // Determine the SKU to use for this distributor.
+        // Priority: explicit distributorSkuMap → canonical routing → raw query
         const originalSku = distributorSkuMap?.[distributor.code];
-        const queryForProvider = originalSku || query;
+        let queryForProvider: string;
+        if (originalSku) {
+          queryForProvider = originalSku;
+        } else if (brand) {
+          // Derive the canonical base, then re-add the prefix only for SanMar
+          const canonicalBase = getCanonicalBase(query, brand);
+          queryForProvider = getDistributorStyle(canonicalBase, brand, distributor.code);
+        } else {
+          queryForProvider = query;
+        }
 
         try {
           const providerFnName = `provider-${distributor.code}`;
@@ -120,19 +182,24 @@ serve(async (req) => {
           });
 
           if (error || !data?.product) {
-            // PREFIX FALLBACK: If the call failed and we have a brand, retry with prefix
+            // CANONICAL FALLBACK: retry with the alternate form of the style number
+            // e.g. if we sent "3001" to SanMar and got nothing, retry as "BC3001",
+            // or if we sent "BC3001" to S&S and got nothing, retry as "3001".
             if (brand && !originalSku) {
-              const prefix = getPrefixForBrand(brand);
-              if (prefix) {
-                const prefixedQuery = `${prefix}${query}`;
-                console.log(`[sourcing-engine] Retrying ${providerFnName} with prefix fallback: "${prefixedQuery}"`);
-                
-                const { data: retryData, error: retryError } = await supabase.functions.invoke(providerFnName, {
-                  body: { query: prefixedQuery, distributorId: distributor.id, brand },
-                });
+              const canonicalBase = getCanonicalBase(query, brand);
+              // The alternate is the opposite routing from what we tried first
+              const triedPrefixed = queryForProvider !== canonicalBase;
+              const altQuery = triedPrefixed
+                ? canonicalBase
+                : getDistributorStyle(canonicalBase, brand, distributor.code);
 
+              if (altQuery !== queryForProvider) {
+                console.log(`[sourcing-engine] Retrying ${providerFnName} with alt style: "${altQuery}"`);
+                const { data: retryData, error: retryError } = await supabase.functions.invoke(providerFnName, {
+                  body: { query: altQuery, distributorId: distributor.id, brand },
+                });
                 if (!retryError && retryData?.product) {
-                  console.log(`[sourcing-engine] Prefix fallback succeeded for ${distributor.name}`);
+                  console.log(`[sourcing-engine] Alt-style fallback succeeded for ${distributor.name}`);
                   return {
                     distributorId: distributor.id,
                     distributorCode: distributor.code,
