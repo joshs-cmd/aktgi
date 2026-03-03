@@ -7,6 +7,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DistributorResult, StandardSize } from "@/types/sourcing";
 import { DistributorStatusBadge } from "./DistributorStatusBadge";
 import { PriceCell } from "./PriceCell";
@@ -20,114 +21,89 @@ interface ComparisonTableProps {
 
 export function ComparisonTable({ results, selectedColor, showPrices = true }: ComparisonTableProps) {
   // Safely get sizes for a result based on selected color
-  // Uses optional chaining throughout to prevent crashes
   const getSizesForResult = (result: DistributorResult): StandardSize[] => {
     if (!result?.product) return [];
-    
     const product = result.product;
-    
-    // If product has colors, use selected color's sizes
     if (Array.isArray(product.colors) && product.colors.length > 0) {
       if (selectedColor) {
         const color = product.colors.find((c) => c?.name === selectedColor);
         if (color?.sizes) return color.sizes;
       }
-      // Default to first color if no selection
       return product.colors[0]?.sizes || [];
     }
-    
-    // Fall back to direct sizes (backward compat)
     return Array.isArray(product.sizes) ? product.sizes : [];
   };
 
-  // Collect all unique sizes from all products, sorted by order
-  // Exclude pending distributors from all calculations
-  const visibleResultsForCalc = results.filter(r => r.status !== "pending");
+  // Only use resolved rows for size/price calculations
+  const resolvedResults = results.filter(r => r.status === "success" || r.status === "error");
+  const successResults = results.filter(r => r.status === "success");
 
   const allSizes = useMemo(() => {
     const sizeMap = new Map<string, number>();
-    
-    visibleResultsForCalc.forEach((result) => {
-      const sizes = getSizesForResult(result);
-      sizes.forEach((size) => {
+    successResults.forEach((result) => {
+      getSizesForResult(result).forEach((size) => {
         if (!sizeMap.has(size.code) || sizeMap.get(size.code)! > size.order) {
           sizeMap.set(size.code, size.order);
         }
       });
     });
-
     return Array.from(sizeMap.entries())
       .sort((a, b) => a[1] - b[1])
       .map(([code]) => code);
   }, [results, selectedColor]);
 
-  // Calculate lowest price for each size column
   const lowestPrices = useMemo(() => {
     const lowest: Record<string, number> = {};
-    
     allSizes.forEach((sizeCode) => {
       let minPrice = Infinity;
-      
-      visibleResultsForCalc.forEach((result) => {
-        if (result.status === "success") {
-          const sizes = getSizesForResult(result);
-          const size = sizes.find((s) => s.code === sizeCode);
-          if (size && size.price > 0 && size.price < minPrice) {
-            minPrice = size.price;
-          }
-        }
+      successResults.forEach((result) => {
+        const sizes = getSizesForResult(result);
+        const size = sizes.find((s) => s.code === sizeCode);
+        if (size && size.price > 0 && size.price < minPrice) minPrice = size.price;
       });
-      
-      if (minPrice !== Infinity) {
-        lowest[sizeCode] = minPrice;
-      }
+      if (minPrice !== Infinity) lowest[sizeCode] = minPrice;
     });
-    
     return lowest;
   }, [results, allSizes, selectedColor]);
 
-  // Calculate total stock for each distributor (with 3,000+ notation for capped)
   const getTotalStock = (sizes: StandardSize[]) => {
     let total = 0;
     let hasCapped = false;
-    
     for (const size of sizes) {
       for (const inv of size.inventory) {
         total += inv.quantity;
         if (inv.isCapped) hasCapped = true;
       }
     }
-    
     return { total, hasCapped };
   };
 
-  // Format total stock with + if any warehouse was capped
   const formatTotalStock = (sizes: StandardSize[], distributorCode?: string) => {
     const { total, hasCapped } = getTotalStock(sizes);
     const formatted = total.toLocaleString();
     const isSS = distributorCode === "ss-activewear";
-    // S&S caps each size at 500
     if (isSS && sizes.some(s => s.inventory.reduce((sum, inv) => sum + inv.quantity, 0) === 500)) {
       return `${formatted}+`;
     }
     return hasCapped ? `${formatted}+` : formatted;
   };
 
-  // Hide distributors that are not yet connected (pending = not active)
+  // Show all rows except pending
   const visibleResults = results.filter(r => r.status !== "pending");
 
-  if (visibleResults.length === 0) {
-    return null;
-  }
+  if (visibleResults.length === 0) return null;
+
+  // How many size columns to show (use allSizes if resolved, else 6 placeholder columns)
+  const skeletonSizeCols = allSizes.length > 0 ? allSizes : ["S", "M", "L", "XL", "2XL", "3XL"];
 
   return (
-    <div className="rounded-lg border bg-card">
+    <div className="rounded-lg border bg-card overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead className="w-[200px]">Distributor</TableHead>
             <TableHead className="w-[100px]">Status</TableHead>
-            {allSizes.map((size) => (
+            {skeletonSizeCols.map((size) => (
               <TableHead key={size} className="text-center w-[100px]">
                 {size}
               </TableHead>
@@ -137,14 +113,13 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
         </TableHeader>
         <TableBody>
           {visibleResults.map((result) => {
+            const isLoading = result.status === "loading";
             const sizes = getSizesForResult(result);
-            
+
             return (
               <TableRow
                 key={result.distributorId}
-                className={cn(
-                  result.status === "pending" && "opacity-60"
-                )}
+                className={cn(isLoading && "animate-pulse")}
               >
                 <TableCell className="font-medium">
                   {result.distributorName}
@@ -152,34 +127,50 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                 <TableCell>
                   <DistributorStatusBadge status={result.status} />
                 </TableCell>
-                {allSizes.map((sizeCode) => {
-                  const size = sizes.find((s) => s.code === sizeCode);
-                  
-                  if (!size || result.status !== "success") {
+
+                {isLoading ? (
+                  // Skeleton cells while API is in-flight
+                  skeletonSizeCols.map((col) => (
+                    <TableCell key={col} className="text-center p-2">
+                      <div className="flex flex-col items-center gap-1">
+                        <Skeleton className="h-4 w-12" />
+                        <Skeleton className="h-3 w-8" />
+                      </div>
+                    </TableCell>
+                  ))
+                ) : (
+                  skeletonSizeCols.map((sizeCode) => {
+                    const size = sizes.find((s) => s.code === sizeCode);
+
+                    if (!size || result.status !== "success") {
+                      return (
+                        <TableCell key={sizeCode} className="text-center">
+                          <span className="text-muted-foreground">--</span>
+                        </TableCell>
+                      );
+                    }
+
+                    const isLowest = size.price > 0 && lowestPrices[sizeCode] === size.price;
+
                     return (
-                      <TableCell key={sizeCode} className="text-center">
-                        <span className="text-muted-foreground">--</span>
+                      <TableCell key={sizeCode} className="text-center p-1">
+                        <PriceCell
+                          price={size.price}
+                          inventory={size.inventory}
+                          isLowest={isLowest}
+                          showPrice={showPrices}
+                          isProgramPrice={size.isProgramPrice}
+                          distributorCode={result.distributorCode}
+                        />
                       </TableCell>
                     );
-                  }
+                  })
+                )}
 
-                  const isLowest = size.price > 0 && lowestPrices[sizeCode] === size.price;
-
-                  return (
-                    <TableCell key={sizeCode} className="text-center p-1">
-                      <PriceCell
-                        price={size.price}
-                        inventory={size.inventory}
-                        isLowest={isLowest}
-                        showPrice={showPrices}
-                        isProgramPrice={size.isProgramPrice}
-                        distributorCode={result.distributorCode}
-                      />
-                    </TableCell>
-                  );
-                })}
                 <TableCell className="text-right">
-                  {result.status === "success" && sizes.length > 0 ? (
+                  {isLoading ? (
+                    <Skeleton className="h-4 w-14 ml-auto" />
+                  ) : result.status === "success" && sizes.length > 0 ? (
                     <span className="font-semibold tabular-nums">
                       {formatTotalStock(sizes, result.distributorCode)}
                     </span>
@@ -191,31 +182,24 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
             );
           })}
 
-          {/* Aggregate Total Row */}
-          {visibleResults.some(r => r.status === "success") && (
+          {/* Aggregate Total Row — only shown once all active distributors have resolved */}
+          {successResults.length > 0 && results.filter(r => r.status === "loading").length === 0 && (
             <TableRow className="bg-muted/50 font-semibold border-t-2">
               <TableCell className="font-bold">Total</TableCell>
               <TableCell />
-              {allSizes.map((sizeCode) => {
+              {skeletonSizeCols.map((sizeCode) => {
                 let total = 0;
                 let hasSSCap = false;
                 let hasSanMarCap = false;
 
-                visibleResults.forEach((result) => {
-                  if (result.status !== "success") return;
+                successResults.forEach((result) => {
                   const sizes = getSizesForResult(result);
                   const size = sizes.find((s) => s.code === sizeCode);
                   if (!size) return;
-
                   const sizeTotal = size.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
                   total += sizeTotal;
-
-                  if (result.distributorCode === "ss-activewear" && sizeTotal === 500) {
-                    hasSSCap = true;
-                  }
-                  if (size.inventory.some(inv => inv.isCapped)) {
-                    hasSanMarCap = true;
-                  }
+                  if (result.distributorCode === "ss-activewear" && sizeTotal === 500) hasSSCap = true;
+                  if (size.inventory.some(inv => inv.isCapped)) hasSanMarCap = true;
                 });
 
                 const hasCap = hasSSCap || hasSanMarCap;
@@ -237,8 +221,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                   {(() => {
                     let grandTotal = 0;
                     let hasCap = false;
-                    visibleResults.forEach((result) => {
-                      if (result.status !== "success") return;
+                    successResults.forEach((result) => {
                       const sizes = getSizesForResult(result);
                       const { total, hasCapped } = getTotalStock(sizes);
                       grandTotal += total;

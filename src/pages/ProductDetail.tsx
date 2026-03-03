@@ -1,15 +1,13 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { SearchBar } from "@/components/SearchBar";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { ProductHeader } from "@/components/ProductHeader";
 import { useSourcingEngine } from "@/hooks/useSourcingEngine";
-import { AlertCircle, Search, Loader2, ArrowLeft } from "lucide-react";
+import { AlertCircle, Search, ArrowLeft } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { UserRole, canViewPrices } from "@/types/auth";
-import { useEffect, useRef } from "react";
 
 interface ProductDetailProps {
   userRole: UserRole | null;
@@ -71,13 +69,17 @@ const ProductDetail = ({ userRole }: ProductDetailProps) => {
     }
   }, [availableColors, selectedColor]);
 
+  // Still loading if any active row is in skeleton state
+  const anyLoading = response?.results?.some((r) => r.status === "loading") ?? false;
+
   const allResultsEmpty =
     !response?.results ||
-    response.results.every(
+    (!anyLoading && response.results.every(
       (r) => r.status !== "success" || r.product === null
-    );
+    ));
 
   const hasPartialResults =
+    !anyLoading &&
     response?.results?.some((r) => r.status === "success" && r.product) &&
     response?.results?.some((r) => r.status === "error");
 
@@ -114,14 +116,9 @@ const ProductDetail = ({ userRole }: ProductDetailProps) => {
           </Button>
 
           {/* Loading State */}
-          {isLoading && (
+          {/* Initial page-level skeleton — only shown before first skeleton rows appear */}
+          {isLoading && !response && (
             <div className="w-full max-w-4xl space-y-6">
-              <div className="flex items-center justify-center gap-3 py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                <span className="text-lg text-muted-foreground">
-                  Loading full pricing & inventory...
-                </span>
-              </div>
               <div className="rounded-lg border bg-card p-4 space-y-3">
                 <Skeleton className="h-10 w-full" />
                 <Skeleton className="h-12 w-full" />
@@ -164,10 +161,10 @@ const ProductDetail = ({ userRole }: ProductDetailProps) => {
             </Alert>
           )}
 
-          {/* Results */}
-          {response && !allResultsEmpty && !isLoading && (
+          {/* Results — show as soon as skeleton rows appear */}
+          {response && !allResultsEmpty && (
             <div className="w-full space-y-8">
-              {firstProduct && (
+              {firstProduct ? (
                 <ProductHeader
                   product={firstProduct}
                   query={response.query}
@@ -175,7 +172,18 @@ const ProductDetail = ({ userRole }: ProductDetailProps) => {
                   selectedColor={selectedColor}
                   onColorSelect={setSelectedColor}
                 />
-              )}
+              ) : anyLoading ? (
+                // Skeleton header while first API result arrives
+                <div className="space-y-3">
+                  <Skeleton className="h-8 w-64" />
+                  <Skeleton className="h-5 w-48" />
+                  <div className="flex gap-2 mt-2">
+                    {[...Array(6)].map((_, i) => (
+                      <Skeleton key={i} className="h-7 w-7 rounded-full" />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
               <ComparisonTable
                 results={response.results}

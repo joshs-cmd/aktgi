@@ -18,6 +18,10 @@ const statusConfig: Record<DistributorStatus, { label: string; className: string
     label: "Error",
     className: "bg-destructive/20 text-destructive border-destructive/30",
   },
+  loading: {
+    label: "Loading…",
+    className: "bg-primary/10 text-primary border-primary/20",
+  },
 };
 
 export function DistributorStatusBadge({ status }: DistributorStatusBadgeProps) {
@@ -35,7 +39,8 @@ export function DistributorStatusBadge({ status }: DistributorStatusBadgeProps) 
           "h-1.5 w-1.5 rounded-full",
           status === "success" && "bg-emerald-500",
           status === "pending" && "bg-muted-foreground",
-          status === "error" && "bg-destructive"
+          status === "error" && "bg-destructive",
+          status === "loading" && "animate-pulse bg-primary"
         )}
       />
       {config.label}

@@ -36,7 +36,8 @@ export interface StandardProduct {
   sizes?: StandardSize[];        // Backward compat for non-color distributors
 }
 
-export type DistributorStatus = 'success' | 'error' | 'pending';
+// "loading" = streaming skeleton state (Phase 1 placeholder)
+export type DistributorStatus = 'success' | 'error' | 'pending' | 'loading';
 
 export interface DistributorResult {
   distributorId: string;
