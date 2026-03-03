@@ -1,4 +1,5 @@
 import { SearchBar } from "@/components/SearchBar";
+import aktLogo from "@/assets/aktlogo.png";
 import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
