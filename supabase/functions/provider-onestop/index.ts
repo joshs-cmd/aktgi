@@ -260,11 +260,22 @@ function aggregateItemsWithPricing(
     const sizeEntry = colorEntry.sizesMap.get(normalizedSizeCode)!;
     sizeEntry.quantity += item.on_hand || 0;
 
-    // Look up price by OneStop SKU code (e.g. "GD-110-36-XL") from the pricing endpoint
+    // Look up price by OneStop SKU code (e.g. "GD-110-36-XL") from the pricing endpoint.
+    // Fallback: use the color-group price (all sizes of a color share one representative price).
     if (sizeEntry.price === 0 && item.code) {
       const skuPrice = skuPriceMap.get(item.code);
       if (skuPrice && skuPrice > 0) {
         sizeEntry.price = skuPrice;
+      } else {
+        // Try color-key fallback: strip the last segment (size) and look up __color__prefix
+        const parts = item.code.split("-");
+        if (parts.length > 1) {
+          const colorKey = `__color__${parts.slice(0, -1).join("-")}`;
+          const colorPrice = skuPriceMap.get(colorKey);
+          if (colorPrice && colorPrice > 0) {
+            sizeEntry.price = colorPrice;
+          }
+        }
       }
     }
   }
@@ -311,18 +322,55 @@ function aggregateItemsWithPricing(
  * Prices are integers in cents (e.g. 281 = $2.81). Divide by 10^price_factor.
  * my_price reflects the price you actually pay at your price_level (case/dozen/piece).
  * Batch limit: 20 SKUs per request per API docs.
+ *
+ * To avoid 429 rate-limit and 403 auth errors on large catalogs:
+ *  - We take only ONE representative SKU per color (the first size per color group).
+ *  - We cap the total at MAX_PRICING_SKUS to prevent timeouts on 1000+ SKU products.
+ *  - We add a small delay between batches.
  */
+const MAX_PRICING_SKUS = 100; // cap: one price per color is enough
+const BATCH_DELAY_MS = 200;   // pause between batches to avoid 429
+
+/**
+ * Reduce SKU list to at most one SKU per color group.
+ * OneStop SKU format: "STYLE-COLOR-SIZE" (e.g. "CV-207-S6-SM").
+ * We take the first SKU for each STYLE-COLOR combination.
+ */
+function deduplicateSkusByColor(skuCodes: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const sku of skuCodes) {
+    // Color key = everything except the last dash-separated segment (size)
+    const parts = sku.split("-");
+    const colorKey = parts.length > 1 ? parts.slice(0, -1).join("-") : sku;
+    if (!seen.has(colorKey)) {
+      seen.add(colorKey);
+      result.push(sku);
+    }
+  }
+  return result;
+}
+
 async function fetchPricingBySku(
-  skuCodes: string[],
+  rawSkuCodes: string[],
   fetchOpts: RequestInit
 ): Promise<Map<string, number>> {
+  // Reduce to one representative SKU per color, then cap total
+  const representativeSkus = deduplicateSkusByColor(rawSkuCodes).slice(0, MAX_PRICING_SKUS);
+  console.log(`[provider-onestop] Pricing: ${rawSkuCodes.length} SKUs → ${representativeSkus.length} representative (capped at ${MAX_PRICING_SKUS})`);
+
   const priceMap = new Map<string, number>();
   const BATCH_SIZE = 20;
 
-  for (let i = 0; i < skuCodes.length; i += BATCH_SIZE) {
-    const batch = skuCodes.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < representativeSkus.length; i += BATCH_SIZE) {
+    const batch = representativeSkus.slice(i, i + BATCH_SIZE);
     const url = `${ONESTOP_API_BASE}/items/pricing/?skus=${encodeURIComponent(batch.join(","))}`;
     console.log(`[provider-onestop] Fetching pricing batch [${i}..${i + batch.length}]: ${url}`);
+
+    // Delay between batches to avoid 429 rate-limiting
+    if (i > 0) {
+      await new Promise((res) => setTimeout(res, BATCH_DELAY_MS));
+    }
 
     try {
       const res = await fetch(url, { headers: (fetchOpts.headers as HeadersInit), signal: AbortSignal.timeout(20_000) });
@@ -332,30 +380,31 @@ async function fetchPricingBySku(
       }
 
       const data = await res.json();
-      // Response format: { results: [ { "GD-110-36-XL": { pricing: { my_price, piece, dozen, case }, price_level, ... } } ] }
       const results: Record<string, unknown>[] = Array.isArray(data.results) ? data.results : [];
 
-      console.log(`[provider-onestop] Pricing batch raw sample: ${JSON.stringify(data).substring(0, 600)}`);
-
       for (const resultItem of results) {
-        // Each result item is a dict keyed by sku_code
         for (const [skuKey, skuData] of Object.entries(resultItem)) {
           if (!skuData || typeof skuData !== "object") continue;
           const d = skuData as Record<string, unknown>;
           const pricing = d.pricing as Record<string, unknown> | undefined;
-
           if (!pricing) continue;
 
-          // Determine price factor: divide by 10^price_factor (default 2 = cents)
           const pfactor = Number(d.pfactor ?? d.price_factor ?? 2);
           const divisor = Math.pow(10, pfactor);
 
-          // my_price = the price you pay, as an integer in cents
           const myPriceRaw = pricing.my_price ?? pricing.piece ?? pricing.dozen ?? pricing.case;
           if (typeof myPriceRaw === "number" && myPriceRaw > 0) {
             const price = myPriceRaw / divisor;
+            // Store price keyed by representative SKU
             priceMap.set(skuKey, price);
-            console.log(`[provider-onestop] SKU ${skuKey}: my_price=${myPriceRaw} / ${divisor} = $${price.toFixed(2)} (level: ${d.price_level})`);
+            // Also store price keyed by color group prefix so all sizes of that
+            // color get the price even though we only fetched one representative SKU
+            const parts = skuKey.split("-");
+            if (parts.length > 1) {
+              const colorKey = parts.slice(0, -1).join("-");
+              priceMap.set(`__color__${colorKey}`, price);
+            }
+            console.log(`[provider-onestop] SKU ${skuKey}: $${price.toFixed(2)}`);
           }
         }
       }
@@ -364,7 +413,7 @@ async function fetchPricingBySku(
     }
   }
 
-  console.log(`[provider-onestop] fetchPricingBySku: resolved ${priceMap.size} prices for ${skuCodes.length} SKUs`);
+  console.log(`[provider-onestop] fetchPricingBySku: resolved ${priceMap.size} price entries for ${rawSkuCodes.length} SKUs`);
   return priceMap;
 }
 
