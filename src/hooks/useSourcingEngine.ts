@@ -33,6 +33,7 @@ export function useSourcingEngine() {
       { id: "sanmar-001",        code: "sanmar",        name: "SanMar" },
       { id: "ss-activewear-001", code: "ss-activewear", name: "S&S Activewear" },
       { id: "onestop-001",       code: "onestop",       name: "OneStop" },
+      { id: "acc-001",           code: "acc",           name: "Atlantic Coast Cotton" },
     ];
 
     const PENDING_DISTRIBUTORS = [
