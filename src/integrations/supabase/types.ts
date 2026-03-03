@@ -362,6 +362,21 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      catalog_search_deduped: {
+        Args: { query_text: string }
+        Returns: {
+          all_distributors: Json
+          base_price: number
+          brand: string
+          description: string
+          distributor: string
+          id: string
+          image_url: string
+          rank: number
+          style_number: string
+          title: string
+        }[]
+      }
       catalog_search_fts: {
         Args: { query_text: string }
         Returns: {
