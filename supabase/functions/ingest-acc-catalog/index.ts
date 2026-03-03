@@ -100,15 +100,29 @@ const unwrap = (val: any): string => {
 async function saveArchive(
   supabase: ReturnType<typeof createClient>,
   filename: string,
-  content: string
+  content: string,
+  subfolder = ""
 ): Promise<void> {
+  const path = subfolder ? `acc/${subfolder}/${filename}` : `acc/${filename}`;
+  const contentType = filename.endsWith(".csv") ? "text/csv" : "application/json";
   const { error } = await supabase.storage
     .from(BUCKET)
-    .upload(`acc/${filename}`, new TextEncoder().encode(content), {
-      contentType: "application/json",
-      upsert: true,
-    });
+    .upload(path, new TextEncoder().encode(content), { contentType, upsert: true });
   if (error) console.error("[ingest-acc-catalog] Archive upload error:", error.message);
+}
+
+// ---------------------------------------------------------------------------
+// Generate CSV from catalog records (matches master format)
+// ---------------------------------------------------------------------------
+function recordsToCsv(records: any[]): string {
+  const columns = ["style_number", "brand", "title", "description", "base_price", "image_url", "updated_at"];
+  const escape = (v: any): string => {
+    if (v == null) return "";
+    const s = String(v).replace(/"/g, '""');
+    return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s}"` : s;
+  };
+  const rows = records.map(r => columns.map(c => escape(r[c])).join(","));
+  return [columns.join(","), ...rows].join("\n");
 }
 
 // ---------------------------------------------------------------------------
