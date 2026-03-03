@@ -1,4 +1,5 @@
 import { useState } from "react";
+import aktLogo from "@/assets/aktlogo.png";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
