@@ -8,12 +8,15 @@ const corsHeaders = {
 };
 
 const BUCKET = "distributor-archives";
-const BATCH_SIZE = 500;
+const DB_BATCH_SIZE = 500;
+const CONCURRENCY = 4;
+const CHUNK_SIZE = 80; // Products enriched per function invocation
+const SAFETY_CUTOFF_MS = 50_000; // 50s safety cutoff (edge function limit ~60s CPU)
 const ACC_PRODUCT_DATA_ENDPOINT = "https://promo.acc-api.com/live/productData.php";
 const ACC_PRICING_ENDPOINT      = "https://promo.acc-api.com/live/productPricingAndConfig.php";
 
 // ---------------------------------------------------------------------------
-// Canonical brand normalization (mirrors styleNormalization.ts)
+// Brand normalization
 // ---------------------------------------------------------------------------
 const BRAND_ALIASES: [RegExp, string][] = [
   [/bella\s*[\+&]\s*canvas|bellacanvas/i, "BELLA+CANVAS"],
@@ -32,19 +35,19 @@ const BRAND_ALIASES: [RegExp, string][] = [
 ];
 
 const BRAND_PREFIX_MAP: Record<string, string[]> = {
-  "BELLA+CANVAS":       ["BC"],
-  "NEXT LEVEL":         ["NL"],
-  "A4":                 ["A4"],
-  "GILDAN":             ["GH400", "GH000", "G"],
-  "SPORT-TEK":          ["BST", "ST"],
-  "PORT & COMPANY":     ["PC"],
-  "COMFORT COLORS":     ["CC"],
-  "DISTRICT":           ["DT"],
-  "JERZEES":            ["J"],
-  "HANES":              ["H"],
-  "NEW ERA":            ["NE"],
-  "INDEPENDENT TRADING":["IND"],
-  "ALTERNATIVE":        ["AA"],
+  "BELLA+CANVAS":        ["BC"],
+  "NEXT LEVEL":          ["NL"],
+  "A4":                  ["A4"],
+  "GILDAN":              ["GH400", "GH000", "G"],
+  "SPORT-TEK":           ["BST", "ST"],
+  "PORT & COMPANY":      ["PC"],
+  "COMFORT COLORS":      ["CC"],
+  "DISTRICT":            ["DT"],
+  "JERZEES":             ["J"],
+  "HANES":               ["H"],
+  "NEW ERA":             ["NE"],
+  "INDEPENDENT TRADING": ["IND"],
+  "ALTERNATIVE":         ["AA"],
 };
 
 function normalizeBrandName(brand: string): string {
@@ -88,6 +91,12 @@ function getEnvelopeBody(parsed: any): any | null {
   );
 }
 
+const unwrap = (val: any): string => {
+  if (val == null) return "";
+  if (typeof val === "object") return String(val["#text"] ?? val["__text"] ?? "").trim();
+  return String(val).trim();
+};
+
 async function saveArchive(
   supabase: ReturnType<typeof createClient>,
   filename: string,
@@ -103,16 +112,84 @@ async function saveArchive(
 }
 
 // ---------------------------------------------------------------------------
-// GetProductDateModified — returns all productIds modified since a timestamp
-// Use a very old date to get the full catalog on first run.
-// Correct namespace: ProductDataService/2.0.0 with shar prefix
+// GetProductSellable — returns ALL active product IDs (full catalog)
+// Falls back to GetProductDateModified (14-day) if needed
 // ---------------------------------------------------------------------------
-function buildGetProductDateModifiedRequest(
-  changeTimeStamp: string,
+async function fetchAllProductIds(
   username: string,
-  password: string
-): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  password: string,
+  parser: XMLParser
+): Promise<{ ids: string[]; method: string }> {
+  try {
+    console.log("[ingest-acc-catalog] Calling GetProductSellable (full catalog)...");
+    const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        "SOAPAction": '"GetProductSellable"',
+      },
+      body: `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:ns="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/"
+                  xmlns:shar="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:GetProductSellableRequest>
+      <shar:wsVersion>2.0.0</shar:wsVersion>
+      <shar:id>${escapeXml(username)}</shar:id>
+      <shar:password>${escapeXml(password)}</shar:password>
+      <shar:isSellable>true</shar:isSellable>
+    </ns:GetProductSellableRequest>
+  </soapenv:Body>
+</soapenv:Envelope>`,
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (res.ok) {
+      const xml = await res.text();
+      const parsed = parser.parse(xml);
+      const bodyEl = getEnvelopeBody(parsed);
+      if (bodyEl) {
+        const respKey = Object.keys(bodyEl).find(k =>
+          k.toLowerCase().includes("productsellable") || k.toLowerCase().includes("getproductsellable")
+        );
+        if (respKey) {
+          const resp = bodyEl[respKey];
+          const arrayEl = resp?.ProductSellableArray || resp?.["ns2:ProductSellableArray"] || resp;
+          const rawItems = arrayEl?.ProductSellable || arrayEl?.["ns2:ProductSellable"] || [];
+          const items = Array.isArray(rawItems) ? rawItems : (rawItems ? [rawItems] : []);
+          if (items.length > 0) {
+            const seen = new Set<string>();
+            for (const item of items) {
+              const raw = item?.productId ?? item?.["ns2:productId"] ?? item?.["#text"] ?? "";
+              const id = (typeof raw === "object" ? String(raw?.["#text"] ?? "") : String(raw)).trim();
+              if (id) seen.add(id);
+            }
+            const ids = Array.from(seen);
+            if (ids.length > 0) {
+              console.log(`[ingest-acc-catalog] GetProductSellable: ${ids.length} product IDs`);
+              return { ids, method: "GetProductSellable" };
+            }
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.log(`[ingest-acc-catalog] GetProductSellable failed: ${e.message}`);
+  }
+
+  // Fallback: GetProductDateModified (14-day)
+  console.log("[ingest-acc-catalog] Falling back to GetProductDateModified...");
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 14);
+  const changeTimeStamp = cutoff.toISOString().split("T")[0].replace(/-/g, "");
+  const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml; charset=utf-8",
+      "SOAPAction": '"GetProductDateModified"',
+    },
+    body: `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ns="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/"
                   xmlns:shar="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/">
@@ -125,12 +202,43 @@ function buildGetProductDateModifiedRequest(
       <shar:changeTimeStamp>${escapeXml(changeTimeStamp)}</shar:changeTimeStamp>
     </ns:GetProductDateModifiedRequest>
   </soapenv:Body>
-</soapenv:Envelope>`;
+</soapenv:Envelope>`,
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!res.ok) throw new Error(`GetProductDateModified HTTP ${res.status}`);
+  const xml = await res.text();
+  const parsed = parser.parse(xml);
+  const bodyEl = getEnvelopeBody(parsed);
+  if (!bodyEl) throw new Error("No SOAP body");
+
+  const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("productdatemodified"));
+  if (!respKey) throw new Error(`No key found. Keys: ${Object.keys(bodyEl).join(", ")}`);
+  const resp = bodyEl[respKey];
+  const arrayEl = resp?.ProductDateModifiedArray || resp?.["ns2:ProductDateModifiedArray"] || resp;
+  const rawItems = arrayEl?.ProductDateModified || arrayEl?.["ns2:ProductDateModified"] || [];
+  const items = Array.isArray(rawItems) ? rawItems : (rawItems ? [rawItems] : []);
+  const seen = new Set<string>();
+  for (const item of items) {
+    const raw = item?.productId ?? item?.["ns2:productId"] ?? "";
+    const id = (typeof raw === "object" ? String(raw?.["#text"] ?? "") : String(raw)).trim();
+    if (id) seen.add(id);
+  }
+  const ids = Array.from(seen);
+  return { ids, method: "GetProductDateModified" };
 }
 
-// GetProductRequest — correct namespace with shar prefix
-function buildGetProductRequest(productId: string, username: string, password: string): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>
+// ---------------------------------------------------------------------------
+// Fetch single product detail
+// ---------------------------------------------------------------------------
+async function fetchProductDetail(
+  productId: string, username: string, password: string, parser: XMLParser
+): Promise<{ brand: string; name: string; imageUrl?: string; description?: string } | null> {
+  try {
+    const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": '"GetProduct"' },
+      body: `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ns="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/"
                   xmlns:shar="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/">
@@ -143,12 +251,50 @@ function buildGetProductRequest(productId: string, username: string, password: s
       <shar:productId>${escapeXml(productId)}</shar:productId>
     </ns:GetProductRequest>
   </soapenv:Body>
-</soapenv:Envelope>`;
+</soapenv:Envelope>`,
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) return null;
+    const xml = await res.text();
+    const parsed = parser.parse(xml);
+    const bodyEl = getEnvelopeBody(parsed);
+    if (!bodyEl) return null;
+    const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("product"));
+    if (!respKey) return null;
+    const resp = bodyEl[respKey];
+    const productEl = resp?.["ns2:Product"] || resp?.Product || resp?.product || resp;
+    if (!productEl) return null;
+
+    const name = unwrap(productEl?.productName ?? productEl?.["ns2:productName"]) || productId;
+    const brand = unwrap(productEl?.brandName ?? productEl?.["ns2:brandName"]) || "Atlantic Coast Cotton";
+
+    let imageUrl: string | undefined;
+    const partArrayEl = productEl?.["ns2:ProductPartArray"] || productEl?.ProductPartArray;
+    const rawParts = (partArrayEl?.["ns2:ProductPart"] || partArrayEl?.ProductPart) ?? [];
+    const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
+    for (const part of parts) {
+      const img = String(part?.primaryImage || part?.["ns2:primaryImage"] || "").trim();
+      if (img) { imageUrl = img; break; }
+    }
+
+    const description = unwrap(productEl?.description ?? productEl?.["ns2:description"] ?? productEl?.productDescription) || undefined;
+    return { name, brand, imageUrl, description };
+  } catch {
+    return null;
+  }
 }
 
-// Pricing — correct namespace with shar prefix, minimal required fields
-function buildPricingRequest(productId: string, username: string, password: string): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>
+// ---------------------------------------------------------------------------
+// Fetch lowest piece price
+// ---------------------------------------------------------------------------
+async function fetchBasePrice(
+  productId: string, username: string, password: string, parser: XMLParser
+): Promise<number | null> {
+  try {
+    const res = await fetch(ACC_PRICING_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": '"GetConfigurationAndPricing"' },
+      body: `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/"
                   xmlns:shar="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">
@@ -162,171 +308,7 @@ function buildPricingRequest(productId: string, username: string, password: stri
       <shar:priceType>Customer</shar:priceType>
     </ns:GetConfigurationAndPricingRequest>
   </soapenv:Body>
-</soapenv:Envelope>`;
-}
-
-// ---------------------------------------------------------------------------
-// Fetch all ACC product IDs via GetProductDateModified
-// ---------------------------------------------------------------------------
-async function fetchAllProductIds(
-  username: string,
-  password: string,
-  parser: XMLParser
-): Promise<string[]> {
-  // ACC allows max 15 days lookback. Use 14 days to stay within limit.
-  // For first run / full catalog, this still covers all recently active items.
-  // Subsequent daily runs keep everything fresh.
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 14);
-  const changeTimeStamp = cutoff.toISOString().split("T")[0].replace(/-/g, "");
-  const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "text/xml; charset=utf-8",
-      "SOAPAction": '"GetProductDateModified"',
-    },
-    body: buildGetProductDateModifiedRequest(changeTimeStamp, username, password),
-    signal: AbortSignal.timeout(30000),
-  });
-
-  if (!res.ok) {
-    throw new Error(`GetProductDateModified HTTP ${res.status}`);
-  }
-
-  const xml = await res.text();
-  console.log(`[ingest-acc-catalog] GetProductDateModified response (${xml.length} chars): ${xml.substring(0, 600)}`);
-
-  const parsed = parser.parse(xml);
-  const bodyEl = getEnvelopeBody(parsed);
-  if (!bodyEl) throw new Error("No SOAP body in GetProductDateModified response");
-
-  // Find response key
-  // ACC response uses default namespace — keys will be bare (no ns: prefix)
-  const respKey = Object.keys(bodyEl).find(k =>
-    k.toLowerCase().includes("productdatemodified") ||
-    k.toLowerCase().includes("getproductdate")
-  );
-
-  console.log(`[ingest-acc-catalog] GetProductDateModified body keys: ${Object.keys(bodyEl).join(", ")}`);
-
-  if (!respKey) {
-    const errorKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("error") || k.toLowerCase().includes("fault") || k.toLowerCase().includes("service"));
-    if (errorKey) throw new Error(`ACC API error: ${JSON.stringify(bodyEl[errorKey]).substring(0, 200)}`);
-    throw new Error(`No ProductDateModified key. Keys: ${Object.keys(bodyEl).join(", ")}`);
-  }
-
-  const resp = bodyEl[respKey];
-  console.log(`[ingest-acc-catalog] GetProductDateModified resp keys: ${Object.keys(resp || {}).join(", ")}`);
-
-  // ACC response: GetProductDateModifiedResponse > ProductDateModifiedArray > ProductDateModified[]
-  const arrayEl =
-    resp?.ProductDateModifiedArray || resp?.["ns2:ProductDateModifiedArray"] ||
-    resp?.ProductDateArray || resp?.["ns2:ProductDateArray"] || resp;
-
-  const rawItems =
-    arrayEl?.ProductDateModified || arrayEl?.["ns2:ProductDateModified"] ||
-    arrayEl?.ProductDate || arrayEl?.["ns2:ProductDate"] || [];
-
-  const items = Array.isArray(rawItems) ? rawItems : (rawItems ? [rawItems] : []);
-  console.log(`[ingest-acc-catalog] Found ${items.length} ProductDateModified entries`);
-
-  // Deduplicate productIds (multiple partIds per product)
-  // productId has inline xmlns attr so parser returns {"#text": "HN5280", "@_xmlns": "..."}
-  const seen = new Set<string>();
-  for (const item of items) {
-    const raw = item?.productId ?? item?.["ns2:productId"] ?? "";
-    const id = (typeof raw === "object" ? String(raw?.["#text"] ?? "") : String(raw)).trim();
-    if (id) seen.add(id);
-  }
-  const uniqueIds = Array.from(seen);
-  console.log(`[ingest-acc-catalog] Unique product IDs: ${uniqueIds.length}`);
-  return uniqueIds;
-}
-
-// ---------------------------------------------------------------------------
-// Fetch single product detail
-// ---------------------------------------------------------------------------
-async function fetchProductDetail(
-  productId: string,
-  username: string,
-  password: string,
-  parser: XMLParser
-): Promise<{ brand: string; name: string; imageUrl?: string; description?: string } | null> {
-  try {
-    const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": '"GetProduct"',
-      },
-      body: buildGetProductRequest(productId, username, password),
-      signal: AbortSignal.timeout(12000),
-    });
-    if (!res.ok) return null;
-    const xml = await res.text();
-    const parsed = parser.parse(xml);
-    const bodyEl = getEnvelopeBody(parsed);
-    if (!bodyEl) return null;
-
-    const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("product"));
-    if (!respKey) return null;
-    const resp = bodyEl[respKey];
-    const productEl =
-      resp?.["ns2:Product"] || resp?.Product || resp?.product ||
-      resp?.["Product"] || resp;
-    if (!productEl) return null;
-
-    // Helper to unwrap XML parsed values that may be objects with "#text"
-    const unwrap = (val: any): string => {
-      if (val == null) return "";
-      if (typeof val === "object") return String(val["#text"] ?? val["__text"] ?? "").trim();
-      return String(val).trim();
-    };
-
-    const name = unwrap(productEl?.productName ?? productEl?.["ns2:productName"]) || productId;
-    const brand = unwrap(productEl?.brandName ?? productEl?.["ns2:brandName"]) || "Atlantic Coast Cotton";
-
-    // Try to get image from ProductPartArray → primaryColor
-    let imageUrl: string | undefined;
-    const partArrayEl =
-      productEl?.["ns2:ProductPartArray"] || productEl?.ProductPartArray;
-    const rawParts =
-      (partArrayEl?.["ns2:ProductPart"] || partArrayEl?.ProductPart) ?? [];
-    const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
-    for (const part of parts) {
-      const primaryImg = String(
-        part?.primaryImage || part?.["ns2:primaryImage"] ||
-        part?.ColorAppearanceArray?.["ns2:ColorAppearance"]?.colorImageUrl ||
-        ""
-      ).trim();
-      if (primaryImg) { imageUrl = primaryImg; break; }
-    }
-
-    const description = (unwrap(productEl?.description ?? productEl?.["ns2:description"] ?? productEl?.productDescription)) || undefined;
-
-    return { name, brand, imageUrl, description };
-  } catch {
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Fetch lowest piece price for a product
-// ---------------------------------------------------------------------------
-async function fetchBasePrice(
-  productId: string,
-  username: string,
-  password: string,
-  parser: XMLParser
-): Promise<number | null> {
-  try {
-    const res = await fetch(ACC_PRICING_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "text/xml; charset=utf-8",
-        "SOAPAction": '"GetConfigurationAndPricing"',
-      },
-      body: buildPricingRequest(productId, username, password),
+</soapenv:Envelope>`,
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
@@ -334,49 +316,58 @@ async function fetchBasePrice(
     const parsed = parser.parse(xml);
     const bodyEl = getEnvelopeBody(parsed);
     if (!bodyEl) return null;
-
     const respKey = Object.keys(bodyEl).find(k =>
       k.toLowerCase().includes("pricingandconfiguration") ||
-      k.toLowerCase().includes("configurationandpricing") ||
-      k.toLowerCase().includes("getconfiguration")
+      k.toLowerCase().includes("configurationandpricing")
     );
     if (!respKey) return null;
-
     const resp = bodyEl[respKey];
-    const configuration =
-      resp?.["ns2:Configuration"] || resp?.Configuration || resp?.configuration;
+    const configuration = resp?.["ns2:Configuration"] || resp?.Configuration || resp?.configuration;
     if (!configuration) return null;
-
-    const partArrayEl =
-      configuration?.["ns2:PartArray"] || configuration?.PartArray || configuration?.partArray;
-    const rawParts =
-      (partArrayEl?.["ns2:Part"] || partArrayEl?.Part || partArrayEl?.part) ??
+    const partArrayEl = configuration?.["ns2:PartArray"] || configuration?.PartArray || configuration?.partArray;
+    const rawParts = (partArrayEl?.["ns2:Part"] || partArrayEl?.Part || partArrayEl?.part) ??
       (configuration?.["ns2:Part"] || configuration?.Part || configuration?.part);
-
     if (!rawParts) return null;
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
-
     let lowestPrice: number | null = null;
     for (const part of parts) {
-      const priceArrayEl =
-        part?.["ns2:PartPriceArray"] || part?.PartPriceArray || part?.partPriceArray;
-      const rawPrices =
-        priceArrayEl?.["ns2:PartPrice"] || priceArrayEl?.PartPrice || priceArrayEl?.partPrice;
+      const priceArrayEl = part?.["ns2:PartPriceArray"] || part?.PartPriceArray || part?.partPriceArray;
+      const rawPrices = priceArrayEl?.["ns2:PartPrice"] || priceArrayEl?.PartPrice || priceArrayEl?.partPrice;
       if (!rawPrices) continue;
       const priceList = Array.isArray(rawPrices) ? rawPrices : [rawPrices];
       for (const p of priceList) {
         const minQty = parseFloat(String(p?.["ns2:minQuantity"] || p?.minQuantity || "99"));
         if (minQty > 1) continue;
         const val = parseFloat(String(p?.["ns2:price"] || p?.price || p?.Price || "0"));
-        if (val > 0 && (lowestPrice === null || val < lowestPrice)) {
-          lowestPrice = val;
-        }
+        if (val > 0 && (lowestPrice === null || val < lowestPrice)) lowestPrice = val;
       }
     }
     return lowestPrice;
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Self-chaining invoke
+// ---------------------------------------------------------------------------
+async function invokeSelf(
+  supabase: ReturnType<typeof createClient>,
+  offset: number,
+  productIds: string[],
+  dateStr: string
+): Promise<void> {
+  const projectId = Deno.env.get("SUPABASE_URL")?.match(/https:\/\/([^.]+)/)?.[1];
+  if (!projectId) return;
+  const url = `https://${projectId}.supabase.co/functions/v1/ingest-acc-catalog`;
+  fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+    },
+    body: JSON.stringify({ offset, productIds, dateStr }),
+  }).catch(e => console.error("[ingest-acc-catalog] Self-chain invoke error:", e.message));
 }
 
 // ---------------------------------------------------------------------------
@@ -411,53 +402,64 @@ Deno.serve(async (req) => {
       trimValues: true,
     });
 
-    console.log("[ingest-acc-catalog] Fetching all product IDs via GetProductDateModified...");
-    const productIds = await fetchAllProductIds(username, password, parser);
+    // Check if this is a continuation (self-chained) call
+    let body: any = {};
+    try { body = await req.json(); } catch { /* empty body on initial trigger */ }
+
+    let productIds: string[] = body.productIds ?? [];
+    let offset: number = body.offset ?? 0;
+    const dateStr: string = body.dateStr ?? new Date().toISOString().split("T")[0];
+    let method = "continuation";
 
     if (productIds.length === 0) {
-      return new Response(
-        JSON.stringify({ message: "No products found from GetProductDateModified", upserted: 0 }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      // Initial call — fetch all IDs
+      console.log("[ingest-acc-catalog] Initial call: fetching all product IDs...");
+      const result = await fetchAllProductIds(username, password, parser);
+      productIds = result.ids;
+      method = result.method;
+      offset = 0;
+
+      if (productIds.length === 0) {
+        return new Response(
+          JSON.stringify({ message: "No products found", upserted: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Archive the ID list
+      await saveArchive(
+        supabase,
+        `acc-${dateStr}-ids.json`,
+        JSON.stringify({ fetchedAt: new Date().toISOString(), method, totalProducts: productIds.length, productIds }, null, 2)
       );
+
+      console.log(`[ingest-acc-catalog] Total: ${productIds.length} IDs via ${method}. Starting at offset 0.`);
     }
 
-    console.log(`[ingest-acc-catalog] Processing ${productIds.length} product IDs...`);
-
-    // Archive the raw product ID list
-    const dateStr = new Date().toISOString().split("T")[0];
-    await saveArchive(
-      supabase,
-      `acc-${dateStr}.json`,
-      JSON.stringify({
-        fetchedAt: new Date().toISOString(),
-        totalProducts: productIds.length,
-        productIds,
-      }, null, 2)
-    );
-
-    // Enrich in small concurrent batches to avoid overwhelming ACC API
-    const CONCURRENCY = 3;
+    const startTime = Date.now();
+    const chunk = productIds.slice(offset, offset + CHUNK_SIZE);
     const records: any[] = [];
     const errors: string[] = [];
 
-    for (let i = 0; i < productIds.length; i += CONCURRENCY) {
-      const chunk = productIds.slice(i, i + CONCURRENCY);
+    console.log(`[ingest-acc-catalog] Processing offset ${offset}-${offset + chunk.length} of ${productIds.length}...`);
+
+    for (let i = 0; i < chunk.length; i += CONCURRENCY) {
+      if (Date.now() - startTime > SAFETY_CUTOFF_MS) {
+        console.log("[ingest-acc-catalog] Safety cutoff hit, will self-chain");
+        break;
+      }
+      const batch = chunk.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
-        chunk.map(async (productId) => {
+        batch.map(async (productId) => {
           const [detailResult, basePriceResult] = await Promise.allSettled([
             fetchProductDetail(productId, username, password, parser),
             fetchBasePrice(productId, username, password, parser),
           ]);
-
           const detail = detailResult.status === "fulfilled" ? detailResult.value : null;
           const basePrice = basePriceResult.status === "fulfilled" ? basePriceResult.value : null;
-
           const brand = detail?.brand || "ATLANTIC COAST COTTON";
           const title = detail?.name || productId;
-
-          // Apply canonical normalization so ACC styles merge with cards from other distributors
           const canonicalStyleNumber = getCanonicalBase(productId, brand);
-
           return {
             distributor: "acc",
             brand,
@@ -470,22 +472,16 @@ Deno.serve(async (req) => {
           };
         })
       );
-
       for (const r of results) {
-        if (r.status === "fulfilled") {
-          records.push(r.value);
-        } else {
-          errors.push(String(r.reason));
-        }
+        if (r.status === "fulfilled") records.push(r.value);
+        else errors.push(String(r.reason));
       }
-
-      // Throttle between batches
-      if (i + CONCURRENCY < productIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 200));
+      if (i + CONCURRENCY < chunk.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
 
-    // Dedup by style_number, filter out garbage
+    // Dedup and upsert
     const seen = new Set<string>();
     const uniqueRecords = records.filter(r => {
       const sn: string = r.style_number ?? "";
@@ -495,29 +491,50 @@ Deno.serve(async (req) => {
       return true;
     });
 
-    console.log(`[ingest-acc-catalog] Upserting ${uniqueRecords.length} unique styles...`);
-
     let upserted = 0;
-    for (let i = 0; i < uniqueRecords.length; i += BATCH_SIZE) {
-      const batch = uniqueRecords.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < uniqueRecords.length; i += DB_BATCH_SIZE) {
+      const batch = uniqueRecords.slice(i, i + DB_BATCH_SIZE);
       const { error, count } = await supabase
         .from("catalog_products")
         .upsert(batch, { onConflict: "distributor,style_number", count: "exact" });
-      if (error) {
-        errors.push(`DB batch ${Math.floor(i / BATCH_SIZE)}: ${error.message}`);
-      } else {
-        upserted += count ?? batch.length;
-      }
+      if (error) errors.push(`DB: ${error.message}`);
+      else upserted += count ?? batch.length;
     }
 
-    console.log(`[ingest-acc-catalog] Done. upserted=${upserted}, errors=${errors.length}`);
+    const newOffset = offset + records.length;
+    const isDone = newOffset >= productIds.length;
+
+    console.log(`[ingest-acc-catalog] Chunk done: processed=${records.length}, upserted=${upserted}, offset=${newOffset}/${productIds.length}, done=${isDone}`);
+
+    // Self-chain if more products remain
+    if (!isDone) {
+      console.log(`[ingest-acc-catalog] Self-chaining for offset ${newOffset}...`);
+      await invokeSelf(supabase, newOffset, productIds, dateStr);
+    } else {
+      // Final run: save enriched archive summary
+      console.log("[ingest-acc-catalog] All products processed! Saving final archive...");
+      await saveArchive(
+        supabase,
+        `acc-${dateStr}.json`,
+        JSON.stringify({
+          fetchedAt: new Date().toISOString(),
+          method,
+          totalProducts: productIds.length,
+          status: "complete",
+        }, null, 2)
+      );
+    }
 
     return new Response(
       JSON.stringify({
-        fetchedProducts: productIds.length,
-        uniqueStyles: uniqueRecords.length,
+        method,
+        offset,
+        chunkProcessed: records.length,
         upserted,
-        errors: errors.slice(0, 20),
+        totalIds: productIds.length,
+        newOffset,
+        isDone,
+        errors: errors.slice(0, 10),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
