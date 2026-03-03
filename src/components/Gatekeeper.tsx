@@ -62,8 +62,9 @@ export const Gatekeeper = ({ onSuccess }: GatekeeperProps) => {
         {/* Logo / Brand */}
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center gap-3">
+            <img src={aktLogo} alt="AKT" className="h-12 w-auto" />
             <h1 className="text-3xl font-bold tracking-tight">
-              AKT Garment Inventory
+              Garment Inventory
             </h1>
           </div>
           <div className="flex items-center justify-center gap-2">
