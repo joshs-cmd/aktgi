@@ -580,6 +580,7 @@ Deno.serve(async (req) => {
           const csv = recordsToCsv(allRowsPaginated);
           await saveArchive(supabase, `acc/csv/acc-${dateStr}.csv`, csv, "text/csv");
           console.log(`[ingest-acc-catalog] CSV saved: acc/csv/acc-${dateStr}.csv (${allRowsPaginated.length} rows)`);
+        }
       }
 
       // Save final JSON summary
