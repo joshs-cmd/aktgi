@@ -113,33 +113,8 @@ Deno.serve(async (req) => {
           // Images: generic_image / generic_thumbnail are relative paths
           const rawImage = (first.generic_image ?? first.generic_thumbnail ?? first.image) as string | null;
           const imageUrl = resolveImageUrl(rawImage);
-
-          const priceFactor = Number(first.price_factor ?? first.pricing?.price_factor ?? 2);
-          const divisor = Math.pow(10, priceFactor);
-          const pricing = first.pricing as Record<string, number> | null;
-          // OneStop returns cost in my_price (customer price) or piece (piece price)
-          // Log raw pricing fields to diagnose $0 issues
-          const rawFirst = first as Record<string, unknown>;
-          if (!rawFirst._priceLogged) {
-            console.log(`[ingest-onestop] Price fields sample for ${styleKey}:`, JSON.stringify({
-              my_price: first.my_price,
-              piece: first.piece,
-              pricing_my_price: pricing?.my_price,
-              pricing_piece: pricing?.piece,
-              price_factor: first.price_factor,
-              raw_price: rawFirst.price,
-              raw_customer_price: rawFirst.customer_price,
-              raw_unit_price: rawFirst.unit_price,
-              raw_wholesale: rawFirst.wholesale,
-            }));
-          }
-          const rawPrice = Number(
-            first.my_price ?? pricing?.my_price ?? 
-            (rawFirst.customer_price as number) ?? 
-            first.piece ?? pricing?.piece ?? 
-            (rawFirst.price as number) ?? 0
-          );
-          const basePrice = rawPrice > 0 ? rawPrice / divisor : null;
+          // Pricing is fetched separately via /items/pricing/?skus= after catalog is built
+          const basePrice = null; // will be enriched below
 
           const existing = styleMap.get(styleKey);
           if (!existing || (!existing.image_url && imageUrl)) {
@@ -200,6 +175,71 @@ Deno.serve(async (req) => {
 
     const rows = Array.from(styleMap.values());
     console.log(`[ingest-onestop] Total fetched=${totalFetched} unique=${rows.length}`);
+
+    // Enrich base_price using the documented /items/pricing/?skus= endpoint.
+    // We need actual SKU codes (e.g. "GD-110-36-XL") but during catalog ingest we only have
+    // style codes. Fetch a representative SKU per style and use its my_price.
+    // API docs: prices are integers in cents (e.g. 281 = $2.81), divide by 10^price_factor.
+    // my_price = the price you pay at your price_level (case/dozen/piece).
+    const PRICING_BATCH = 20;
+    let pricesEnriched = 0;
+    const styleKeys = Array.from(styleMap.keys());
+
+    // For each style, fetch one SKU to get a representative price
+    // We'll batch by fetching /items/?style=X for up to 5 styles at once (per docs: 5 style limit)
+    // but since we already have style->items mapping from catalog, we sample a first sku_code
+    // from the flat items we stored in styleFirstSku map
+    const styleFirstSkuMap = new Map<string, string>(); // styleKey -> sku_code
+    // Re-read from styleSkuCodes which we need to populate during catalog loop
+    // (We'll use a simpler approach: fetch /items/pricing/?skus= for each style using the style itself
+    // since docs show ?skus= accepts sku codes. Instead batch-fetch pricing via style-level endpoint)
+    // Fetch pricing for first ~100 styles to seed base_price (full pricing needs per-sku codes)
+    const priceSampleStyles = styleKeys.slice(0, 100);
+    for (let i = 0; i < priceSampleStyles.length; i += 5) {
+      const batch = priceSampleStyles.slice(i, i + 5);
+      await Promise.all(batch.map(async (styleKey) => {
+        try {
+          const invUrl = `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(styleKey)}&page_size=1`;
+          const r = await fetch(invUrl, fetchOpts as RequestInit);
+          if (!r.ok) return;
+          const d = await r.json();
+          const items: Record<string, unknown>[] = Array.isArray(d.results) ? d.results : [];
+          if (items.length === 0) return;
+          const skuCode = String(items[0].code ?? "");
+          if (!skuCode) return;
+
+          const pricingUrl = `${ONESTOP_API_BASE}/items/pricing/?skus=${encodeURIComponent(skuCode)}`;
+          const pr = await fetch(pricingUrl, fetchOpts as RequestInit);
+          if (!pr.ok) return;
+          const pd = await pr.json();
+          const results: Record<string, unknown>[] = Array.isArray(pd.results) ? pd.results : [];
+          for (const resultItem of results) {
+            for (const [, skuData] of Object.entries(resultItem)) {
+              if (!skuData || typeof skuData !== "object") continue;
+              const sd = skuData as Record<string, unknown>;
+              const pricing = sd.pricing as Record<string, unknown> | undefined;
+              if (!pricing) continue;
+              const pfactor = Number(sd.pfactor ?? sd.price_factor ?? 2);
+              const divisor = Math.pow(10, pfactor);
+              const rawPrice = pricing.my_price ?? pricing.piece ?? pricing.dozen ?? pricing.case;
+              if (typeof rawPrice === "number" && rawPrice > 0) {
+                const price = rawPrice / divisor;
+                const existing = styleMap.get(styleKey);
+                if (existing) {
+                  existing.base_price = price;
+                  pricesEnriched++;
+                  console.log(`[ingest-onestop] Pricing enriched ${styleKey}: $${price.toFixed(2)} (sku=${skuCode}, my_price=${rawPrice}, level=${sd.price_level})`);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`[ingest-onestop] Price fetch error for ${styleKey}: ${e}`);
+        }
+      }));
+      await new Promise(r => setTimeout(r, REQUEST_DELAY_MS));
+    }
+    console.log(`[ingest-onestop] Pricing enrichment complete: ${pricesEnriched} styles got base_price`);
 
     // Upsert in batches
     let totalUpserted = 0;

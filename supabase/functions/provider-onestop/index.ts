@@ -208,8 +208,14 @@ function extractPrice(item: OneStopItem): number {
 
 /**
  * Aggregate flat OneStop items into a color-grouped StandardProduct.
+ * Prices are injected from skuPriceMap (keyed by OneStop SKU code e.g. "GD-110-36-XL")
+ * which is populated by the documented /items/pricing/?skus= endpoint.
+ * my_price = price you pay (integer cents / 100).
  */
-function aggregateItems(items: OneStopItem[]): StandardProduct | null {
+function aggregateItemsWithPricing(
+  items: OneStopItem[],
+  skuPriceMap: Map<string, number>
+): StandardProduct | null {
   if (!items || items.length === 0) return null;
 
   const first = items[0];
@@ -221,31 +227,6 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
     imageUrl: string | null;
     sizesMap: Map<string, { code: string; order: number; quantity: number; price: number }>;
   }>();
-
-  // Log first item FULLY for raw diagnostics (all fields)
-  if (items.length > 0) {
-    console.log(`[OneStop FULL Raw Item #0]:`, JSON.stringify(items[0]));
-  }
-  // Log abbreviated for items 1-2
-  for (let i = 1; i < Math.min(items.length, 3); i++) {
-    const di = items[i];
-    const raw = di as Record<string, unknown>;
-    console.log(`[OneStop Raw Item Diagnostics #${i}]:`, JSON.stringify({
-      style: di.style_code,
-      color: di.color_name,
-      size: di.size_code,
-      my_price: di.my_price,
-      price: raw.price,
-      piece: di.piece,
-      dozen: di.dozen,
-      customer_price: raw.customer_price,
-      unit_price: raw.unit_price,
-      wholesale: raw.wholesale,
-      cost: raw.cost,
-      pricing: di.pricing,
-      price_factor: di.price_factor,
-    }));
-  }
 
   for (const item of items) {
     if (item.active_flag && item.active_flag !== "Y") continue;
@@ -279,10 +260,12 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
     const sizeEntry = colorEntry.sizesMap.get(normalizedSizeCode)!;
     sizeEntry.quantity += item.on_hand || 0;
 
-    // Use the best available price (non-zero wins)
-    const itemPrice = extractPrice(item);
-    if (itemPrice > 0 && sizeEntry.price === 0) {
-      sizeEntry.price = itemPrice;
+    // Look up price by OneStop SKU code (e.g. "GD-110-36-XL") from the pricing endpoint
+    if (sizeEntry.price === 0 && item.code) {
+      const skuPrice = skuPriceMap.get(item.code);
+      if (skuPrice && skuPrice > 0) {
+        sizeEntry.price = skuPrice;
+      }
     }
   }
 
@@ -323,6 +306,68 @@ function aggregateItems(items: OneStopItem[]): StandardProduct | null {
   };
 }
 
+/**
+ * Fetch pricing for a batch of SKU codes using the documented /items/pricing/?skus= endpoint.
+ * Prices are integers in cents (e.g. 281 = $2.81). Divide by 10^price_factor.
+ * my_price reflects the price you actually pay at your price_level (case/dozen/piece).
+ * Batch limit: 20 SKUs per request per API docs.
+ */
+async function fetchPricingBySku(
+  skuCodes: string[],
+  fetchOpts: RequestInit
+): Promise<Map<string, number>> {
+  const priceMap = new Map<string, number>();
+  const BATCH_SIZE = 20;
+
+  for (let i = 0; i < skuCodes.length; i += BATCH_SIZE) {
+    const batch = skuCodes.slice(i, i + BATCH_SIZE);
+    const url = `${ONESTOP_API_BASE}/items/pricing/?skus=${encodeURIComponent(batch.join(","))}`;
+    console.log(`[provider-onestop] Fetching pricing batch [${i}..${i + batch.length}]: ${url}`);
+
+    try {
+      const res = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(12_000) });
+      if (!res.ok) {
+        console.warn(`[provider-onestop] Pricing batch HTTP ${res.status} for skus: ${batch.join(",")}`);
+        continue;
+      }
+
+      const data = await res.json();
+      // Response format: { results: [ { "GD-110-36-XL": { pricing: { my_price, piece, dozen, case }, price_level, ... } } ] }
+      const results: Record<string, unknown>[] = Array.isArray(data.results) ? data.results : [];
+
+      console.log(`[provider-onestop] Pricing batch raw sample: ${JSON.stringify(data).substring(0, 600)}`);
+
+      for (const resultItem of results) {
+        // Each result item is a dict keyed by sku_code
+        for (const [skuKey, skuData] of Object.entries(resultItem)) {
+          if (!skuData || typeof skuData !== "object") continue;
+          const d = skuData as Record<string, unknown>;
+          const pricing = d.pricing as Record<string, unknown> | undefined;
+
+          if (!pricing) continue;
+
+          // Determine price factor: divide by 10^price_factor (default 2 = cents)
+          const pfactor = Number(d.pfactor ?? d.price_factor ?? 2);
+          const divisor = Math.pow(10, pfactor);
+
+          // my_price = the price you pay, as an integer in cents
+          const myPriceRaw = pricing.my_price ?? pricing.piece ?? pricing.dozen ?? pricing.case;
+          if (typeof myPriceRaw === "number" && myPriceRaw > 0) {
+            const price = myPriceRaw / divisor;
+            priceMap.set(skuKey, price);
+            console.log(`[provider-onestop] SKU ${skuKey}: my_price=${myPriceRaw} / ${divisor} = $${price.toFixed(2)} (level: ${d.price_level})`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`[provider-onestop] Pricing batch error: ${e}`);
+    }
+  }
+
+  console.log(`[provider-onestop] fetchPricingBySku: resolved ${priceMap.size} prices for ${skuCodes.length} SKUs`);
+  return priceMap;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -357,7 +402,7 @@ serve(async (req) => {
       signal: AbortSignal.timeout(10_000),
     };
 
-    // Step 1: Search catalog
+    // Step 1: Search catalog with flat=Y to find the OneStop style code
     const searchUrl = `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
     console.log(`[provider-onestop] Catalog search: ${searchUrl}`);
 
@@ -372,7 +417,6 @@ serve(async (req) => {
     }
 
     const catalogData = await catalogRes.json();
-
     const styleEntries = catalogData.results && typeof catalogData.results === "object" && !Array.isArray(catalogData.results)
       ? Object.entries(catalogData.results) as [string, Record<string, unknown>][]
       : [];
@@ -386,7 +430,7 @@ serve(async (req) => {
       );
     }
 
-    // Find best matching style
+    // Find best matching style (exact mill_style_code or style_code match first)
     const queryUpper = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
     let bestEntry = styleEntries[0];
     for (const entry of styleEntries) {
@@ -403,7 +447,7 @@ serve(async (req) => {
     const bestInfo = bestInfoRaw as Record<string, unknown>;
     console.log(`[provider-onestop] Best match: ${bestStyleCode} (${bestInfo.web_name})`);
 
-    // Step 2: Fetch item-level inventory
+    // Step 2: Fetch all item-level SKUs for this style (inventory + sku codes)
     const inventoryUrl = `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(bestStyleCode)}`;
     console.log(`[provider-onestop] Fetching inventory: ${inventoryUrl}`);
 
@@ -425,78 +469,14 @@ serve(async (req) => {
       );
     }
 
-    // Step 2b: Probe ALL known OneStop pricing endpoints simultaneously
-    const pricingEndpoints = [
-      `${ONESTOP_API_BASE}/pricing/?style=${encodeURIComponent(bestStyleCode)}`,
-      `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(bestStyleCode)}&pricing=Y`,
-      `${ONESTOP_API_BASE}/contract-pricing/?style=${encodeURIComponent(bestStyleCode)}`,
-      `${ONESTOP_API_BASE}/prices/?style=${encodeURIComponent(bestStyleCode)}`,
-      `${ONESTOP_API_BASE}/v2/pricing/?style=${encodeURIComponent(bestStyleCode)}`,
-    ];
-
-    const probeAndLog = async (url: string): Promise<Record<string, unknown> | null> => {
-      try {
-        const r = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(8_000) });
-        const status = r.status;
-        if (!r.ok) {
-          console.log(`[provider-onestop] PRICING PROBE ${url} → HTTP ${status} (skip)`);
-          return null;
-        }
-        const data = await r.json();
-        const sample = JSON.stringify(data).substring(0, 800);
-        console.log(`[provider-onestop] PRICING PROBE ${url} → HTTP ${status} SAMPLE: ${sample}`);
-        return data;
-      } catch (e) {
-        console.log(`[provider-onestop] PRICING PROBE ${url} → ERROR: ${e}`);
-        return null;
-      }
-    };
-
-    const [invData, ...pricingResults] = await Promise.allSettled([
-      invRes.json(),
-      ...pricingEndpoints.map(url => probeAndLog(url)),
-    ]);
-
-    const pricingResA = pricingResults[0];
-    const pricingResB = pricingResults[1];
-
-    const rawInvData = invData.status === "fulfilled" ? invData.value : {};
+    const rawInvData = await invRes.json();
     const items: OneStopItem[] = Array.isArray(rawInvData.results) ? rawInvData.results : [];
     console.log(`[provider-onestop] Got ${items.length} inventory items for ${bestStyleCode}`);
 
-    // Build a price map from ALL probed pricing endpoints
-    const priceMap = new Map<string, number>(); // key: colorCode-sizeCode → price
-
-    const extractPricingItems = (data: unknown): Record<string, unknown>[] => {
-      if (!data || typeof data !== "object") return [];
-      const d = data as Record<string, unknown>;
-      if (Array.isArray(d.results)) return d.results as Record<string, unknown>[];
-      if (Array.isArray(d.items)) return d.items as Record<string, unknown>[];
-      if (Array.isArray(d)) return d as Record<string, unknown>[];
-      // OneStop sometimes returns {styleCode: [items]} dict
-      const vals = Object.values(d);
-      if (vals.length > 0 && Array.isArray(vals[0])) return vals.flat() as Record<string, unknown>[];
-      return [];
-    };
-
-    for (let i = 0; i < pricingResults.length; i++) {
-      const res = pricingResults[i];
-      if (res.status !== "fulfilled" || !res.value) continue;
-      const pricingItems = extractPricingItems(res.value);
-      let added = 0;
-      for (const pi of pricingItems) {
-        const raw = pi as Record<string, unknown>;
-        const cc = String(raw.color_code ?? "");
-        const sc = String(raw.size_code ?? "");
-        const price = extractPrice(pi as OneStopItem);
-        if (price > 0) { priceMap.set(`${cc}-${sc}`, price); added++; }
-      }
-      if (added > 0) {
-        console.log(`[provider-onestop] Pricing probe[${i}] (${pricingEndpoints[i]}) → ${added} prices added, priceMap now ${priceMap.size}`);
-        break; // stop after first endpoint that returns prices
-      }
+    // Log the first raw item for diagnostics
+    if (items.length > 0) {
+      console.log(`[provider-onestop] FULL Raw Item #0: ${JSON.stringify(items[0])}`);
     }
-    console.log(`[provider-onestop] Final priceMap size: ${priceMap.size}`);
 
     if (items.length === 0) {
       return new Response(
@@ -505,20 +485,18 @@ serve(async (req) => {
       );
     }
 
-    const product = aggregateItems(items);
-    
-    // Inject prices from pricing endpoint into aggregated product
-    if (priceMap.size > 0 && product) {
-      for (const color of product.colors) {
-        for (const size of color.sizes) {
-          const key = `${color.code}-${size.code}`;
-          const mappedPrice = priceMap.get(key);
-          if (mappedPrice && mappedPrice > 0 && size.price === 0) {
-            size.price = mappedPrice;
-          }
-        }
-      }
-    }
+    // Step 3: Collect all OneStop SKU codes (the `code` field = "GD-110-36-XL" format)
+    // then fetch pricing in batches using the documented /items/pricing/?skus= endpoint
+    const skuCodes: string[] = items
+      .filter(item => item.code && item.active_flag !== "N")
+      .map(item => item.code!)
+      .filter((v, i, a) => a.indexOf(v) === i); // deduplicate
+
+    console.log(`[provider-onestop] Fetching pricing for ${skuCodes.length} unique SKUs`);
+    const skuPriceMap = await fetchPricingBySku(skuCodes, fetchOpts);
+
+    // Step 4: Aggregate items into product, injecting prices from skuPriceMap by SKU code
+    const product = aggregateItemsWithPricing(items, skuPriceMap);
 
     if (!product) {
       return new Response(
@@ -550,3 +528,4 @@ serve(async (req) => {
     );
   }
 });
+
