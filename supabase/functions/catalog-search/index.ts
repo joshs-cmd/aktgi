@@ -33,236 +33,59 @@ interface CatalogSearchResponse {
   searchedAt: string;
 }
 
-// ---------- Normalization helpers ----------
+// ---------- Helpers ----------
 
-// Canonical brand aliases → normalised name
-const BRAND_ALIASES: [RegExp, string][] = [
-  [/bella\s*[\+&]\s*canvas|bellacanvas/i,         "BELLA+CANVAS"],
-  [/next\s*level(\s*apparel)?/i,                   "NEXT LEVEL"],
-  [/sport[\s\-]?tek/i,                             "SPORT-TEK"],
-  [/port\s*&?\s*company/i,                         "PORT & COMPANY"],
-  [/comfort\s*colors?/i,                           "COMFORT COLORS"],
-  [/gildan/i,                                      "GILDAN"],
-  [/hanes/i,                                       "HANES"],
-  [/jerzees/i,                                     "JERZEES"],
-  [/independent\s*trading(\s*co\.?)?/i,            "INDEPENDENT TRADING"],
-  [/alternative(\s*apparel)?/i,                    "ALTERNATIVE"],
-  [/a4/i,                                          "A4"],
-  [/district(\s*made)?/i,                          "DISTRICT"],
-  [/new\s*era/i,                                   "NEW ERA"],
-  [/augusta\s*sportswear/i,                        "AUGUSTA SPORTSWEAR"],
-];
-
-// Ordered longest-first so "BST" is tried before bare "B" etc.
-const BRAND_PREFIX_MAP: Record<string, string[]> = {
-  "BELLA+CANVAS":        ["BC"],
-  "NEXT LEVEL":          ["NL"],
-  "A4":                  ["A4"],
-  "GILDAN":              ["GH400", "GH000", "G"],
-  "SPORT-TEK":           ["BST", "ST"],
-  "PORT & COMPANY":      ["PC"],
-  "COMFORT COLORS":      ["CC"],
-  "DISTRICT":            ["DT"],
-  "JERZEES":             ["J"],
-  "HANES":               ["H"],
-  "NEW ERA":             ["NE"],
-  "INDEPENDENT TRADING": ["IND"],
-  "ALTERNATIVE":         ["AA"],
-  "ECONSCIOUS":          ["EC"],
+const DIST_LABELS: Record<string, string> = {
+  sanmar: "SanMar",
+  "ss-activewear": "S&S Activewear",
+  onestop: "OneStop",
 };
 
 /**
- * Slugify a brand string for fuzzy comparison.
- * Strips all punctuation/spaces so "Bella + Canvas", "Bella+Canvas",
- * "BELLA+CANVAS", "Bella & Canvas" all collapse to "BELLACANVAS".
- */
-function brandSlug(brand: string): string {
-  return brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-// Pre-computed slug map: slug → canonical brand name
-const BRAND_SLUG_MAP: Map<string, string> = (() => {
-  const m = new Map<string, string>();
-  for (const [pattern, canonical] of BRAND_ALIASES) {
-    // Derive a slug from each alias pattern's source string (strip regex meta chars)
-    m.set(brandSlug(canonical), canonical);
-  }
-  return m;
-})();
-
-function normalizeBrandName(brand: string): string {
-  const s = brand.trim();
-  // First try exact regex match (most precise)
-  for (const [pattern, canonical] of BRAND_ALIASES) {
-    if (pattern.test(s)) return canonical;
-  }
-  // Fallback: slug-based lookup handles punctuation/spacing variants
-  const slug = brandSlug(s);
-  const fromSlug = BRAND_SLUG_MAP.get(slug);
-  if (fromSlug) return fromSlug;
-  return s.toUpperCase();
-}
-
-/**
- * ALL known prefixes ordered longest-first for prefix-agnostic stripping.
- * Used when we want to normalise a bare style number whose brand is unknown
- * or ambiguous (e.g. S&S "3001" for Bella+Canvas, SanMar "BC3001").
- */
-const ALL_PREFIXES_LONGEST_FIRST: string[] = Object.values(BRAND_PREFIX_MAP)
-  .flat()
-  .sort((a, b) => b.length - a.length);
-
-/**
- * Strips the brand-specific distributor prefix from a style number.
- * Returns the bare numeric+suffix portion (e.g. "BC3001" → "3001",
- * "G5000L" → "5000L"). Suffixes like L/Y/B/T are intentionally preserved.
- *
- * When brand is provided, only that brand's prefixes are tried (precise).
- * When brand is omitted or unknown, ALL known prefixes are tried (broad).
+ * Strip known brand prefixes to get canonical base for display.
+ * Must mirror the SQL function's logic exactly.
  */
 function getCanonicalBase(styleNumber: string, brand: string): string {
-  const normalBrand = normalizeBrandName(brand);
   const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const slug = brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-  // Try brand-specific prefixes first (most accurate)
-  const brandPrefixes = BRAND_PREFIX_MAP[normalBrand] ?? [];
-  for (const prefix of brandPrefixes) {
-    if (sn.startsWith(prefix) && sn.length > prefix.length) {
-      const rest = sn.slice(prefix.length);
-      if (/^\d/.test(rest)) return rest;
-    }
-  }
+  // Brand-specific prefix stripping
+  if (slug === "BELLACANVAS" && /^BC\d/.test(sn)) return sn.slice(2);
+  if ((slug === "NEXTLEVEL" || slug === "NEXTLEVELAPPAREL") && /^NL\d/.test(sn)) return sn.slice(2);
+  if (slug === "SPORTTEK" && /^BST\d/.test(sn)) return sn.slice(3);
+  if (slug === "SPORTTEK" && /^ST\d/.test(sn)) return sn.slice(2);
+  if (slug === "A4" && /^A4[A-Z0-9]/.test(sn)) return sn.slice(2);
+  if (slug === "GILDAN" && /^GH\d/.test(sn)) return sn.slice(2);
+  if (slug === "GILDAN" && /^G\d/.test(sn)) return sn.slice(1);
+  if ((slug === "PORTCOMPANY" || slug === "PORTANDCOMPANY") && /^PC\d/.test(sn)) return sn.slice(2);
+  if (slug === "COMFORTCOLORS" && /^CC\d/.test(sn)) return sn.slice(2);
+  if ((slug === "DISTRICT" || slug === "DISTRICTMADE") && /^DT\d/.test(sn)) return sn.slice(2);
+  if (slug === "JERZEES" && /^J\d/.test(sn)) return sn.slice(1);
+  if (slug === "HANES" && /^H\d/.test(sn)) return sn.slice(1);
+  if (slug === "NEWERA" && /^NE\d/.test(sn)) return sn.slice(2);
+  if ((slug === "INDEPENDENTTRADING" || slug === "INDEPENDENTTRADINGCO") && /^IND\d/.test(sn)) return sn.slice(3);
+  if ((slug === "ALTERNATIVE" || slug === "ALTERNATIVEAPPAREL") && /^AA\d/.test(sn)) return sn.slice(2);
+  if (slug === "ECONSCIOUS" && /^EC\d/.test(sn)) return sn.slice(2);
 
-  // If no brand-specific prefix matched, try all known prefixes.
-  // This handles cases where S&S/OneStop store a bare "3001" but SanMar stores
-  // "BC3001" — both must resolve to the same canonical base "3001".
-  for (const prefix of ALL_PREFIXES_LONGEST_FIRST) {
-    if (sn.startsWith(prefix) && sn.length > prefix.length) {
-      const rest = sn.slice(prefix.length);
-      if (/^\d/.test(rest)) return rest;
-    }
-  }
+  // Broad fallback for unknown brand context
+  if (/^BC\d/.test(sn)) return sn.slice(2);
+  if (/^NL\d/.test(sn)) return sn.slice(2);
+  if (/^BST\d/.test(sn)) return sn.slice(3);
+  if (/^ST\d/.test(sn)) return sn.slice(2);
+  if (/^A4[A-Z0-9]/.test(sn)) return sn.slice(2);
+  if (/^GH\d/.test(sn)) return sn.slice(2);
+  if (/^PC\d/.test(sn)) return sn.slice(2);
+  if (/^CC\d/.test(sn)) return sn.slice(2);
+  if (/^DT\d/.test(sn)) return sn.slice(2);
+  if (/^NE\d/.test(sn)) return sn.slice(2);
+  if (/^IND\d/.test(sn)) return sn.slice(3);
+  if (/^AA\d/.test(sn)) return sn.slice(2);
+  if (/^EC\d/.test(sn)) return sn.slice(2);
+  if (/^G\d/.test(sn)) return sn.slice(1);
+  if (/^J\d/.test(sn)) return sn.slice(1);
+  if (/^H\d/.test(sn)) return sn.slice(1);
 
   return sn;
-}
-
-/**
- * Dedup key uses a SLUG of the brand (strips all punctuation/spaces) to
- * prevent "Bella + Canvas" vs "Bella+Canvas" from producing different keys.
- * Format: "<BRAND_SLUG>::<CANONICAL_BASE>"
- */
-function getCanonicalKey(styleNumber: string, brand: string): string {
-  const normalBrand = normalizeBrandName(brand);
-  const base = getCanonicalBase(styleNumber, brand);
-  // Use slug for key so punctuation variants don't split groups
-  return `${brandSlug(normalBrand)}::${base}`;
-}
-
-// Keep a simple alias for legacy callers inside this file
-const normalizeSKU = (sn: string) => sn.toUpperCase().replace(/[^A-Z0-9]/g, "");
-
-// ---------- Build prefix tsquery string ----------
-// Converts "gildan 5000" → "gildan:* & 5000:*" for partial matching
-
-function buildPrefixTsquery(query: string): string {
-  return query
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => `${word}:*`)
-    .join(" & ");
-}
-
-// ---------- DB row type ----------
-
-interface DbRow {
-  id: string;
-  distributor: string;
-  brand: string;
-  style_number: string;
-  title: string;
-  description: string | null;
-  image_url: string | null;
-  base_price: number | null;
-  rank?: number;
-}
-
-// ---------- Deduplication (canonical-brand cross-distributor merge) ----------
-
-const DIST_PRIORITY: Record<string, number> = { sanmar: 3, "ss-activewear": 2, onestop: 1 };
-
-function deduplicateRows(rows: DbRow[]): CatalogProduct[] {
-  // Group rows by canonical brand + canonical base style.
-  // This collapses e.g. SanMar "BC3001" and S&S "3001" into one card.
-  const groups = new Map<string, { rows: DbRow[]; bestRank: number }>();
-
-  for (const row of rows) {
-    const groupKey = getCanonicalKey(row.style_number, row.brand);
-    const rank = row.rank ?? 0;
-    const existing = groups.get(groupKey);
-    if (existing) {
-      existing.rows.push(row);
-      if (rank > existing.bestRank) existing.bestRank = rank;
-    } else {
-      groups.set(groupKey, { rows: [row], bestRank: rank });
-    }
-  }
-
-  const products: CatalogProduct[] = [];
-
-  for (const [, group] of groups) {
-    // Primary row: pick the most "complete" row.
-    // Scoring: distributor priority (sanmar=3 > ss=2 > onestop=1) +
-    //          bonus for having an image (+2) and a non-empty description (+1).
-    // This ensures the deduped card always shows the best metadata.
-    const primary = group.rows.reduce((best, r) => {
-      const score = (DIST_PRIORITY[r.distributor] ?? 0)
-        + (r.image_url ? 2 : 0)
-        + (r.description && r.description.trim().length > 0 ? 1 : 0);
-      const bestScore = (DIST_PRIORITY[best.distributor] ?? 0)
-        + (best.image_url ? 2 : 0)
-        + (best.description && best.description.trim().length > 0 ? 1 : 0);
-      return score > bestScore ? r : best;
-    }, group.rows[0]);
-
-    // Build per-distributor SKU map with each distributor's own style number
-    const distributorSkuMap: Record<string, string> = {};
-    const distributorSources: string[] = [];
-    for (const r of group.rows) {
-      if (!distributorSkuMap[r.distributor]) {
-        distributorSkuMap[r.distributor] = r.style_number;
-        distributorSources.push(
-          r.distributor === "sanmar"       ? "SanMar"
-          : r.distributor === "ss-activewear" ? "S&S Activewear"
-          : r.distributor
-        );
-      }
-    }
-
-    const canonicalBase = getCanonicalBase(primary.style_number, primary.brand);
-
-    products.push({
-      styleNumber: primary.style_number,
-      normalizedSKU: canonicalBase,
-      name: primary.title,
-      brand: primary.brand,
-      category: "",
-      imageUrl: primary.image_url ?? group.rows.find((r) => r.image_url)?.image_url ?? undefined,
-      colorCount: 1,
-      totalInventory: 0,
-      isProgramItem: false,
-      distributorCode: primary.distributor,
-      distributorName: distributorSources.join(", "),
-      distributorSources,
-      distributorSkuMap,
-      score: group.bestRank,
-      basePrice: primary.base_price ?? group.rows.find((r) => r.base_price != null)?.base_price ?? null,
-    });
-  }
-
-  // Sort by ts_rank score descending
-  products.sort((a, b) => b.score - a.score);
-  return products;
 }
 
 // ---------- Main handler ----------
@@ -283,75 +106,108 @@ serve(async (req) => {
     }
 
     const q = query.trim();
-    const prefixTsquery = buildPrefixTsquery(q);
-
-    console.log(`[catalog-search] query="${q}" tsquery="${prefixTsquery}"`);
+    console.log(`[catalog-search] query="${q}"`);
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // ---------- Stage 1: Full-Text Search with prefix matching ----------
-    // Uses search_vector (GIN index) + ts_rank for relevance sorting.
-    // The RPC call passes the tsquery string; we use a DB function to do the ranked query.
-    // Since we can't run raw SQL via the JS client, we use .rpc() with a helper, OR
-    // we use the PostgREST filter with textSearch and then sort manually.
-    // PostgREST supports: .textSearch('search_vector', prefixTsquery, { type: 'plain', config: 'simple' })
-    // but prefix queries need to_tsquery not plainto_tsquery. We'll use the filter approach.
+    // ---- Use the SQL-level deduped search (handles prefix stripping + grouping) ----
+    const { data: dedupedRows, error: rpcError } = await supabase.rpc(
+      "catalog_search_deduped",
+      { query_text: q }
+    );
 
-    const ftsResult = await supabase.rpc("catalog_search_fts", { query_text: q });
+    if (rpcError) throw new Error(`DB error (deduped): ${rpcError.message}`);
 
-    if (ftsResult.error) throw new Error(`DB error (fts): ${ftsResult.error.message}`);
+    let rows = dedupedRows ?? [];
+    console.log(`[catalog-search] Deduped RPC returned ${rows.length} rows for "${q}"`);
 
-    let allRows: DbRow[] = (ftsResult.data ?? []).map((r: any) => ({ ...r, rank: r.rank })) as DbRow[];
-    console.log(`[catalog-search] FTS returned ${allRows.length} rows for "${q}"`);
-
-    // ---------- Stage 2: ILIKE fallback on style_number (btree index) ----------
-    // Triggered when FTS returns fewer than 5 results (covers unusual alphanumeric codes).
-    if (allRows.length < 5) {
-      const stylePattern = `%${q}%`;
+    // ---- ILIKE fallback when FTS returns < 5 results ----
+    if (rows.length < 5) {
       const fallbackResult = await supabase
         .from("catalog_products")
         .select("id, distributor, brand, style_number, title, description, image_url, base_price")
-        .ilike("style_number", stylePattern)
+        .ilike("style_number", `%${q}%`)
         .limit(200);
 
-      if (fallbackResult.error) throw new Error(`DB error (fallback): ${fallbackResult.error.message}`);
-
-      // Merge fallback rows, avoiding duplicates
-      const seenIds = new Set(allRows.map((r) => r.id));
-      for (const row of (fallbackResult.data ?? [])) {
-        if (!seenIds.has(row.id)) {
-          seenIds.add(row.id);
-          allRows.push(row as DbRow);
+      if (!fallbackResult.error && fallbackResult.data) {
+        // Dedup fallback rows against already-returned IDs
+        const seenIds = new Set(rows.map((r: any) => r.id));
+        const extras = fallbackResult.data.filter((r: any) => !seenIds.has(r.id));
+        if (extras.length > 0) {
+          // These aren't SQL-deduped, so we'll client-side dedup below
+          rows = [...rows, ...extras.map((r: any) => ({ ...r, rank: 0.1, all_distributors: null }))];
+          console.log(`[catalog-search] After ILIKE fallback: ${rows.length} total rows`);
         }
       }
-      console.log(`[catalog-search] After ILIKE fallback: ${allRows.length} rows`);
     }
 
-    // ---------- Stage 3: Client-side ts_rank approximation ----------
-    // Since PostgREST can't return ts_rank directly, we approximate relevance:
-    // Weight A (style_number exact) = 4, starts-with = 3, contains = 2; brand/title = 1.
-    const qUpper = q.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    // ---- Build product cards ----
+    // Rows from catalog_search_deduped already have all_distributors JSONB.
+    // Fallback rows (all_distributors=null) need client-side grouping.
+    
+    // First pass: collect already-deduped rows by their canonical key
+    const productMap = new Map<string, CatalogProduct>();
 
-    for (const row of allRows) {
-      const sn = row.style_number.toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const snCanonical = getCanonicalBase(row.style_number, row.brand);
-      const brand = row.brand.toUpperCase();
-      const title = row.title.toUpperCase();
+    for (const row of rows) {
+      const canonicalBase = getCanonicalBase(row.style_number, row.brand);
+      const brandSlug = row.brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const groupKey = `${brandSlug}::${canonicalBase}`;
 
-      let rank = 0;
-      if (sn === qUpper || snCanonical === qUpper) rank = 4;
-      else if (sn.startsWith(qUpper) || snCanonical.startsWith(qUpper)) rank = 3;
-      else if (sn.includes(qUpper) || snCanonical.includes(qUpper)) rank = 2;
-      else if (brand.includes(q.toUpperCase()) || title.includes(q.toUpperCase())) rank = 1;
-      else rank = 0.5; // matched via FTS token (e.g. partial word in title)
+      if (productMap.has(groupKey)) {
+        // Merge distributor info into existing card
+        const existing = productMap.get(groupKey)!;
+        if (!existing.distributorSkuMap[row.distributor]) {
+          existing.distributorSkuMap[row.distributor] = row.style_number;
+          existing.distributorSources.push(DIST_LABELS[row.distributor] ?? row.distributor);
+          existing.distributorName = existing.distributorSources.join(", ");
+        }
+        if (!existing.imageUrl && row.image_url) existing.imageUrl = row.image_url;
+        if (existing.score < (row.rank ?? 0)) existing.score = row.rank ?? 0;
+        continue;
+      }
 
-      (row as DbRow).rank = rank;
+      // Build distributorSkuMap from all_distributors JSONB if available
+      const distributorSkuMap: Record<string, string> = {};
+      const distributorSources: string[] = [];
+
+      if (row.all_distributors && Array.isArray(row.all_distributors)) {
+        for (const d of row.all_distributors) {
+          if (d.distributor && d.style_number && !distributorSkuMap[d.distributor]) {
+            distributorSkuMap[d.distributor] = d.style_number;
+            distributorSources.push(DIST_LABELS[d.distributor] ?? d.distributor);
+          }
+        }
+      }
+
+      // Ensure the row's own distributor is included
+      if (!distributorSkuMap[row.distributor]) {
+        distributorSkuMap[row.distributor] = row.style_number;
+        distributorSources.push(DIST_LABELS[row.distributor] ?? row.distributor);
+      }
+
+      productMap.set(groupKey, {
+        styleNumber: row.style_number,
+        normalizedSKU: canonicalBase,
+        name: row.title,
+        brand: row.brand,
+        category: "",
+        imageUrl: row.image_url ?? undefined,
+        colorCount: 1,
+        totalInventory: 0,
+        isProgramItem: false,
+        distributorCode: row.distributor,
+        distributorName: distributorSources.join(", "),
+        distributorSources,
+        distributorSkuMap,
+        score: row.rank ?? 0,
+        basePrice: row.base_price ?? null,
+      });
     }
 
-    const products = deduplicateRows(allRows);
+    const products = Array.from(productMap.values()).sort((a, b) => b.score - a.score);
 
     console.log(`[catalog-search] Returning ${products.length} products for "${q}"`);
 
