@@ -200,100 +200,125 @@ serve(async (req) => {
     // (different brand+style fingerprint that doesn't match the query).
     // ===============================================================
     
-    /** Strip known vendor prefixes if remainder starts with digit */
+    // ============================================================
+    // NORMALIZATION ENGINE: getCanonicalStyle
+    // Splits a style number into { base, suffix } where suffix is
+    // a known garment-type suffix (L=Ladies, Y/B=Youth, W=Women,
+    // T=Tall, V=V-Neck). This is the HARD BOUNDARY for filtering.
+    // ============================================================
+
+    /** Known distributor prefixes — stripped before analysis */
     const KNOWN_PREFIXES = ["SAN", "BC", "NL", "PC", "CP", "DT", "CC", "SS", "GD", "OS", "G", "J", "H"];
-    const normalizeStyleNumber = (sn: string): string => {
-      const upper = sn.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    
+    /** 
+     * Garment-type suffixes that represent DIFFERENT products.
+     * These are HARD BOUNDARIES — a Ladies '5000L' must never merge with Adult '5000'.
+     */
+    const GARMENT_SUFFIXES = ["L", "B", "Y", "W", "T", "V"];
+
+    interface CanonicalStyle {
+      base: string;   // e.g. "5000"
+      suffix: string; // e.g. "L", "B", or "" for adult/unisex
+    }
+
+    const getCanonicalStyle = (styleNumber: string): CanonicalStyle => {
+      // Strip known distributor prefixes first
+      let upper = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
       for (const prefix of KNOWN_PREFIXES) {
         if (upper.startsWith(prefix) && upper.length > prefix.length) {
           const rest = upper.slice(prefix.length);
-          if (/^\d/.test(rest)) return rest;
+          if (/^\d/.test(rest)) { upper = rest; break; }
         }
       }
-      return upper;
+      // Check if the style ends with a garment-type suffix after a numeric base
+      // Pattern: digits followed by an optional suffix letter (e.g. "5000L", "18500B")
+      const match = upper.match(/^(\d+)([A-Z]*)$/);
+      if (match) {
+        const numericPart = match[1];
+        const letterPart = match[2];
+        // Only treat it as a suffix if it's a known garment suffix
+        if (letterPart && GARMENT_SUFFIXES.includes(letterPart)) {
+          return { base: numericPart, suffix: letterPart };
+        }
+        return { base: upper, suffix: "" };
+      }
+      return { base: upper, suffix: "" };
     };
 
-    /** Normalize brand: strip suffixes, non-alphanum */
+    /** Normalize brand: strip marketing words, non-alphanum */
     const normBrand = (b: string): string => {
       return b.toUpperCase()
         .replace(/\b(APPAREL|CLOTHING|MADE|USA)\b/g, "")
         .replace(/[^A-Z0-9]/g, "");
     };
-    
+
     const getProductField = (product: unknown, field: string): string => {
       if (!product || typeof product !== "object") return "";
       const p = product as Record<string, unknown>;
       return String(p[field] ?? "").toUpperCase().trim();
     };
-    
-    const getTotalInventory = (product: unknown): number => {
-      if (!product || typeof product !== "object") return 0;
-      const p = product as Record<string, unknown>;
-      let total = 0;
-      const colors = p.colors as Array<{ sizes?: Array<{ inventory?: Array<{ quantity?: number }> }> }> | undefined;
-      if (Array.isArray(colors)) {
-        for (const color of colors) {
-          if (Array.isArray(color?.sizes)) {
-            for (const size of color.sizes) {
-              if (Array.isArray(size?.inventory)) {
-                for (const inv of size.inventory) {
-                  total += Number(inv?.quantity || 0);
-                }
-              }
-            }
-          }
-        }
-      }
-      return total;
-    };
 
-    // Normalize the query to find what style we're actually searching for
-    const normalizedQuery = query.toUpperCase().trim();
-    const queryLastPart = normalizedQuery.split(/\s+/).pop() || normalizedQuery;
-    const queryFingerprint = normalizeStyleNumber(queryLastPart);
+    // Parse the query style number  
+    const queryLastPart = (query.toUpperCase().trim().split(/\s+/).pop() || query).toUpperCase().trim();
+    const queryCanonical = getCanonicalStyle(queryLastPart);
 
-    // Compute each result's fingerprint and check if it matches the query
-    // A result matches if its normalized styleNumber matches the normalized query
+    console.log(`[sourcing-engine] Query canonical: base="${queryCanonical.base}" suffix="${queryCanonical.suffix}"`);
+
     const successResults = results.filter(r => r.status === "success" && r.product);
-    
-    // Find the "best" brand for the winner (priority: sanmar > ss-activewear > onestop)
-    // to use as the canonical brand when checking cross-distributor matches
+
+    // Priority: sanmar > ss-activewear > onestop
     const PRIORITY_ORDER = ["sanmar", "ss-activewear", "onestop"];
-    const successByPriority = [...successResults].sort((a, b) => {
-      return PRIORITY_ORDER.indexOf(a.distributorCode) - PRIORITY_ORDER.indexOf(b.distributorCode);
-    });
-    
+    const successByPriority = [...successResults].sort((a, b) =>
+      PRIORITY_ORDER.indexOf(a.distributorCode) - PRIORITY_ORDER.indexOf(b.distributorCode)
+    );
+
     const primaryResult = successByPriority[0];
-    const primaryBrand = primaryResult 
+    const primaryBrand = primaryResult
       ? normBrand(getProductField(primaryResult.product, "brand"))
       : "";
-    const primaryStyleNorm = primaryResult
-      ? normalizeStyleNumber(getProductField(primaryResult.product, "styleNumber"))
-      : queryFingerprint;
 
-    console.log(`[sourcing-engine] Primary: ${primaryBrand}::${primaryStyleNorm} (from ${primaryResult?.distributorName || "none"})`);
+    console.log(`[sourcing-engine] Primary brand: ${primaryBrand} (from ${primaryResult?.distributorName || "none"})`);
 
-    // A result is a "winner" if:
-    // 1. Its normalized styleNumber matches the primary style (same item from different distributor), OR
-    // 2. Its normalized styleNumber matches the query directly
+    /**
+     * TWO-FACTOR MATCH:
+     * 1. Base Match  — numeric base must be identical (e.g. "5000" == "5000")
+     * 2. Suffix Match — suffix must match the query's suffix (hard boundary)
+     *    Query "5000" (suffix="") rejects results with suffix "L", "B", etc.
+     *    Query "5000L" (suffix="L") rejects results with suffix "" or "B", etc.
+     * 3. Fuzzy Brand Match — brand family check (allows "Gildan" == "Gildan Activewear")
+     */
     const isWinner = (r: DistributorResult): boolean => {
       if (!r.product) return false;
-      const styleNorm = normalizeStyleNumber(getProductField(r.product, "styleNumber"));
+      const styleRaw = getProductField(r.product, "styleNumber");
+      const { base: resultBase, suffix: resultSuffix } = getCanonicalStyle(styleRaw);
       const brandNorm = normBrand(getProductField(r.product, "brand"));
-      
-      // Match by style number normalization
-      const styleMatches = styleNorm === primaryStyleNorm 
-        || styleNorm === queryFingerprint
-        || primaryStyleNorm.includes(styleNorm)
-        || styleNorm.includes(primaryStyleNorm);
-      
-      // If primary brand is known, also check brand matches (allow same brand family)
-      // This prevents e.g. a completely different brand's product from being included
-      const brandMatches = !primaryBrand || brandNorm === primaryBrand 
+
+      // FACTOR 1: Base must match the query base
+      const baseMatches = resultBase === queryCanonical.base;
+      if (!baseMatches) {
+        console.log(`[sourcing-engine] Rejected (base mismatch): ${styleRaw} → base=${resultBase} vs query base=${queryCanonical.base}`);
+        return false;
+      }
+
+      // FACTOR 2: Suffix must match exactly — this is the DATA POLLUTION BOUNDARY
+      const suffixMatches = resultSuffix === queryCanonical.suffix;
+      if (!suffixMatches) {
+        console.log(`[sourcing-engine] Rejected (suffix mismatch — DATA POLLUTION PREVENTED): ${styleRaw} suffix="${resultSuffix}" vs query suffix="${queryCanonical.suffix}"`);
+        return false;
+      }
+
+      // FACTOR 3: Fuzzy brand match (allow same brand family, min 4-char prefix)
+      const brandMatches = !primaryBrand
+        || brandNorm === primaryBrand
         || brandNorm.includes(primaryBrand.substring(0, 4))
         || primaryBrand.includes(brandNorm.substring(0, 4));
-      
-      return styleMatches && brandMatches;
+
+      if (!brandMatches) {
+        console.log(`[sourcing-engine] Rejected (brand mismatch): ${styleRaw} brand="${brandNorm}" vs primary="${primaryBrand}"`);
+        return false;
+      }
+
+      return true;
     };
 
     const winnerIds = new Set<string>();
