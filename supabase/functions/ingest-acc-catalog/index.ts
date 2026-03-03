@@ -366,25 +366,35 @@ async function fetchBasePrice(
 }
 
 // ---------------------------------------------------------------------------
-// Self-chain: pass only offset + dateStr. Product IDs are stored in the bucket.
+// Self-chain: await the HTTP kick-off (but not the full response) so Deno
+// doesn't kill the outgoing request before the next invocation boots.
 // ---------------------------------------------------------------------------
-async function invokeSelf(
-  offset: number,
-  dateStr: string
-): Promise<void> {
+async function invokeSelf(offset: number, dateStr: string): Promise<void> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const url = `${supabaseUrl}/functions/v1/ingest-acc-catalog`;
-  // Fire and forget — don't await the response
-  fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${serviceKey}`,
-      "apikey": serviceKey,
-    },
-    body: JSON.stringify({ offset, dateStr }),
-  }).catch((e: any) => console.error("[ingest-acc-catalog] Self-chain error:", e.message));
+  try {
+    // We await fetch() so the request is actually sent before the parent exits,
+    // but we don't wait for the child's full response body.
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${serviceKey}`,
+        "apikey": serviceKey,
+      },
+      body: JSON.stringify({ offset, dateStr }),
+      signal: AbortSignal.timeout(5000), // just wait for connection, not full response
+    });
+    console.log(`[ingest-acc-catalog] Self-chain HTTP ${res.status} for offset ${offset}`);
+  } catch (e: any) {
+    // Timeout on reading response is fine — the child is running
+    if (!e.message?.includes("timed out")) {
+      console.error("[ingest-acc-catalog] Self-chain error:", e.message);
+    } else {
+      console.log(`[ingest-acc-catalog] Self-chain dispatched (timeout on read is OK) offset=${offset}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
