@@ -136,9 +136,12 @@ function escapeXml(str: string): string {
 function getEnvelopeBody(parsed: any): any | null {
   const env =
     parsed["soapenv:Envelope"] || parsed["soap:Envelope"] ||
-    parsed["S:Envelope"]       || parsed.Envelope;
+    parsed["SOAP-ENV:Envelope"] || parsed["S:Envelope"] || parsed.Envelope;
   if (!env) return null;
-  return env["soapenv:Body"] || env["soap:Body"] || env["S:Body"] || env.Body || null;
+  return (
+    env["soapenv:Body"] || env["soap:Body"] ||
+    env["SOAP-ENV:Body"] || env["S:Body"] || env.Body || null
+  );
 }
 
 // ---------------------------------------------------------------------------
