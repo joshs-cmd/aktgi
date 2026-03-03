@@ -328,7 +328,7 @@ function aggregateItemsWithPricing(
  *  - We cap the total at MAX_PRICING_SKUS to prevent timeouts on 1000+ SKU products.
  *  - We add a small delay between batches.
  */
-const MAX_PRICING_SKUS = 100; // cap: one price per color is enough
+const MAX_PRICING_SKUS = 250; // cap: one price per color is enough (raised for 180+ color styles like 3001)
 const BATCH_DELAY_MS = 200;   // pause between batches to avoid 429
 
 /**
