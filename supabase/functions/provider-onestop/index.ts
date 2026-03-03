@@ -311,16 +311,48 @@ function aggregateItemsWithPricing(
  * Prices are integers in cents (e.g. 281 = $2.81). Divide by 10^price_factor.
  * my_price reflects the price you actually pay at your price_level (case/dozen/piece).
  * Batch limit: 20 SKUs per request per API docs.
+ *
+ * To avoid 429 rate-limit and 403 auth errors on large catalogs:
+ *  - We take only ONE representative SKU per color (the first size per color group).
+ *  - We cap the total at MAX_PRICING_SKUS to prevent timeouts on 1000+ SKU products.
+ *  - We add a small delay between batches.
  */
+const MAX_PRICING_SKUS = 100; // cap: one price per color is enough
+const BATCH_DELAY_MS = 200;   // pause between batches to avoid 429
+
+/**
+ * Reduce SKU list to at most one SKU per color group.
+ * OneStop SKU format: "STYLE-COLOR-SIZE" (e.g. "CV-207-S6-SM").
+ * We take the first SKU for each STYLE-COLOR combination.
+ */
+function deduplicateSkusByColor(skuCodes: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const sku of skuCodes) {
+    // Color key = everything except the last dash-separated segment (size)
+    const parts = sku.split("-");
+    const colorKey = parts.length > 1 ? parts.slice(0, -1).join("-") : sku;
+    if (!seen.has(colorKey)) {
+      seen.add(colorKey);
+      result.push(sku);
+    }
+  }
+  return result;
+}
+
 async function fetchPricingBySku(
-  skuCodes: string[],
+  rawSkuCodes: string[],
   fetchOpts: RequestInit
 ): Promise<Map<string, number>> {
+  // Reduce to one representative SKU per color, then cap total
+  const representativeSkus = deduplicateSkusByColor(rawSkuCodes).slice(0, MAX_PRICING_SKUS);
+  console.log(`[provider-onestop] Pricing: ${rawSkuCodes.length} SKUs → ${representativeSkus.length} representative (capped at ${MAX_PRICING_SKUS})`);
+
   const priceMap = new Map<string, number>();
   const BATCH_SIZE = 20;
 
-  for (let i = 0; i < skuCodes.length; i += BATCH_SIZE) {
-    const batch = skuCodes.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < representativeSkus.length; i += BATCH_SIZE) {
+    const batch = representativeSkus.slice(i, i + BATCH_SIZE);
     const url = `${ONESTOP_API_BASE}/items/pricing/?skus=${encodeURIComponent(batch.join(","))}`;
     console.log(`[provider-onestop] Fetching pricing batch [${i}..${i + batch.length}]: ${url}`);
 

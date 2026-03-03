@@ -211,11 +211,18 @@ function deduplicateRows(rows: DbRow[]): CatalogProduct[] {
   const products: CatalogProduct[] = [];
 
   for (const [, group] of groups) {
-    // Primary row: prefer highest-priority distributor
+    // Primary row: pick the most "complete" row.
+    // Scoring: distributor priority (sanmar=3 > ss=2 > onestop=1) +
+    //          bonus for having an image (+2) and a non-empty description (+1).
+    // This ensures the deduped card always shows the best metadata.
     const primary = group.rows.reduce((best, r) => {
-      return (DIST_PRIORITY[r.distributor] ?? 0) > (DIST_PRIORITY[best.distributor] ?? 0)
-        ? r
-        : best;
+      const score = (DIST_PRIORITY[r.distributor] ?? 0)
+        + (r.image_url ? 2 : 0)
+        + (r.description && r.description.trim().length > 0 ? 1 : 0);
+      const bestScore = (DIST_PRIORITY[best.distributor] ?? 0)
+        + (best.image_url ? 2 : 0)
+        + (best.description && best.description.trim().length > 0 ? 1 : 0);
+      return score > bestScore ? r : best;
     }, group.rows[0]);
 
     // Build per-distributor SKU map with each distributor's own style number
