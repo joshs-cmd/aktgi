@@ -146,23 +146,19 @@ function getEnvelopeBody(parsed: any): any | null {
 
 // ---------------------------------------------------------------------------
 // PromoStandards Inventory v2.0.0 request
-// NOTE: alias must be "shar" not "shared" — ACC validates namespace prefixes strictly
+// Using default-namespace pattern from ACC validator sample (no shar: prefixes on inner elements)
 // ---------------------------------------------------------------------------
 function buildInventoryRequest(productId: string, username: string, password: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:ns="http://www.promostandards.org/WSDL/Inventory/2.0.0/"
-                  xmlns:shar="http://www.promostandards.org/WSDL/Inventory/2.0.0/SharedObjects/">
+                  xmlns:ns="http://www.promostandards.org/WSDL/Inventory/2.0.0/">
   <soapenv:Header/>
   <soapenv:Body>
     <ns:GetInventoryLevelsRequest>
-      <shar:wsVersion>2.0.0</shar:wsVersion>
-      <shar:id>${escapeXml(username)}</shar:id>
-      <shar:password>${escapeXml(password)}</shar:password>
-      <shar:productId>${escapeXml(productId)}</shar:productId>
-      <shar:Filter>
-        <shar:partIdArray/>
-      </shar:Filter>
+      <wsVersion xmlns="http://www.promostandards.org/WSDL/Inventory/2.0.0/SharedObjects/">2.0.0</wsVersion>
+      <id xmlns="http://www.promostandards.org/WSDL/Inventory/2.0.0/SharedObjects/">${escapeXml(username)}</id>
+      <password xmlns="http://www.promostandards.org/WSDL/Inventory/2.0.0/SharedObjects/">${escapeXml(password)}</password>
+      <productId xmlns="http://www.promostandards.org/WSDL/Inventory/2.0.0/SharedObjects/">${escapeXml(productId)}</productId>
     </ns:GetInventoryLevelsRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
