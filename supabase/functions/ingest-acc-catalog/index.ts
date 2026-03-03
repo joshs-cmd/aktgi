@@ -201,33 +201,44 @@ async function fetchAllProductIds(
   if (!bodyEl) throw new Error("No SOAP body in GetProductDateModified response");
 
   // Find response key
+  // ACC response uses default namespace — keys will be bare (no ns: prefix)
   const respKey = Object.keys(bodyEl).find(k =>
     k.toLowerCase().includes("productdatemodified") ||
     k.toLowerCase().includes("getproductdate")
   );
+
+  console.log(`[ingest-acc-catalog] GetProductDateModified body keys: ${Object.keys(bodyEl).join(", ")}`);
+
   if (!respKey) {
-    console.log(`[ingest-acc-catalog] GetProductDateModified body keys: ${Object.keys(bodyEl).join(", ")}`);
-    // Try to find any error message
-    const errorKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("error") || k.toLowerCase().includes("fault"));
+    const errorKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("error") || k.toLowerCase().includes("fault") || k.toLowerCase().includes("service"));
     if (errorKey) throw new Error(`ACC API error: ${JSON.stringify(bodyEl[errorKey]).substring(0, 200)}`);
-    throw new Error(`No ProductDateModified response key found. Keys: ${Object.keys(bodyEl).join(", ")}`);
+    throw new Error(`No ProductDateModified key. Keys: ${Object.keys(bodyEl).join(", ")}`);
   }
 
   const resp = bodyEl[respKey];
-  const productDateArrayEl =
-    resp?.["ns2:ProductDateArray"] || resp?.ProductDateArray ||
-    resp?.productDateArray || resp;
+  console.log(`[ingest-acc-catalog] GetProductDateModified resp keys: ${Object.keys(resp || {}).join(", ")}`);
+
+  // ACC response: GetProductDateModifiedResponse > ProductDateModifiedArray > ProductDateModified[]
+  const arrayEl =
+    resp?.ProductDateModifiedArray || resp?.["ns2:ProductDateModifiedArray"] ||
+    resp?.ProductDateArray || resp?.["ns2:ProductDateArray"] || resp;
 
   const rawItems =
-    productDateArrayEl?.["ns2:ProductDate"] || productDateArrayEl?.ProductDate ||
-    productDateArrayEl?.productDate || [];
+    arrayEl?.ProductDateModified || arrayEl?.["ns2:ProductDateModified"] ||
+    arrayEl?.ProductDate || arrayEl?.["ns2:ProductDate"] || [];
 
   const items = Array.isArray(rawItems) ? rawItems : (rawItems ? [rawItems] : []);
-  console.log(`[ingest-acc-catalog] Found ${items.length} products from GetProductDateModified`);
+  console.log(`[ingest-acc-catalog] Found ${items.length} ProductDateModified entries`);
 
-  return items
-    .map((item: any) => String(item?.productId || item?.["ns2:productId"] || "").trim())
-    .filter((id: string) => id.length > 0);
+  // Deduplicate productIds (multiple partIds per product)
+  const seen = new Set<string>();
+  for (const item of items) {
+    const id = String(item?.productId || item?.["ns2:productId"] || "").trim();
+    if (id) seen.add(id);
+  }
+  const uniqueIds = Array.from(seen);
+  console.log(`[ingest-acc-catalog] Unique product IDs: ${uniqueIds.length}`);
+  return uniqueIds;
 }
 
 // ---------------------------------------------------------------------------
