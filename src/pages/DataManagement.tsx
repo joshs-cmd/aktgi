@@ -26,6 +26,7 @@ const DISTRIBUTOR_LABELS: Record<string, { label: string; color: string }> = {
   sanmar: { label: "SanMar", color: "bg-blue-500/10 text-blue-700 border-blue-200" },
   "ss-activewear": { label: "S&S Activewear", color: "bg-green-500/10 text-green-700 border-green-200" },
   onestop: { label: "OneStop", color: "bg-orange-500/10 text-orange-700 border-orange-200" },
+  acc: { label: "Atlantic Coast Cotton", color: "bg-purple-500/10 text-purple-700 border-purple-200" },
 };
 
 function formatBytes(bytes: number): string {

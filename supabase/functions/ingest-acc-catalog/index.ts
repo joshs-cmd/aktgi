@@ -485,11 +485,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Dedup by style_number
+    // Dedup by style_number, filter out garbage
     const seen = new Set<string>();
     const uniqueRecords = records.filter(r => {
-      if (seen.has(r.style_number)) return false;
-      seen.add(r.style_number);
+      const sn: string = r.style_number ?? "";
+      if (!sn || sn === "OBJECTOBJECT" || sn.length < 2) return false;
+      if (seen.has(sn)) return false;
+      seen.add(sn);
       return true;
     });
 
