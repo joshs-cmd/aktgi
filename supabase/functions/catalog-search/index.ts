@@ -35,23 +35,58 @@ interface CatalogSearchResponse {
 
 // ---------- Normalization helpers ----------
 
-const PREFIX_BRAND_MAP: Record<string, string[]> = {
-  "BC":  ["BELLA+CANVAS", "BELLA + CANVAS", "BELLA CANVAS", "BELLACANVAS"],
-  "NL":  ["NEXT LEVEL", "NEXT LEVEL APPAREL", "NEXTLEVEL"],
-  "G":   ["GILDAN"],
-  "GD":  ["GILDAN"],
-  "PC":  ["PORT & COMPANY", "PORT AND COMPANY", "PORT COMPANY", "PORTCOMPANY"],
-  "DT":  ["DISTRICT", "DISTRICT MADE"],
-  "J":   ["JERZEES"],
-  "H":   ["HANES"],
-  "CC":  ["COMFORT COLORS", "COMFORTCOLORS"],
-  "SS":  ["SPORT-TEK", "SPORT TEK", "SPORTEK"],
-};
-const ORDERED_PREFIXES = Object.keys(PREFIX_BRAND_MAP).sort((a, b) => b.length - a.length);
+// Canonical brand aliases → normalised name
+const BRAND_ALIASES: [RegExp, string][] = [
+  [/bella\s*[\+&]\s*canvas|bellacanvas/i,         "BELLA+CANVAS"],
+  [/next\s*level(\s*apparel)?/i,                   "NEXT LEVEL"],
+  [/sport[\s\-]?tek/i,                             "SPORT-TEK"],
+  [/port\s*&?\s*company/i,                         "PORT & COMPANY"],
+  [/comfort\s*colors?/i,                           "COMFORT COLORS"],
+  [/gildan/i,                                      "GILDAN"],
+  [/hanes/i,                                       "HANES"],
+  [/jerzees/i,                                     "JERZEES"],
+  [/independent\s*trading(\s*co\.?)?/i,            "INDEPENDENT TRADING"],
+  [/alternative(\s*apparel)?/i,                    "ALTERNATIVE"],
+  [/a4/i,                                          "A4"],
+  [/district(\s*made)?/i,                          "DISTRICT"],
+  [/new\s*era/i,                                   "NEW ERA"],
+];
 
-function normalizeSKU(styleNumber: string): string {
+// Ordered longest-first so "BST" is tried before bare "B" etc.
+const BRAND_PREFIX_MAP: Record<string, string[]> = {
+  "BELLA+CANVAS":        ["BC"],
+  "NEXT LEVEL":          ["NL"],
+  "A4":                  ["A4"],
+  "GILDAN":              ["GH400", "GH000", "G"],
+  "SPORT-TEK":           ["BST", "ST"],
+  "PORT & COMPANY":      ["PC"],
+  "COMFORT COLORS":      ["CC"],
+  "DISTRICT":            ["DT"],
+  "JERZEES":             ["J"],
+  "HANES":               ["H"],
+  "NEW ERA":             ["NE"],
+  "INDEPENDENT TRADING": ["IND"],
+  "ALTERNATIVE":         ["AA"],
+};
+
+function normalizeBrandName(brand: string): string {
+  const s = brand.trim();
+  for (const [pattern, canonical] of BRAND_ALIASES) {
+    if (pattern.test(s)) return canonical;
+  }
+  return s.toUpperCase();
+}
+
+/**
+ * Strips the brand-specific distributor prefix from a style number.
+ * Returns the bare numeric+suffix portion (e.g. "BC3001" → "3001",
+ * "G5000L" → "5000L"). Suffixes like L/Y/B/T are intentionally preserved.
+ */
+function getCanonicalBase(styleNumber: string, brand: string): string {
+  const normalBrand = normalizeBrandName(brand);
   const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  for (const prefix of ORDERED_PREFIXES) {
+  const prefixes = BRAND_PREFIX_MAP[normalBrand] ?? [];
+  for (const prefix of prefixes) {
     if (sn.startsWith(prefix) && sn.length > prefix.length) {
       const rest = sn.slice(prefix.length);
       if (/^\d/.test(rest)) return rest;
@@ -60,30 +95,13 @@ function normalizeSKU(styleNumber: string): string {
   return sn;
 }
 
-function generateFingerprint(styleNumber: string, brand: string): string {
-  const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const upperBrand = brand.toUpperCase().replace(/[^A-Z0-9 &+\-]/g, "").trim();
-  for (const prefix of ORDERED_PREFIXES) {
-    if (sn.startsWith(prefix) && sn.length > prefix.length) {
-      const rest = sn.slice(prefix.length);
-      if (!/^\d/.test(rest)) continue;
-      const allowedBrands = PREFIX_BRAND_MAP[prefix];
-      const brandMatches = allowedBrands.some((b) => {
-        const normalB = b.toUpperCase().replace(/[^A-Z0-9 &+\-]/g, "").trim();
-        return upperBrand.includes(normalB) || normalB.includes(upperBrand);
-      });
-      if (brandMatches) return rest;
-    }
-  }
-  return sn;
+/** Dedup key: "<CANONICAL_BRAND>::<CANONICAL_BASE>" */
+function getCanonicalKey(styleNumber: string, brand: string): string {
+  return `${normalizeBrandName(brand)}::${getCanonicalBase(styleNumber, brand)}`;
 }
 
-function normalizeBrand(brand: string): string {
-  return brand
-    .toUpperCase()
-    .replace(/\b(APPAREL|CLOTHING|MADE|USA|INC|LLC|CO|COMPANY|CORP|CORPORATION)\b/g, "")
-    .replace(/[^A-Z0-9]/g, "");
-}
+// Keep a simple alias for legacy callers inside this file
+const normalizeSKU = (sn: string) => sn.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 // ---------- Build prefix tsquery string ----------
 // Converts "gildan 5000" → "gildan:* & 5000:*" for partial matching
@@ -111,27 +129,17 @@ interface DbRow {
   rank?: number;
 }
 
-// ---------- Deduplication (same-brand cross-distributor merge) ----------
+// ---------- Deduplication (canonical-brand cross-distributor merge) ----------
 
 const DIST_PRIORITY: Record<string, number> = { sanmar: 3, "ss-activewear": 2, onestop: 1 };
 
 function deduplicateRows(rows: DbRow[]): CatalogProduct[] {
+  // Group rows by canonical brand + canonical base style.
+  // This collapses e.g. SanMar "BC3001" and S&S "3001" into one card.
   const groups = new Map<string, { rows: DbRow[]; bestRank: number }>();
 
   for (const row of rows) {
-    const fp = generateFingerprint(row.style_number, row.brand);
-    const brandKey = normalizeBrand(row.brand);
-    const primaryKey = `${brandKey}::${fp}`;
-    const numericRoot = fp.match(/^(\d+)/)?.[1] ?? "";
-    const aggressiveKey = numericRoot.length >= 3 ? `${brandKey}::${numericRoot}` : "";
-
-    let groupKey = primaryKey;
-    if (!groups.has(primaryKey) && aggressiveKey && groups.has(aggressiveKey)) {
-      groupKey = aggressiveKey;
-    } else if (aggressiveKey && !groups.has(primaryKey)) {
-      groupKey = aggressiveKey;
-    }
-
+    const groupKey = getCanonicalKey(row.style_number, row.brand);
     const rank = row.rank ?? 0;
     const existing = groups.get(groupKey);
     if (existing) {
@@ -145,28 +153,32 @@ function deduplicateRows(rows: DbRow[]): CatalogProduct[] {
   const products: CatalogProduct[] = [];
 
   for (const [, group] of groups) {
+    // Primary row: prefer highest-priority distributor
     const primary = group.rows.reduce((best, r) => {
       return (DIST_PRIORITY[r.distributor] ?? 0) > (DIST_PRIORITY[best.distributor] ?? 0)
         ? r
         : best;
     }, group.rows[0]);
 
+    // Build per-distributor SKU map with each distributor's own style number
     const distributorSkuMap: Record<string, string> = {};
     const distributorSources: string[] = [];
     for (const r of group.rows) {
       if (!distributorSkuMap[r.distributor]) {
         distributorSkuMap[r.distributor] = r.style_number;
         distributorSources.push(
-          r.distributor === "sanmar" ? "SanMar"
-            : r.distributor === "ss-activewear" ? "S&S Activewear"
-            : r.distributor
+          r.distributor === "sanmar"       ? "SanMar"
+          : r.distributor === "ss-activewear" ? "S&S Activewear"
+          : r.distributor
         );
       }
     }
 
+    const canonicalBase = getCanonicalBase(primary.style_number, primary.brand);
+
     products.push({
       styleNumber: primary.style_number,
-      normalizedSKU: generateFingerprint(primary.style_number, primary.brand),
+      normalizedSKU: canonicalBase,
       name: primary.title,
       brand: primary.brand,
       category: "",
@@ -260,14 +272,14 @@ serve(async (req) => {
 
     for (const row of allRows) {
       const sn = row.style_number.toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const snNorm = normalizeSKU(row.style_number);
+      const snCanonical = getCanonicalBase(row.style_number, row.brand);
       const brand = row.brand.toUpperCase();
       const title = row.title.toUpperCase();
 
       let rank = 0;
-      if (sn === qUpper || snNorm === qUpper) rank = 4;
-      else if (sn.startsWith(qUpper) || snNorm.startsWith(qUpper)) rank = 3;
-      else if (sn.includes(qUpper) || snNorm.includes(qUpper)) rank = 2;
+      if (sn === qUpper || snCanonical === qUpper) rank = 4;
+      else if (sn.startsWith(qUpper) || snCanonical.startsWith(qUpper)) rank = 3;
+      else if (sn.includes(qUpper) || snCanonical.includes(qUpper)) rank = 2;
       else if (brand.includes(q.toUpperCase()) || title.includes(q.toUpperCase())) rank = 1;
       else rank = 0.5; // matched via FTS token (e.g. partial word in title)
 
