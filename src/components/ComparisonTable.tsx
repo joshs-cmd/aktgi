@@ -19,6 +19,8 @@ interface ComparisonTableProps {
   showPrices?: boolean;
 }
 
+
+
 export function ComparisonTable({ results, selectedColor, showPrices = true }: ComparisonTableProps) {
   // Safely get sizes for a result based on selected color
   const getSizesForResult = (result: DistributorResult): StandardSize[] => {
@@ -133,7 +135,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                   skeletonSizeCols.map((col) => (
                     <TableCell key={col} className="text-center p-2">
                       <div className="flex flex-col items-center gap-1">
-                        <Skeleton className="h-4 w-12" />
+                        {showPrices && <Skeleton className="h-4 w-12" />}
                         <Skeleton className="h-3 w-8" />
                       </div>
                     </TableCell>

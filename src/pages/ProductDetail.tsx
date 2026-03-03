@@ -209,7 +209,7 @@ const ProductDetail = ({ userRole }: ProductDetailProps) => {
                 )}
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">--</span>
-                  <span>Not available / Pending connection</span>
+                  <span>Not stocked / Pending connection</span>
                 </div>
               </div>
             </div>

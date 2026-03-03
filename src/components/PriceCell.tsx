@@ -50,7 +50,7 @@ export function PriceCell({
           isLowest && showPrice && "bg-success/15 text-success"
         )}
       >
-        {showPrice ? (
+        {showPrice && (
           price > 0 ? (
             <div className="flex items-center gap-1">
               <span className="text-sm font-semibold tabular-nums">
@@ -63,14 +63,8 @@ export function PriceCell({
               )}
             </div>
           ) : (
-            <span className="text-sm font-medium text-muted-foreground" title="Pricing unavailable via API">
-              —
-            </span>
+            <span className="text-sm font-medium text-muted-foreground">—</span>
           )
-        ) : (
-          <span className="text-sm font-medium text-muted-foreground">
-            ••••
-          </span>
         )}
         <span className="text-xs text-muted-foreground tabular-nums">
           {stockDisplay}

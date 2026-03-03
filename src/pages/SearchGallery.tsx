@@ -151,7 +151,9 @@ const SearchGallery = () => {
           {showEmptyState && (
             <div className="w-full max-w-3xl space-y-6">
               <p className="text-center text-lg text-muted-foreground">
-                Enter a SKU or brand name to compare prices across distributors
+                {role === "admin"
+                  ? "Enter a SKU or brand name to compare prices across distributors"
+                  : "Enter a SKU or brand name to check inventory across distributors"}
               </p>
               <TrendingGrid onSearch={handleSearch} />
             </div>
