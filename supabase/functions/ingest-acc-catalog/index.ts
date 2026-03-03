@@ -100,15 +100,29 @@ const unwrap = (val: any): string => {
 async function saveArchive(
   supabase: ReturnType<typeof createClient>,
   filename: string,
-  content: string
+  content: string,
+  subfolder = ""
 ): Promise<void> {
+  const path = subfolder ? `acc/${subfolder}/${filename}` : `acc/${filename}`;
+  const contentType = filename.endsWith(".csv") ? "text/csv" : "application/json";
   const { error } = await supabase.storage
     .from(BUCKET)
-    .upload(`acc/${filename}`, new TextEncoder().encode(content), {
-      contentType: "application/json",
-      upsert: true,
-    });
+    .upload(path, new TextEncoder().encode(content), { contentType, upsert: true });
   if (error) console.error("[ingest-acc-catalog] Archive upload error:", error.message);
+}
+
+// ---------------------------------------------------------------------------
+// Generate CSV from catalog records (matches master format)
+// ---------------------------------------------------------------------------
+function recordsToCsv(records: any[]): string {
+  const columns = ["style_number", "brand", "title", "description", "base_price", "image_url", "updated_at"];
+  const escape = (v: any): string => {
+    if (v == null) return "";
+    const s = String(v).replace(/"/g, '""');
+    return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s}"` : s;
+  };
+  const rows = records.map(r => columns.map(c => escape(r[c])).join(","));
+  return [columns.join(","), ...rows].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -511,8 +525,23 @@ Deno.serve(async (req) => {
       console.log(`[ingest-acc-catalog] Self-chaining for offset ${newOffset}...`);
       await invokeSelf(supabase, newOffset, productIds, dateStr);
     } else {
-      // Final run: save enriched archive summary
-      console.log("[ingest-acc-catalog] All products processed! Saving final archive...");
+      // Final run: query ALL acc records from DB to build complete CSV
+      console.log("[ingest-acc-catalog] All products processed! Generating final CSV...");
+      const { data: allRows, error: queryErr } = await supabase
+        .from("catalog_products")
+        .select("style_number, brand, title, description, base_price, image_url, updated_at")
+        .eq("distributor", "acc")
+        .order("style_number");
+
+      if (queryErr) {
+        console.error("[ingest-acc-catalog] CSV query error:", queryErr.message);
+      } else if (allRows && allRows.length > 0) {
+        const csv = recordsToCsv(allRows);
+        await saveArchive(supabase, `acc-${dateStr}.csv`, csv, "csv");
+        console.log(`[ingest-acc-catalog] CSV saved: acc/csv/acc-${dateStr}.csv (${allRows.length} rows)`);
+      }
+
+      // Save final JSON summary
       await saveArchive(
         supabase,
         `acc-${dateStr}.json`,
