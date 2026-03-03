@@ -525,8 +525,23 @@ Deno.serve(async (req) => {
       console.log(`[ingest-acc-catalog] Self-chaining for offset ${newOffset}...`);
       await invokeSelf(supabase, newOffset, productIds, dateStr);
     } else {
-      // Final run: save enriched archive summary
-      console.log("[ingest-acc-catalog] All products processed! Saving final archive...");
+      // Final run: query ALL acc records from DB to build complete CSV
+      console.log("[ingest-acc-catalog] All products processed! Generating final CSV...");
+      const { data: allRows, error: queryErr } = await supabase
+        .from("catalog_products")
+        .select("style_number, brand, title, description, base_price, image_url, updated_at")
+        .eq("distributor", "acc")
+        .order("style_number");
+
+      if (queryErr) {
+        console.error("[ingest-acc-catalog] CSV query error:", queryErr.message);
+      } else if (allRows && allRows.length > 0) {
+        const csv = recordsToCsv(allRows);
+        await saveArchive(supabase, `acc-${dateStr}.csv`, csv, "csv");
+        console.log(`[ingest-acc-catalog] CSV saved: acc/csv/acc-${dateStr}.csv (${allRows.length} rows)`);
+      }
+
+      // Save final JSON summary
       await saveArchive(
         supabase,
         `acc-${dateStr}.json`,
