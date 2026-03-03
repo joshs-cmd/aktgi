@@ -213,56 +213,6 @@ serve(async (req) => {
       return upper;
     };
 
-    /**
-     * Strip well-known style SUFFIXES (Ladies=L, Youth=B/Y, Women=W, Tall=T, Plus=P)
-     * to derive the "base style number" (e.g. "5000L" → "5000", "3931B" → "3931").
-     * We only strip a suffix if:
-     *   1. It is a single letter at the end of the style number, AND
-     *   2. The remaining part is purely numeric (or has a non-suffix letter prefix).
-     * This prevents stripping legitimate style letters like the "C" in "1717C".
-     */
-    const GENDER_SUFFIXES = ["L", "B", "Y", "W", "T", "P"];
-    const extractBaseStyle = (sn: string): string => {
-      const norm = normalizeStyleNumber(sn);
-      const lastChar = norm.slice(-1);
-      if (GENDER_SUFFIXES.includes(lastChar)) {
-        const withoutSuffix = norm.slice(0, -1);
-        // Only strip if what remains ends in a digit (prevents over-stripping "BC" → "B")
-        if (/\d$/.test(withoutSuffix)) {
-          return withoutSuffix;
-        }
-      }
-      return norm;
-    };
-
-    /**
-     * Strict style match: the result's styleNumber must resolve to the SAME base style
-     * as the query AND must not be a different gender/cut variant.
-     * e.g. query="5000" → accepts "5000", rejects "5000L", "5000B"
-     *      query="5000L" → accepts "5000L" only
-     *      query="1717" → accepts "1717", "1717C" (comfort colors pocket tee — no numeric-only base)
-     */
-    const strictStyleMatch = (resultStyleRaw: string, queryRaw: string): boolean => {
-      const resultNorm = normalizeStyleNumber(resultStyleRaw);
-      const queryNorm  = normalizeStyleNumber(queryRaw);
-
-      // Exact match always wins
-      if (resultNorm === queryNorm) return true;
-
-      const resultBase = extractBaseStyle(resultStyleRaw);
-      const queryBase  = extractBaseStyle(queryRaw);
-
-      // If query has no gender suffix, only accept results whose normalized style equals the query
-      // (reject 5000L when searching 5000)
-      if (queryNorm === queryBase) {
-        // Query is a "base" style — result must also be the exact base (no suffix variant)
-        return resultNorm === queryNorm;
-      }
-
-      // Query itself has a suffix (e.g. "5000L") — only accept that exact variant
-      return resultNorm === queryNorm;
-    };
-
     /** Normalize brand: strip suffixes, non-alphanum */
     const normBrand = (b: string): string => {
       return b.toUpperCase()
@@ -323,22 +273,26 @@ serve(async (req) => {
 
     console.log(`[sourcing-engine] Primary: ${primaryBrand}::${primaryStyleNorm} (from ${primaryResult?.distributorName || "none"})`);
 
-    // A result is a "winner" if its style strictly matches the queried style.
-    // Uses strict base-style validation to reject gender/cut variants (5000L ≠ 5000).
+    // A result is a "winner" if:
+    // 1. Its normalized styleNumber matches the primary style (same item from different distributor), OR
+    // 2. Its normalized styleNumber matches the query directly
     const isWinner = (r: DistributorResult): boolean => {
       if (!r.product) return false;
-      const resultStyle = getProductField(r.product, "styleNumber");
+      const styleNorm = normalizeStyleNumber(getProductField(r.product, "styleNumber"));
       const brandNorm = normBrand(getProductField(r.product, "brand"));
-
-      // Strict style match: rejects suffix variants (5000L when querying 5000)
-      const styleMatches = strictStyleMatch(resultStyle, query)
-        || (primaryResult && strictStyleMatch(resultStyle, getProductField(primaryResult.product, "styleNumber")));
-
-      // Brand family check: prevent completely unrelated brands
-      const brandMatches = !primaryBrand || brandNorm === primaryBrand
+      
+      // Match by style number normalization
+      const styleMatches = styleNorm === primaryStyleNorm 
+        || styleNorm === queryFingerprint
+        || primaryStyleNorm.includes(styleNorm)
+        || styleNorm.includes(primaryStyleNorm);
+      
+      // If primary brand is known, also check brand matches (allow same brand family)
+      // This prevents e.g. a completely different brand's product from being included
+      const brandMatches = !primaryBrand || brandNorm === primaryBrand 
         || brandNorm.includes(primaryBrand.substring(0, 4))
         || primaryBrand.includes(brandNorm.substring(0, 4));
-
+      
       return styleMatches && brandMatches;
     };
 
