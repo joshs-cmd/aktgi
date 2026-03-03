@@ -10,8 +10,8 @@ const corsHeaders = {
 const BUCKET = "distributor-archives";
 const DB_BATCH_SIZE = 500;
 const CONCURRENCY = 4;
-const CHUNK_SIZE = 80; // Products enriched per function invocation
-const SAFETY_CUTOFF_MS = 50_000; // 50s safety cutoff (edge function limit ~60s CPU)
+const CHUNK_SIZE = 50;
+const SAFETY_CUTOFF_MS = 42_000;
 const ACC_PRODUCT_DATA_ENDPOINT = "https://promo.acc-api.com/live/productData.php";
 const ACC_PRICING_ENDPOINT      = "https://promo.acc-api.com/live/productPricingAndConfig.php";
 
@@ -97,22 +97,32 @@ const unwrap = (val: any): string => {
   return String(val).trim();
 };
 
+// ---------------------------------------------------------------------------
+// Storage helpers
+// ---------------------------------------------------------------------------
 async function saveArchive(
   supabase: ReturnType<typeof createClient>,
-  filename: string,
+  path: string,
   content: string,
-  subfolder = ""
+  contentType = "application/json"
 ): Promise<void> {
-  const path = subfolder ? `acc/${subfolder}/${filename}` : `acc/${filename}`;
-  const contentType = filename.endsWith(".csv") ? "text/csv" : "application/json";
   const { error } = await supabase.storage
     .from(BUCKET)
     .upload(path, new TextEncoder().encode(content), { contentType, upsert: true });
-  if (error) console.error("[ingest-acc-catalog] Archive upload error:", error.message);
+  if (error) console.error("[ingest-acc-catalog] Archive upload error:", error.message, "path:", path);
+}
+
+async function loadArchive(
+  supabase: ReturnType<typeof createClient>,
+  path: string
+): Promise<string | null> {
+  const { data, error } = await supabase.storage.from(BUCKET).download(path);
+  if (error || !data) return null;
+  return await data.text();
 }
 
 // ---------------------------------------------------------------------------
-// Generate CSV from catalog records (matches master format)
+// CSV generation — master format
 // ---------------------------------------------------------------------------
 function recordsToCsv(records: any[]): string {
   const columns = ["style_number", "brand", "title", "description", "base_price", "image_url", "updated_at"];
@@ -135,7 +145,7 @@ async function fetchAllProductIds(
   parser: XMLParser
 ): Promise<{ ids: string[]; method: string }> {
   try {
-    console.log("[ingest-acc-catalog] Calling GetProductSellable (full catalog)...");
+    console.log("[ingest-acc-catalog] Calling GetProductSellable...");
     const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
       method: "POST",
       headers: {
@@ -181,7 +191,7 @@ async function fetchAllProductIds(
             }
             const ids = Array.from(seen);
             if (ids.length > 0) {
-              console.log(`[ingest-acc-catalog] GetProductSellable: ${ids.length} product IDs`);
+              console.log(`[ingest-acc-catalog] GetProductSellable: ${ids.length} IDs`);
               return { ids, method: "GetProductSellable" };
             }
           }
@@ -199,10 +209,7 @@ async function fetchAllProductIds(
   const changeTimeStamp = cutoff.toISOString().split("T")[0].replace(/-/g, "");
   const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
     method: "POST",
-    headers: {
-      "Content-Type": "text/xml; charset=utf-8",
-      "SOAPAction": '"GetProductDateModified"',
-    },
+    headers: { "Content-Type": "text/xml; charset=utf-8", "SOAPAction": '"GetProductDateModified"' },
     body: `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ns="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/"
@@ -219,15 +226,13 @@ async function fetchAllProductIds(
 </soapenv:Envelope>`,
     signal: AbortSignal.timeout(30000),
   });
-
   if (!res.ok) throw new Error(`GetProductDateModified HTTP ${res.status}`);
   const xml = await res.text();
   const parsed = parser.parse(xml);
   const bodyEl = getEnvelopeBody(parsed);
   if (!bodyEl) throw new Error("No SOAP body");
-
   const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("productdatemodified"));
-  if (!respKey) throw new Error(`No key found. Keys: ${Object.keys(bodyEl).join(", ")}`);
+  if (!respKey) throw new Error(`No key. Keys: ${Object.keys(bodyEl).join(", ")}`);
   const resp = bodyEl[respKey];
   const arrayEl = resp?.ProductDateModifiedArray || resp?.["ns2:ProductDateModifiedArray"] || resp;
   const rawItems = arrayEl?.ProductDateModified || arrayEl?.["ns2:ProductDateModified"] || [];
@@ -238,8 +243,7 @@ async function fetchAllProductIds(
     const id = (typeof raw === "object" ? String(raw?.["#text"] ?? "") : String(raw)).trim();
     if (id) seen.add(id);
   }
-  const ids = Array.from(seen);
-  return { ids, method: "GetProductDateModified" };
+  return { ids: Array.from(seen), method: "GetProductDateModified" };
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +294,6 @@ async function fetchProductDetail(
       const img = String(part?.primaryImage || part?.["ns2:primaryImage"] || "").trim();
       if (img) { imageUrl = img; break; }
     }
-
     const description = unwrap(productEl?.description ?? productEl?.["ns2:description"] ?? productEl?.productDescription) || undefined;
     return { name, brand, imageUrl, description };
   } catch {
@@ -363,25 +366,35 @@ async function fetchBasePrice(
 }
 
 // ---------------------------------------------------------------------------
-// Self-chaining invoke
+// Self-chain: await the HTTP kick-off (but not the full response) so Deno
+// doesn't kill the outgoing request before the next invocation boots.
 // ---------------------------------------------------------------------------
-async function invokeSelf(
-  supabase: ReturnType<typeof createClient>,
-  offset: number,
-  productIds: string[],
-  dateStr: string
-): Promise<void> {
-  const projectId = Deno.env.get("SUPABASE_URL")?.match(/https:\/\/([^.]+)/)?.[1];
-  if (!projectId) return;
-  const url = `https://${projectId}.supabase.co/functions/v1/ingest-acc-catalog`;
-  fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-    },
-    body: JSON.stringify({ offset, productIds, dateStr }),
-  }).catch(e => console.error("[ingest-acc-catalog] Self-chain invoke error:", e.message));
+async function invokeSelf(offset: number, dateStr: string): Promise<void> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const url = `${supabaseUrl}/functions/v1/ingest-acc-catalog`;
+  try {
+    // We await fetch() so the request is actually sent before the parent exits,
+    // but we don't wait for the child's full response body.
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${serviceKey}`,
+        "apikey": serviceKey,
+      },
+      body: JSON.stringify({ offset, dateStr }),
+      signal: AbortSignal.timeout(5000), // just wait for connection, not full response
+    });
+    console.log(`[ingest-acc-catalog] Self-chain HTTP ${res.status} for offset ${offset}`);
+  } catch (e: any) {
+    // Timeout on reading response is fine — the child is running
+    if (!e.message?.includes("timed out")) {
+      console.error("[ingest-acc-catalog] Self-chain error:", e.message);
+    } else {
+      console.log(`[ingest-acc-catalog] Self-chain dispatched (timeout on read is OK) offset=${offset}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -392,46 +405,47 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  const username = Deno.env.get("ACC_USERNAME");
+  const password = Deno.env.get("ACC_PASSWORD");
+
+  if (!username || !password) {
+    return new Response(
+      JSON.stringify({ error: "ACC credentials not configured" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
+  }
 
-    const username = Deno.env.get("ACC_USERNAME");
-    const password = Deno.env.get("ACC_PASSWORD");
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_",
+    parseAttributeValue: true,
+    parseTagValue: true,
+    trimValues: true,
+  });
 
-    if (!username || !password) {
-      return new Response(
-        JSON.stringify({ error: "ACC credentials not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const parser = new XMLParser({
-      ignoreAttributes: false,
-      attributeNamePrefix: "@_",
-      parseAttributeValue: true,
-      parseTagValue: true,
-      trimValues: true,
-    });
-
-    // Check if this is a continuation (self-chained) call
+  try {
     let body: any = {};
-    try { body = await req.json(); } catch { /* empty body on initial trigger */ }
+    try { body = await req.json(); } catch { /* initial trigger has no body */ }
 
-    let productIds: string[] = body.productIds ?? [];
-    let offset: number = body.offset ?? 0;
     const dateStr: string = body.dateStr ?? new Date().toISOString().split("T")[0];
+    const offset: number = body.offset ?? 0;
+    const IDS_PATH = `acc/acc-${dateStr}-ids.json`;
     let method = "continuation";
 
-    if (productIds.length === 0) {
-      // Initial call — fetch all IDs
+    // ---- Load or fetch the product ID list ----
+    let productIds: string[] = [];
+
+    if (offset === 0) {
+      // Initial call — fetch IDs from ACC API and persist to storage
       console.log("[ingest-acc-catalog] Initial call: fetching all product IDs...");
       const result = await fetchAllProductIds(username, password, parser);
       productIds = result.ids;
       method = result.method;
-      offset = 0;
 
       if (productIds.length === 0) {
         return new Response(
@@ -440,14 +454,25 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Archive the ID list
+      // Persist ID list so continuation chains can reload it without refetching
       await saveArchive(
         supabase,
-        `acc-${dateStr}-ids.json`,
-        JSON.stringify({ fetchedAt: new Date().toISOString(), method, totalProducts: productIds.length, productIds }, null, 2)
+        IDS_PATH,
+        JSON.stringify({ fetchedAt: new Date().toISOString(), method, totalProducts: productIds.length, productIds })
       );
-
-      console.log(`[ingest-acc-catalog] Total: ${productIds.length} IDs via ${method}. Starting at offset 0.`);
+      console.log(`[ingest-acc-catalog] Saved ${productIds.length} IDs to ${IDS_PATH}`);
+    } else {
+      // Continuation — reload IDs from storage
+      const raw = await loadArchive(supabase, IDS_PATH);
+      if (!raw) {
+        return new Response(
+          JSON.stringify({ error: `Cannot find ID list at ${IDS_PATH}` }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const parsed = JSON.parse(raw);
+      productIds = parsed.productIds ?? [];
+      method = parsed.method ?? "continuation";
     }
 
     const startTime = Date.now();
@@ -455,11 +480,11 @@ Deno.serve(async (req) => {
     const records: any[] = [];
     const errors: string[] = [];
 
-    console.log(`[ingest-acc-catalog] Processing offset ${offset}-${offset + chunk.length} of ${productIds.length}...`);
+    console.log(`[ingest-acc-catalog] Processing offset ${offset}–${offset + chunk.length} / ${productIds.length} (method=${method})`);
 
     for (let i = 0; i < chunk.length; i += CONCURRENCY) {
       if (Date.now() - startTime > SAFETY_CUTOFF_MS) {
-        console.log("[ingest-acc-catalog] Safety cutoff hit, will self-chain");
+        console.log("[ingest-acc-catalog] Safety cutoff — will self-chain");
         break;
       }
       const batch = chunk.slice(i, i + CONCURRENCY);
@@ -518,15 +543,15 @@ Deno.serve(async (req) => {
     const newOffset = offset + records.length;
     const isDone = newOffset >= productIds.length;
 
-    console.log(`[ingest-acc-catalog] Chunk done: processed=${records.length}, upserted=${upserted}, offset=${newOffset}/${productIds.length}, done=${isDone}`);
+    console.log(`[ingest-acc-catalog] Chunk done: processed=${records.length}, upserted=${upserted}, newOffset=${newOffset}/${productIds.length}, isDone=${isDone}`);
 
-    // Self-chain if more products remain
     if (!isDone) {
-      console.log(`[ingest-acc-catalog] Self-chaining for offset ${newOffset}...`);
-      await invokeSelf(supabase, newOffset, productIds, dateStr);
+      // Self-chain: pass only offset + dateStr (IDs are stored in the bucket)
+      await invokeSelf(newOffset, dateStr);
+      console.log(`[ingest-acc-catalog] Self-chain triggered for offset ${newOffset}`);
     } else {
-      // Final run: query ALL acc records from DB to build complete CSV
-      console.log("[ingest-acc-catalog] All products processed! Generating final CSV...");
+      // Final batch — generate full CSV from DB
+      console.log("[ingest-acc-catalog] Final batch — generating CSV from DB...");
       const { data: allRows, error: queryErr } = await supabase
         .from("catalog_products")
         .select("style_number, brand, title, description, base_price, image_url, updated_at")
@@ -537,14 +562,14 @@ Deno.serve(async (req) => {
         console.error("[ingest-acc-catalog] CSV query error:", queryErr.message);
       } else if (allRows && allRows.length > 0) {
         const csv = recordsToCsv(allRows);
-        await saveArchive(supabase, `acc-${dateStr}.csv`, csv, "csv");
+        await saveArchive(supabase, `acc/csv/acc-${dateStr}.csv`, csv, "text/csv");
         console.log(`[ingest-acc-catalog] CSV saved: acc/csv/acc-${dateStr}.csv (${allRows.length} rows)`);
       }
 
       // Save final JSON summary
       await saveArchive(
         supabase,
-        `acc-${dateStr}.json`,
+        `acc/acc-${dateStr}.json`,
         JSON.stringify({
           fetchedAt: new Date().toISOString(),
           method,
@@ -552,17 +577,13 @@ Deno.serve(async (req) => {
           status: "complete",
         }, null, 2)
       );
+      console.log("[ingest-acc-catalog] Complete.");
     }
 
     return new Response(
       JSON.stringify({
-        method,
-        offset,
-        chunkProcessed: records.length,
-        upserted,
-        totalIds: productIds.length,
-        newOffset,
-        isDone,
+        method, offset, chunkProcessed: records.length, upserted,
+        totalIds: productIds.length, newOffset, isDone,
         errors: errors.slice(0, 10),
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
