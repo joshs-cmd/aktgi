@@ -41,10 +41,13 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
   };
 
   // Collect all unique sizes from all products, sorted by order
+  // Exclude pending distributors from all calculations
+  const visibleResultsForCalc = results.filter(r => r.status !== "pending");
+
   const allSizes = useMemo(() => {
     const sizeMap = new Map<string, number>();
     
-    results.forEach((result) => {
+    visibleResultsForCalc.forEach((result) => {
       const sizes = getSizesForResult(result);
       sizes.forEach((size) => {
         if (!sizeMap.has(size.code) || sizeMap.get(size.code)! > size.order) {
@@ -65,7 +68,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
     allSizes.forEach((sizeCode) => {
       let minPrice = Infinity;
       
-      results.forEach((result) => {
+      visibleResultsForCalc.forEach((result) => {
         if (result.status === "success") {
           const sizes = getSizesForResult(result);
           const size = sizes.find((s) => s.code === sizeCode);
@@ -110,7 +113,10 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
     return hasCapped ? `${formatted}+` : formatted;
   };
 
-  if (results.length === 0) {
+  // Hide distributors that are not yet connected (pending = not active)
+  const visibleResults = results.filter(r => r.status !== "pending");
+
+  if (visibleResults.length === 0) {
     return null;
   }
 
@@ -130,7 +136,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
           </TableRow>
         </TableHeader>
         <TableBody>
-          {results.map((result) => {
+          {visibleResults.map((result) => {
             const sizes = getSizesForResult(result);
             
             return (
@@ -186,7 +192,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
           })}
 
           {/* Aggregate Total Row */}
-          {results.some(r => r.status === "success") && (
+          {visibleResults.some(r => r.status === "success") && (
             <TableRow className="bg-muted/50 font-semibold border-t-2">
               <TableCell className="font-bold">Total</TableCell>
               <TableCell />
@@ -195,7 +201,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                 let hasSSCap = false;
                 let hasSanMarCap = false;
 
-                results.forEach((result) => {
+                visibleResults.forEach((result) => {
                   if (result.status !== "success") return;
                   const sizes = getSizesForResult(result);
                   const size = sizes.find((s) => s.code === sizeCode);
@@ -231,7 +237,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                   {(() => {
                     let grandTotal = 0;
                     let hasCap = false;
-                    results.forEach((result) => {
+                    visibleResults.forEach((result) => {
                       if (result.status !== "success") return;
                       const sizes = getSizesForResult(result);
                       const { total, hasCapped } = getTotalStock(sizes);
