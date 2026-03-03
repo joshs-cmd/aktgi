@@ -560,10 +560,27 @@ Deno.serve(async (req) => {
 
       if (queryErr) {
         console.error("[ingest-acc-catalog] CSV query error:", queryErr.message);
-      } else if (allRows && allRows.length > 0) {
-        const csv = recordsToCsv(allRows);
-        await saveArchive(supabase, `acc/csv/acc-${dateStr}.csv`, csv, "text/csv");
-        console.log(`[ingest-acc-catalog] CSV saved: acc/csv/acc-${dateStr}.csv (${allRows.length} rows)`);
+      } else {
+        // Paginate to overcome the 1,000-row default limit
+        let allRowsPaginated: typeof allRows = allRows ?? [];
+        let page = 1;
+        while (allRowsPaginated && allRowsPaginated.length === page * 1000) {
+          const { data: nextPage } = await supabase
+            .from("catalog_products")
+            .select("style_number, brand, title, description, base_price, image_url, updated_at")
+            .eq("distributor", "acc")
+            .order("style_number")
+            .range(page * 1000, page * 1000 + 999);
+          if (nextPage && nextPage.length > 0) {
+            allRowsPaginated = [...allRowsPaginated, ...nextPage];
+          }
+          page++;
+        }
+        if (allRowsPaginated && allRowsPaginated.length > 0) {
+          const csv = recordsToCsv(allRowsPaginated);
+          await saveArchive(supabase, `acc/csv/acc-${dateStr}.csv`, csv, "text/csv");
+          console.log(`[ingest-acc-catalog] CSV saved: acc/csv/acc-${dateStr}.csv (${allRowsPaginated.length} rows)`);
+        }
       }
 
       // Save final JSON summary
