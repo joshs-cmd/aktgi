@@ -7,7 +7,8 @@ const corsHeaders = {
 };
 
 const BUCKET = "distributor-archives";
-const DISTRIBUTORS = ["sanmar", "ss-activewear", "onestop", "acc"];
+// For ACC we list both the root folder (JSON) and the csv subfolder
+const DISTRIBUTORS = ["sanmar", "ss-activewear", "onestop"];
 const FILES_PER_DISTRIBUTOR = 7;
 
 Deno.serve(async (req) => {
