@@ -260,11 +260,22 @@ function aggregateItemsWithPricing(
     const sizeEntry = colorEntry.sizesMap.get(normalizedSizeCode)!;
     sizeEntry.quantity += item.on_hand || 0;
 
-    // Look up price by OneStop SKU code (e.g. "GD-110-36-XL") from the pricing endpoint
+    // Look up price by OneStop SKU code (e.g. "GD-110-36-XL") from the pricing endpoint.
+    // Fallback: use the color-group price (all sizes of a color share one representative price).
     if (sizeEntry.price === 0 && item.code) {
       const skuPrice = skuPriceMap.get(item.code);
       if (skuPrice && skuPrice > 0) {
         sizeEntry.price = skuPrice;
+      } else {
+        // Try color-key fallback: strip the last segment (size) and look up __color__prefix
+        const parts = item.code.split("-");
+        if (parts.length > 1) {
+          const colorKey = `__color__${parts.slice(0, -1).join("-")}`;
+          const colorPrice = skuPriceMap.get(colorKey);
+          if (colorPrice && colorPrice > 0) {
+            sizeEntry.price = colorPrice;
+          }
+        }
       }
     }
   }
