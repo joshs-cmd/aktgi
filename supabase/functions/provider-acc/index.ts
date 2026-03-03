@@ -425,20 +425,18 @@ async function fetchProductInfo(
   // Try PromoStandards Product Data Service v2.0.0 if ACC supports it.
   // Many distributors expose it at a similar path; we'll attempt and fall back gracefully.
   const PS_PRODUCT_ENDPOINT = "https://promo.acc-api.com/live/productData.php";
+  // Correct namespace: ProductDataService/2.0.0 with shar prefix (validated against ACC docs)
   const reqBody = `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:ns="http://www.promostandards.org/WSDL/ProductData/2.0.0/"
-                  xmlns:shared="http://www.promostandards.org/WSDL/ProductData/2.0.0/SharedObjects/">
+                  xmlns:ns="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/"
+                  xmlns:shar="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/">
   <soapenv:Header/>
   <soapenv:Body>
     <ns:GetProductRequest>
-      <shared:wsVersion>2.0.0</shared:wsVersion>
-      <shared:id>${escapeXml(username)}</shared:id>
-      <shared:password>${escapeXml(password)}</shared:password>
-      <shared:localizationCountry>US</shared:localizationCountry>
-      <shared:localizationLanguage>en</shared:localizationLanguage>
-      <shared:productId>${escapeXml(productId)}</shared:productId>
-      <shared:isSellable>true</shared:isSellable>
+      <shar:wsVersion>2.0.0</shar:wsVersion>
+      <shar:id>${escapeXml(username)}</shar:id>
+      <shar:password>${escapeXml(password)}</shar:password>
+      <shar:productId>${escapeXml(productId)}</shar:productId>
     </ns:GetProductRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
