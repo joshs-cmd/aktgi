@@ -356,6 +356,11 @@ async function fetchPricingBySku(
     const url = `${ONESTOP_API_BASE}/items/pricing/?skus=${encodeURIComponent(batch.join(","))}`;
     console.log(`[provider-onestop] Fetching pricing batch [${i}..${i + batch.length}]: ${url}`);
 
+    // Delay between batches to avoid 429 rate-limiting
+    if (i > 0) {
+      await new Promise((res) => setTimeout(res, BATCH_DELAY_MS));
+    }
+
     try {
       const res = await fetch(url, { headers: (fetchOpts.headers as HeadersInit), signal: AbortSignal.timeout(20_000) });
       if (!res.ok) {
@@ -364,30 +369,31 @@ async function fetchPricingBySku(
       }
 
       const data = await res.json();
-      // Response format: { results: [ { "GD-110-36-XL": { pricing: { my_price, piece, dozen, case }, price_level, ... } } ] }
       const results: Record<string, unknown>[] = Array.isArray(data.results) ? data.results : [];
 
-      console.log(`[provider-onestop] Pricing batch raw sample: ${JSON.stringify(data).substring(0, 600)}`);
-
       for (const resultItem of results) {
-        // Each result item is a dict keyed by sku_code
         for (const [skuKey, skuData] of Object.entries(resultItem)) {
           if (!skuData || typeof skuData !== "object") continue;
           const d = skuData as Record<string, unknown>;
           const pricing = d.pricing as Record<string, unknown> | undefined;
-
           if (!pricing) continue;
 
-          // Determine price factor: divide by 10^price_factor (default 2 = cents)
           const pfactor = Number(d.pfactor ?? d.price_factor ?? 2);
           const divisor = Math.pow(10, pfactor);
 
-          // my_price = the price you pay, as an integer in cents
           const myPriceRaw = pricing.my_price ?? pricing.piece ?? pricing.dozen ?? pricing.case;
           if (typeof myPriceRaw === "number" && myPriceRaw > 0) {
             const price = myPriceRaw / divisor;
+            // Store price keyed by representative SKU
             priceMap.set(skuKey, price);
-            console.log(`[provider-onestop] SKU ${skuKey}: my_price=${myPriceRaw} / ${divisor} = $${price.toFixed(2)} (level: ${d.price_level})`);
+            // Also store price keyed by color group prefix so all sizes of that
+            // color get the price even though we only fetched one representative SKU
+            const parts = skuKey.split("-");
+            if (parts.length > 1) {
+              const colorKey = parts.slice(0, -1).join("-");
+              priceMap.set(`__color__${colorKey}`, price);
+            }
+            console.log(`[provider-onestop] SKU ${skuKey}: $${price.toFixed(2)}`);
           }
         }
       }
@@ -396,7 +402,7 @@ async function fetchPricingBySku(
     }
   }
 
-  console.log(`[provider-onestop] fetchPricingBySku: resolved ${priceMap.size} prices for ${skuCodes.length} SKUs`);
+  console.log(`[provider-onestop] fetchPricingBySku: resolved ${priceMap.size} price entries for ${rawSkuCodes.length} SKUs`);
   return priceMap;
 }
 
