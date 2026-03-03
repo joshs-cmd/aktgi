@@ -231,9 +231,11 @@ async function fetchAllProductIds(
   console.log(`[ingest-acc-catalog] Found ${items.length} ProductDateModified entries`);
 
   // Deduplicate productIds (multiple partIds per product)
+  // productId has inline xmlns attr so parser returns {"#text": "HN5280", "@_xmlns": "..."}
   const seen = new Set<string>();
   for (const item of items) {
-    const id = String(item?.productId || item?.["ns2:productId"] || "").trim();
+    const raw = item?.productId ?? item?.["ns2:productId"] ?? "";
+    const id = (typeof raw === "object" ? String(raw?.["#text"] ?? "") : String(raw)).trim();
     if (id) seen.add(id);
   }
   const uniqueIds = Array.from(seen);
