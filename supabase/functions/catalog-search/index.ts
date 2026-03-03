@@ -50,6 +50,7 @@ const BRAND_ALIASES: [RegExp, string][] = [
   [/a4/i,                                          "A4"],
   [/district(\s*made)?/i,                          "DISTRICT"],
   [/new\s*era/i,                                   "NEW ERA"],
+  [/augusta\s*sportswear/i,                        "AUGUSTA SPORTSWEAR"],
 ];
 
 // Ordered longest-first so "BST" is tried before bare "B" etc.
@@ -67,37 +68,94 @@ const BRAND_PREFIX_MAP: Record<string, string[]> = {
   "NEW ERA":             ["NE"],
   "INDEPENDENT TRADING": ["IND"],
   "ALTERNATIVE":         ["AA"],
+  "ECONSCIOUS":          ["EC"],
 };
+
+/**
+ * Slugify a brand string for fuzzy comparison.
+ * Strips all punctuation/spaces so "Bella + Canvas", "Bella+Canvas",
+ * "BELLA+CANVAS", "Bella & Canvas" all collapse to "BELLACANVAS".
+ */
+function brandSlug(brand: string): string {
+  return brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+// Pre-computed slug map: slug → canonical brand name
+const BRAND_SLUG_MAP: Map<string, string> = (() => {
+  const m = new Map<string, string>();
+  for (const [pattern, canonical] of BRAND_ALIASES) {
+    // Derive a slug from each alias pattern's source string (strip regex meta chars)
+    m.set(brandSlug(canonical), canonical);
+  }
+  return m;
+})();
 
 function normalizeBrandName(brand: string): string {
   const s = brand.trim();
+  // First try exact regex match (most precise)
   for (const [pattern, canonical] of BRAND_ALIASES) {
     if (pattern.test(s)) return canonical;
   }
+  // Fallback: slug-based lookup handles punctuation/spacing variants
+  const slug = brandSlug(s);
+  const fromSlug = BRAND_SLUG_MAP.get(slug);
+  if (fromSlug) return fromSlug;
   return s.toUpperCase();
 }
+
+/**
+ * ALL known prefixes ordered longest-first for prefix-agnostic stripping.
+ * Used when we want to normalise a bare style number whose brand is unknown
+ * or ambiguous (e.g. S&S "3001" for Bella+Canvas, SanMar "BC3001").
+ */
+const ALL_PREFIXES_LONGEST_FIRST: string[] = Object.values(BRAND_PREFIX_MAP)
+  .flat()
+  .sort((a, b) => b.length - a.length);
 
 /**
  * Strips the brand-specific distributor prefix from a style number.
  * Returns the bare numeric+suffix portion (e.g. "BC3001" → "3001",
  * "G5000L" → "5000L"). Suffixes like L/Y/B/T are intentionally preserved.
+ *
+ * When brand is provided, only that brand's prefixes are tried (precise).
+ * When brand is omitted or unknown, ALL known prefixes are tried (broad).
  */
 function getCanonicalBase(styleNumber: string, brand: string): string {
   const normalBrand = normalizeBrandName(brand);
   const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const prefixes = BRAND_PREFIX_MAP[normalBrand] ?? [];
-  for (const prefix of prefixes) {
+
+  // Try brand-specific prefixes first (most accurate)
+  const brandPrefixes = BRAND_PREFIX_MAP[normalBrand] ?? [];
+  for (const prefix of brandPrefixes) {
     if (sn.startsWith(prefix) && sn.length > prefix.length) {
       const rest = sn.slice(prefix.length);
       if (/^\d/.test(rest)) return rest;
     }
   }
+
+  // If no brand-specific prefix matched, try all known prefixes.
+  // This handles cases where S&S/OneStop store a bare "3001" but SanMar stores
+  // "BC3001" — both must resolve to the same canonical base "3001".
+  for (const prefix of ALL_PREFIXES_LONGEST_FIRST) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length) {
+      const rest = sn.slice(prefix.length);
+      if (/^\d/.test(rest)) return rest;
+    }
+  }
+
   return sn;
 }
 
-/** Dedup key: "<CANONICAL_BRAND>::<CANONICAL_BASE>" */
+/**
+ * Dedup key uses a SLUG of the brand (strips all punctuation/spaces) to
+ * prevent "Bella + Canvas" vs "Bella+Canvas" from producing different keys.
+ * Format: "<BRAND_SLUG>::<CANONICAL_BASE>"
+ */
 function getCanonicalKey(styleNumber: string, brand: string): string {
-  return `${normalizeBrandName(brand)}::${getCanonicalBase(styleNumber, brand)}`;
+  const normalBrand = normalizeBrandName(brand);
+  const base = getCanonicalBase(styleNumber, brand);
+  // Use slug for key so punctuation variants don't split groups
+  return `${brandSlug(normalBrand)}::${base}`;
 }
 
 // Keep a simple alias for legacy callers inside this file
