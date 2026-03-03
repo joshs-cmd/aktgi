@@ -1,5 +1,27 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const ARCHIVE_BUCKET = "distributor-archives";
+
+async function saveArchive(
+  supabase: ReturnType<typeof createClient>,
+  distributor: string,
+  filename: string,
+  content: string | Uint8Array,
+  contentType: string
+): Promise<void> {
+  try {
+    const path = `${distributor}/${filename}`;
+    const body = typeof content === "string" ? new TextEncoder().encode(content) : content;
+    const { error } = await supabase.storage
+      .from(ARCHIVE_BUCKET)
+      .upload(path, body, { contentType, upsert: true });
+    if (error) console.warn(`[archive] Failed to save ${path}: ${error.message}`);
+    else console.log(`[archive] Saved ${path} (${body.byteLength} bytes)`);
+  } catch (e) {
+    console.warn(`[archive] Exception saving archive: ${e}`);
+  }
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -223,6 +245,13 @@ Deno.serve(async (req) => {
     }
 
     console.log(`[ingest-sanmar] Chunk: ${dataLines.length} data lines, ${mapped.length} unique styles`);
+
+    // Save raw CSV chunk archive on first chunk (offset=0) only to avoid duplicate files per day
+    if (startOffset === 0) {
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const csvContent = [headerLine, ...dataLines].join("\n");
+      await saveArchive(supabase, "sanmar", `sanmar-${dateStr}.csv`, csvContent, "text/csv");
+    }
 
     // Upsert to DB
     const supabase = createClient(

@@ -1,5 +1,30 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const BUCKET = "distributor-archives";
+
+async function saveArchive(
+  supabase: ReturnType<typeof createClient>,
+  distributor: string,
+  filename: string,
+  content: string | Uint8Array,
+  contentType: string
+): Promise<void> {
+  try {
+    const path = `${distributor}/${filename}`;
+    const body = typeof content === "string" ? new TextEncoder().encode(content) : content;
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, body, { contentType, upsert: true });
+    if (error) {
+      console.warn(`[archive] Failed to save ${path}: ${error.message}`);
+    } else {
+      console.log(`[archive] Saved ${path} (${body.byteLength} bytes)`);
+    }
+  } catch (e) {
+    console.warn(`[archive] Exception saving archive: ${e}`);
+  }
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -175,6 +200,10 @@ Deno.serve(async (req) => {
 
     const rows = Array.from(styleMap.values());
     console.log(`[ingest-onestop] Total fetched=${totalFetched} unique=${rows.length}`);
+
+    // Save raw catalog snapshot to storage archive before processing
+    const dateStr = new Date().toISOString().slice(0, 10);
+    await saveArchive(supabase, "onestop", `onestop-${dateStr}.json`, JSON.stringify(rows), "application/json");
 
     // Enrich base_price using the documented /items/pricing/?skus= endpoint.
     // We need actual SKU codes (e.g. "GD-110-36-XL") but during catalog ingest we only have
