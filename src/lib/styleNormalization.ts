@@ -34,10 +34,23 @@ const BRAND_ALIASES: [RegExp, string][] = [
   [/augusta\s*sportswear/i,                       "AUGUSTA SPORTSWEAR"],
 ];
 
+/**
+ * Slugify brand for fuzzy key comparison — strips all punctuation/spaces.
+ * "Bella + Canvas", "Bella+Canvas", "BELLA+CANVAS" → "BELLACANVAS"
+ */
+export function brandSlug(brand: string): string {
+  return brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
 export function normalizeBrandName(brand: string): string {
   const s = brand.trim();
   for (const [pattern, canonical] of BRAND_ALIASES) {
     if (pattern.test(s)) return canonical;
+  }
+  // Slug fallback: "Bella+Canvas" → "BELLACANVAS" → matches "BELLA+CANVAS" slug
+  const slug = brandSlug(s);
+  for (const [, canonical] of BRAND_ALIASES) {
+    if (brandSlug(canonical) === slug) return canonical;
   }
   return s.toUpperCase();
 }
@@ -63,6 +76,14 @@ const BRAND_PREFIX_MAP: Record<string, string[]> = {
   "ALTERNATIVE":        ["AA"],
   "ECONSCIOUS":         ["EC"],
 };
+
+/**
+ * All known prefixes ordered longest-first.
+ * Used for broad stripping when brand context is missing/ambiguous.
+ */
+const ALL_PREFIXES_LONGEST_FIRST: string[] = Object.values(BRAND_PREFIX_MAP)
+  .flat()
+  .sort((a, b) => b.length - a.length);
 
 // ---------------------------------------------------------------------------
 // Core function
@@ -96,13 +117,22 @@ export function getCanonicalStyle(styleNumber: string, brand: string): Canonical
   const normalBrand = normalizeBrandName(brand);
   const sn = styleNumber.trim().toUpperCase().replace(/\s+/g, "");
 
+  // 1. Try brand-specific prefixes first (precise)
   const prefixes = BRAND_PREFIX_MAP[normalBrand] ?? [];
-
   for (const prefix of prefixes) {
     if (sn.startsWith(prefix) && sn.length > prefix.length) {
       const rest = sn.slice(prefix.length);
-      // Only strip the prefix when the remainder starts with a digit
-      // This prevents stripping "BC" from a style like "BCKIT" (hypothetical non-numeric).
+      if (/^\d/.test(rest)) {
+        return { base: rest, brand: normalBrand, prefixStripped: true };
+      }
+    }
+  }
+
+  // 2. Broad fallback: try ALL known prefixes so bare "3001" from S&S/OneStop
+  //    resolves to the same base as SanMar's "BC3001".
+  for (const prefix of ALL_PREFIXES_LONGEST_FIRST) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length) {
+      const rest = sn.slice(prefix.length);
       if (/^\d/.test(rest)) {
         return { base: rest, brand: normalBrand, prefixStripped: true };
       }
@@ -114,11 +144,13 @@ export function getCanonicalStyle(styleNumber: string, brand: string): Canonical
 
 /**
  * Builds the lookup key used for deduplication across distributors.
- * Format: "<CANONICAL_BRAND>::<BASE_STYLE>"
+ * Uses a brand SLUG (strips punctuation/spaces) so "Bella + Canvas" and
+ * "Bella+Canvas" don't produce different keys.
+ * Format: "<BRAND_SLUG>::<BASE_STYLE>"
  */
 export function getCanonicalKey(styleNumber: string, brand: string): string {
   const { base, brand: b } = getCanonicalStyle(styleNumber, brand);
-  return `${b}::${base}`;
+  return `${brandSlug(b)}::${base}`;
 }
 
 /**
