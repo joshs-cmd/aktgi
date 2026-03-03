@@ -325,7 +325,7 @@ async function fetchPricingBySku(
     console.log(`[provider-onestop] Fetching pricing batch [${i}..${i + batch.length}]: ${url}`);
 
     try {
-      const res = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(12_000) });
+      const res = await fetch(url, { headers: (fetchOpts.headers as HeadersInit), signal: AbortSignal.timeout(20_000) });
       if (!res.ok) {
         console.warn(`[provider-onestop] Pricing batch HTTP ${res.status} for skus: ${batch.join(",")}`);
         continue;
@@ -394,19 +394,23 @@ serve(async (req) => {
       );
     }
 
-    const fetchOpts: RequestInit = {
-      headers: {
-        "Authorization": `Token ${apiToken}`,
-        "Accept": "application/json; version=1.0",
-      },
-      signal: AbortSignal.timeout(10_000),
+    // Build fetch options WITHOUT a shared signal — each call gets its own timeout below
+    const fetchHeaders = {
+      "Authorization": `Token ${apiToken}`,
+      "Accept": "application/json; version=1.0",
     };
+
+    const fetchWithTimeout = (url: string, timeoutMs = 15_000): Promise<Response> =>
+      fetch(url, { headers: fetchHeaders, signal: AbortSignal.timeout(timeoutMs) });
+
+    // Keep fetchOpts for passing to fetchPricingBySku (headers only, no shared signal)
+    const fetchOpts: RequestInit = { headers: fetchHeaders };
 
     // Step 1: Search catalog with flat=Y to find the OneStop style code
     const searchUrl = `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
     console.log(`[provider-onestop] Catalog search: ${searchUrl}`);
 
-    const catalogRes = await fetch(searchUrl, fetchOpts);
+    const catalogRes = await fetchWithTimeout(searchUrl, 15_000);
     if (!catalogRes.ok) {
       const body = await catalogRes.text();
       console.error(`[provider-onestop] Catalog search failed ${catalogRes.status}: ${body.substring(0, 500)}`);
@@ -451,7 +455,7 @@ serve(async (req) => {
     const inventoryUrl = `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(bestStyleCode)}`;
     console.log(`[provider-onestop] Fetching inventory: ${inventoryUrl}`);
 
-    const invRes = await fetch(inventoryUrl, fetchOpts);
+    const invRes = await fetchWithTimeout(inventoryUrl, 20_000);
     if (!invRes.ok) {
       console.error(`[provider-onestop] Inventory fetch failed: ${invRes.status}`);
       return new Response(
