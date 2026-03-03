@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.provider-onestop]
 verify_jwt = false
+
+[functions.provider-acc]
+verify_jwt = false
