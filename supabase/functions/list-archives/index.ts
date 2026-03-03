@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 const BUCKET = "distributor-archives";
-const DISTRIBUTORS = ["sanmar", "ss-activewear", "onestop"];
+const DISTRIBUTORS = ["sanmar", "ss-activewear", "onestop", "acc"];
 const FILES_PER_DISTRIBUTOR = 7;
 
 Deno.serve(async (req) => {

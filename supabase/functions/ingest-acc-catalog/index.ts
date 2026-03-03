@@ -276,12 +276,15 @@ async function fetchProductDetail(
       resp?.["Product"] || resp;
     if (!productEl) return null;
 
-    const name = String(
-      productEl?.productName || productEl?.["ns2:productName"] || productId
-    ).trim();
-    const brand = String(
-      productEl?.brandName || productEl?.["ns2:brandName"] || "Atlantic Coast Cotton"
-    ).trim();
+    // Helper to unwrap XML parsed values that may be objects with "#text"
+    const unwrap = (val: any): string => {
+      if (val == null) return "";
+      if (typeof val === "object") return String(val["#text"] ?? val["__text"] ?? "").trim();
+      return String(val).trim();
+    };
+
+    const name = unwrap(productEl?.productName ?? productEl?.["ns2:productName"]) || productId;
+    const brand = unwrap(productEl?.brandName ?? productEl?.["ns2:brandName"]) || "Atlantic Coast Cotton";
 
     // Try to get image from ProductPartArray → primaryColor
     let imageUrl: string | undefined;
@@ -299,10 +302,7 @@ async function fetchProductDetail(
       if (primaryImg) { imageUrl = primaryImg; break; }
     }
 
-    const description = String(
-      productEl?.description || productEl?.["ns2:description"] ||
-      productEl?.productDescription || ""
-    ).trim() || undefined;
+    const description = (unwrap(productEl?.description ?? productEl?.["ns2:description"] ?? productEl?.productDescription)) || undefined;
 
     return { name, brand, imageUrl, description };
   } catch {
@@ -485,11 +485,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Dedup by style_number
+    // Dedup by style_number, filter out garbage
     const seen = new Set<string>();
     const uniqueRecords = records.filter(r => {
-      if (seen.has(r.style_number)) return false;
-      seen.add(r.style_number);
+      const sn: string = r.style_number ?? "";
+      if (!sn || sn === "OBJECTOBJECT" || sn.length < 2) return false;
+      if (seen.has(sn)) return false;
+      seen.add(sn);
       return true;
     });
 
