@@ -22,7 +22,7 @@ const BRAND_ALIASES: [RegExp, string][] = [
   [/port\s*&?\s*company/i,                "PORT & COMPANY"],
   [/comfort\s*colors?/i,                  "COMFORT COLORS"],
   [/gildan/i,                             "GILDAN"],
-  [/hanes/i,                             "HANES"],
+  [/hanes/i,                              "HANES"],
   [/jerzees/i,                            "JERZEES"],
   [/\ba4\b/i,                             "A4"],
   [/district(\s*made)?/i,                 "DISTRICT"],
@@ -69,7 +69,7 @@ function getCanonicalBase(styleNumber: string, brand: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// XML helpers
 // ---------------------------------------------------------------------------
 function escapeXml(str: string): string {
   return str
@@ -80,9 +80,12 @@ function escapeXml(str: string): string {
 function getEnvelopeBody(parsed: any): any | null {
   const env =
     parsed["soapenv:Envelope"] || parsed["soap:Envelope"] ||
-    parsed["S:Envelope"] || parsed.Envelope;
+    parsed["SOAP-ENV:Envelope"] || parsed["S:Envelope"] || parsed.Envelope;
   if (!env) return null;
-  return env["soapenv:Body"] || env["soap:Body"] || env["S:Body"] || env.Body || null;
+  return (
+    env["soapenv:Body"] || env["soap:Body"] ||
+    env["SOAP-ENV:Body"] || env["S:Body"] || env.Body || null
+  );
 }
 
 async function saveArchive(
@@ -100,140 +103,155 @@ async function saveArchive(
 }
 
 // ---------------------------------------------------------------------------
-// Fetch all product IDs via PromoStandards ProductData v2.0.0
+// GetProductDateModified — returns all productIds modified since a timestamp
+// Use a very old date to get the full catalog on first run.
+// Correct namespace: ProductDataService/2.0.0 with shar prefix
 // ---------------------------------------------------------------------------
-function buildGetProductSellableRequest(username: string, password: string): string {
+function buildGetProductDateModifiedRequest(
+  changeTimeStamp: string,
+  username: string,
+  password: string
+): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:ns="http://www.promostandards.org/WSDL/ProductData/2.0.0/"
-                  xmlns:shared="http://www.promostandards.org/WSDL/ProductData/2.0.0/SharedObjects/">
+                  xmlns:ns="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/"
+                  xmlns:shar="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/">
   <soapenv:Header/>
   <soapenv:Body>
-    <ns:GetProductSellableRequest>
-      <shared:wsVersion>2.0.0</shared:wsVersion>
-      <shared:id>${escapeXml(username)}</shared:id>
-      <shared:password>${escapeXml(password)}</shared:password>
-      <shared:isSellable>true</shared:isSellable>
-      <shared:localizationCountry>US</shared:localizationCountry>
-      <shared:localizationLanguage>en</shared:localizationLanguage>
-    </ns:GetProductSellableRequest>
+    <ns:GetProductDateModifiedRequest>
+      <shar:wsVersion>2.0.0</shar:wsVersion>
+      <shar:id>${escapeXml(username)}</shar:id>
+      <shar:password>${escapeXml(password)}</shar:password>
+      <shar:changeTimeStamp>${escapeXml(changeTimeStamp)}</shar:changeTimeStamp>
+    </ns:GetProductDateModifiedRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
 
+// GetProductRequest — correct namespace with shar prefix
 function buildGetProductRequest(productId: string, username: string, password: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:ns="http://www.promostandards.org/WSDL/ProductData/2.0.0/"
-                  xmlns:shared="http://www.promostandards.org/WSDL/ProductData/2.0.0/SharedObjects/">
+                  xmlns:ns="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/"
+                  xmlns:shar="http://www.promostandards.org/WSDL/ProductDataService/2.0.0/SharedObjects/">
   <soapenv:Header/>
   <soapenv:Body>
     <ns:GetProductRequest>
-      <shared:wsVersion>2.0.0</shared:wsVersion>
-      <shared:id>${escapeXml(username)}</shared:id>
-      <shared:password>${escapeXml(password)}</shared:password>
-      <shared:localizationCountry>US</shared:localizationCountry>
-      <shared:localizationLanguage>en</shared:localizationLanguage>
-      <shared:productId>${escapeXml(productId)}</shared:productId>
-      <shared:isSellable>true</shared:isSellable>
+      <shar:wsVersion>2.0.0</shar:wsVersion>
+      <shar:id>${escapeXml(username)}</shar:id>
+      <shar:password>${escapeXml(password)}</shar:password>
+      <shar:productId>${escapeXml(productId)}</shar:productId>
     </ns:GetProductRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
 
+// Pricing — correct namespace with shar prefix, minimal required fields
 function buildPricingRequest(productId: string, username: string, password: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
                   xmlns:ns="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/"
-                  xmlns:shared="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">
+                  xmlns:shar="http://www.promostandards.org/WSDL/PricingAndConfiguration/1.0.0/SharedObjects/">
   <soapenv:Header/>
   <soapenv:Body>
     <ns:GetConfigurationAndPricingRequest>
-      <shared:wsVersion>1.0.0</shared:wsVersion>
-      <shared:id>${escapeXml(username)}</shared:id>
-      <shared:password>${escapeXml(password)}</shared:password>
-      <shared:productId>${escapeXml(productId)}</shared:productId>
-      <shared:currency>USD</shared:currency>
-      <shared:fobId>1</shared:fobId>
-      <shared:priceType>Customer</shared:priceType>
-      <shared:localizationCountry>US</shared:localizationCountry>
-      <shared:localizationLanguage>en</shared:localizationLanguage>
-      <shared:configurationType>Blank</shared:configurationType>
+      <shar:wsVersion>1.0.0</shar:wsVersion>
+      <shar:id>${escapeXml(username)}</shar:id>
+      <shar:password>${escapeXml(password)}</shar:password>
+      <shar:productId>${escapeXml(productId)}</shar:productId>
+      <shar:priceType>Customer</shar:priceType>
     </ns:GetConfigurationAndPricingRequest>
   </soapenv:Body>
 </soapenv:Envelope>`;
 }
 
-interface ProductSummary {
-  productId: string;
-  productName?: string;
-  brandName?: string;
-  primaryImageUrl?: string;
-  productCategory?: string;
-}
-
-async function fetchSellableProducts(
+// ---------------------------------------------------------------------------
+// Fetch all ACC product IDs via GetProductDateModified
+// ---------------------------------------------------------------------------
+async function fetchAllProductIds(
   username: string,
   password: string,
   parser: XMLParser
-): Promise<ProductSummary[]> {
+): Promise<string[]> {
+  // ACC allows max 15 days lookback. Use 14 days to stay within limit.
+  // For first run / full catalog, this still covers all recently active items.
+  // Subsequent daily runs keep everything fresh.
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 14);
+  const changeTimeStamp = cutoff.toISOString().split("T")[0].replace(/-/g, "");
   const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "text/xml; charset=utf-8",
-      "SOAPAction": '"GetProductSellable"',
+      "SOAPAction": '"GetProductDateModified"',
     },
-    body: buildGetProductSellableRequest(username, password),
+    body: buildGetProductDateModifiedRequest(changeTimeStamp, username, password),
     signal: AbortSignal.timeout(30000),
   });
 
   if (!res.ok) {
-    throw new Error(`GetProductSellable HTTP ${res.status}`);
+    throw new Error(`GetProductDateModified HTTP ${res.status}`);
   }
 
   const xml = await res.text();
-  console.log(`[ingest-acc-catalog] GetProductSellable response (${xml.length} chars): ${xml.substring(0, 500)}`);
+  console.log(`[ingest-acc-catalog] GetProductDateModified response (${xml.length} chars): ${xml.substring(0, 600)}`);
 
   const parsed = parser.parse(xml);
   const bodyEl = getEnvelopeBody(parsed);
-  if (!bodyEl) throw new Error("No SOAP body in GetProductSellable response");
+  if (!bodyEl) throw new Error("No SOAP body in GetProductDateModified response");
 
+  // Find response key
+  // ACC response uses default namespace — keys will be bare (no ns: prefix)
   const respKey = Object.keys(bodyEl).find(k =>
-    k.toLowerCase().includes("productsellable") || k.toLowerCase().includes("getproduct")
+    k.toLowerCase().includes("productdatemodified") ||
+    k.toLowerCase().includes("getproductdate")
   );
+
+  console.log(`[ingest-acc-catalog] GetProductDateModified body keys: ${Object.keys(bodyEl).join(", ")}`);
+
   if (!respKey) {
-    console.log(`[ingest-acc-catalog] GetProductSellable keys: ${Object.keys(bodyEl).join(", ")}`);
-    throw new Error("No ProductSellable response key found");
+    const errorKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("error") || k.toLowerCase().includes("fault") || k.toLowerCase().includes("service"));
+    if (errorKey) throw new Error(`ACC API error: ${JSON.stringify(bodyEl[errorKey]).substring(0, 200)}`);
+    throw new Error(`No ProductDateModified key. Keys: ${Object.keys(bodyEl).join(", ")}`);
   }
 
   const resp = bodyEl[respKey];
-  const productArrayEl =
-    resp?.["ns2:ProductSellableArray"] || resp?.ProductSellableArray ||
-    resp?.["ns2:ProductArray"] || resp?.ProductArray || resp;
+  console.log(`[ingest-acc-catalog] GetProductDateModified resp keys: ${Object.keys(resp || {}).join(", ")}`);
 
-  const rawProducts =
-    productArrayEl?.["ns2:ProductSellable"] || productArrayEl?.ProductSellable ||
-    productArrayEl?.["ns2:Product"] || productArrayEl?.Product || [];
+  // ACC response: GetProductDateModifiedResponse > ProductDateModifiedArray > ProductDateModified[]
+  const arrayEl =
+    resp?.ProductDateModifiedArray || resp?.["ns2:ProductDateModifiedArray"] ||
+    resp?.ProductDateArray || resp?.["ns2:ProductDateArray"] || resp;
 
-  const products = Array.isArray(rawProducts) ? rawProducts : (rawProducts ? [rawProducts] : []);
-  console.log(`[ingest-acc-catalog] Found ${products.length} sellable products`);
+  const rawItems =
+    arrayEl?.ProductDateModified || arrayEl?.["ns2:ProductDateModified"] ||
+    arrayEl?.ProductDate || arrayEl?.["ns2:ProductDate"] || [];
 
-  return products.map((p: any) => ({
-    productId: String(p?.productId || p?.["ns2:productId"] || "").trim(),
-    productName: String(p?.productName || p?.["ns2:productName"] || p?.name || "").trim() || undefined,
-    brandName: String(p?.brandName || p?.["ns2:brandName"] || p?.brand || "").trim() || undefined,
-    primaryImageUrl: String(p?.primaryImageUrl || p?.["ns2:primaryImageUrl"] || p?.imageUrl || "").trim() || undefined,
-    productCategory: String(p?.productCategory || p?.["ns2:productCategory"] || "").trim() || undefined,
-  })).filter((p: ProductSummary) => p.productId);
+  const items = Array.isArray(rawItems) ? rawItems : (rawItems ? [rawItems] : []);
+  console.log(`[ingest-acc-catalog] Found ${items.length} ProductDateModified entries`);
+
+  // Deduplicate productIds (multiple partIds per product)
+  // productId has inline xmlns attr so parser returns {"#text": "HN5280", "@_xmlns": "..."}
+  const seen = new Set<string>();
+  for (const item of items) {
+    const raw = item?.productId ?? item?.["ns2:productId"] ?? "";
+    const id = (typeof raw === "object" ? String(raw?.["#text"] ?? "") : String(raw)).trim();
+    if (id) seen.add(id);
+  }
+  const uniqueIds = Array.from(seen);
+  console.log(`[ingest-acc-catalog] Unique product IDs: ${uniqueIds.length}`);
+  return uniqueIds;
 }
 
-/** Fetch a single product's detailed metadata (for brand, image, description). */
+// ---------------------------------------------------------------------------
+// Fetch single product detail
+// ---------------------------------------------------------------------------
 async function fetchProductDetail(
   productId: string,
   username: string,
   password: string,
   parser: XMLParser
-): Promise<{ brand: string; name: string; imageUrl?: string; description?: string; category?: string } | null> {
+): Promise<{ brand: string; name: string; imageUrl?: string; description?: string } | null> {
   try {
     const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
       method: "POST",
@@ -253,22 +271,48 @@ async function fetchProductDetail(
     const respKey = Object.keys(bodyEl).find(k => k.toLowerCase().includes("product"));
     if (!respKey) return null;
     const resp = bodyEl[respKey];
-    const productEl = resp?.["ns2:Product"] || resp?.Product || resp?.product;
+    const productEl =
+      resp?.["ns2:Product"] || resp?.Product || resp?.product ||
+      resp?.["Product"] || resp;
     if (!productEl) return null;
 
-    return {
-      name: String(productEl?.productName || productEl?.["ns2:productName"] || productId).trim(),
-      brand: String(productEl?.brandName || productEl?.["ns2:brandName"] || "Atlantic Coast Cotton").trim(),
-      imageUrl: String(productEl?.primaryImageUrl || productEl?.["ns2:primaryImageUrl"] || "").trim() || undefined,
-      description: String(productEl?.description || productEl?.["ns2:description"] || "").trim() || undefined,
-      category: String(productEl?.productCategory || productEl?.["ns2:productCategory"] || "").trim() || undefined,
-    };
+    const name = String(
+      productEl?.productName || productEl?.["ns2:productName"] || productId
+    ).trim();
+    const brand = String(
+      productEl?.brandName || productEl?.["ns2:brandName"] || "Atlantic Coast Cotton"
+    ).trim();
+
+    // Try to get image from ProductPartArray → primaryColor
+    let imageUrl: string | undefined;
+    const partArrayEl =
+      productEl?.["ns2:ProductPartArray"] || productEl?.ProductPartArray;
+    const rawParts =
+      (partArrayEl?.["ns2:ProductPart"] || partArrayEl?.ProductPart) ?? [];
+    const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
+    for (const part of parts) {
+      const primaryImg = String(
+        part?.primaryImage || part?.["ns2:primaryImage"] ||
+        part?.ColorAppearanceArray?.["ns2:ColorAppearance"]?.colorImageUrl ||
+        ""
+      ).trim();
+      if (primaryImg) { imageUrl = primaryImg; break; }
+    }
+
+    const description = String(
+      productEl?.description || productEl?.["ns2:description"] ||
+      productEl?.productDescription || ""
+    ).trim() || undefined;
+
+    return { name, brand, imageUrl, description };
   } catch {
     return null;
   }
 }
 
-/** Fetch the lowest piece price for a product from the pricing endpoint. */
+// ---------------------------------------------------------------------------
+// Fetch lowest piece price for a product
+// ---------------------------------------------------------------------------
 async function fetchBasePrice(
   productId: string,
   username: string,
@@ -299,8 +343,12 @@ async function fetchBasePrice(
     if (!respKey) return null;
 
     const resp = bodyEl[respKey];
-    const configuration = resp?.["ns2:Configuration"] || resp?.Configuration || resp?.configuration;
-    const partArrayEl = configuration?.["ns2:PartArray"] || configuration?.PartArray || configuration?.partArray;
+    const configuration =
+      resp?.["ns2:Configuration"] || resp?.Configuration || resp?.configuration;
+    if (!configuration) return null;
+
+    const partArrayEl =
+      configuration?.["ns2:PartArray"] || configuration?.PartArray || configuration?.partArray;
     const rawParts =
       (partArrayEl?.["ns2:Part"] || partArrayEl?.Part || partArrayEl?.part) ??
       (configuration?.["ns2:Part"] || configuration?.Part || configuration?.part);
@@ -310,8 +358,10 @@ async function fetchBasePrice(
 
     let lowestPrice: number | null = null;
     for (const part of parts) {
-      const priceArrayEl = part?.["ns2:PartPriceArray"] || part?.PartPriceArray || part?.partPriceArray;
-      const rawPrices = priceArrayEl?.["ns2:PartPrice"] || priceArrayEl?.PartPrice || priceArrayEl?.partPrice;
+      const priceArrayEl =
+        part?.["ns2:PartPriceArray"] || part?.PartPriceArray || part?.partPriceArray;
+      const rawPrices =
+        priceArrayEl?.["ns2:PartPrice"] || priceArrayEl?.PartPrice || priceArrayEl?.partPrice;
       if (!rawPrices) continue;
       const priceList = Array.isArray(rawPrices) ? rawPrices : [rawPrices];
       for (const p of priceList) {
@@ -361,61 +411,61 @@ Deno.serve(async (req) => {
       trimValues: true,
     });
 
-    console.log("[ingest-acc-catalog] Fetching sellable product list...");
-    const sellableProducts = await fetchSellableProducts(username, password, parser);
+    console.log("[ingest-acc-catalog] Fetching all product IDs via GetProductDateModified...");
+    const productIds = await fetchAllProductIds(username, password, parser);
 
-    if (sellableProducts.length === 0) {
+    if (productIds.length === 0) {
       return new Response(
-        JSON.stringify({ message: "No sellable products found", upserted: 0 }),
+        JSON.stringify({ message: "No products found from GetProductDateModified", upserted: 0 }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Save raw index as archive
+    console.log(`[ingest-acc-catalog] Processing ${productIds.length} product IDs...`);
+
+    // Archive the raw product ID list
     const dateStr = new Date().toISOString().split("T")[0];
     await saveArchive(
       supabase,
       `acc-${dateStr}.json`,
-      JSON.stringify({ fetchedAt: new Date().toISOString(), products: sellableProducts }, null, 2)
+      JSON.stringify({
+        fetchedAt: new Date().toISOString(),
+        totalProducts: productIds.length,
+        productIds,
+      }, null, 2)
     );
-    console.log(`[ingest-acc-catalog] Archived ${sellableProducts.length} product stubs to acc/acc-${dateStr}.json`);
 
-    // Enrich + upsert in batches — fetch detailed metadata + pricing per product
-    // We do this in small concurrent batches to avoid hammering ACC API
-    const CONCURRENCY = 5;
+    // Enrich in small concurrent batches to avoid overwhelming ACC API
+    const CONCURRENCY = 3;
     const records: any[] = [];
     const errors: string[] = [];
 
-    for (let i = 0; i < sellableProducts.length; i += CONCURRENCY) {
-      const chunk = sellableProducts.slice(i, i + CONCURRENCY);
+    for (let i = 0; i < productIds.length; i += CONCURRENCY) {
+      const chunk = productIds.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
-        chunk.map(async (stub) => {
-          const [detail, basePrice] = await Promise.allSettled([
-            fetchProductDetail(stub.productId, username, password, parser),
-            fetchBasePrice(stub.productId, username, password, parser),
+        chunk.map(async (productId) => {
+          const [detailResult, basePriceResult] = await Promise.allSettled([
+            fetchProductDetail(productId, username, password, parser),
+            fetchBasePrice(productId, username, password, parser),
           ]);
 
-          const detailVal = detail.status === "fulfilled" ? detail.value : null;
-          const basePriceVal = basePrice.status === "fulfilled" ? basePrice.value : null;
+          const detail = detailResult.status === "fulfilled" ? detailResult.value : null;
+          const basePrice = basePriceResult.status === "fulfilled" ? basePriceResult.value : null;
 
-          const brand = detailVal?.brand || stub.brandName || "Atlantic Coast Cotton";
-          const title = detailVal?.name || stub.productName || stub.productId;
-          const imageUrl = detailVal?.imageUrl || stub.primaryImageUrl || null;
-          const description = detailVal?.description || null;
-          const category = detailVal?.category || stub.productCategory || null;
+          const brand = detail?.brand || "ATLANTIC COAST COTTON";
+          const title = detail?.name || productId;
 
-          // Apply canonical normalization so ACC styles merge with existing cards
-          const canonicalStyleNumber = getCanonicalBase(stub.productId, brand);
+          // Apply canonical normalization so ACC styles merge with cards from other distributors
+          const canonicalStyleNumber = getCanonicalBase(productId, brand);
 
           return {
             distributor: "acc",
             brand,
-            // Store the canonical (prefix-stripped) style number so dedup works
             style_number: canonicalStyleNumber,
             title,
-            description,
-            image_url: imageUrl,
-            base_price: basePriceVal ?? null,
+            description: detail?.description || null,
+            image_url: detail?.imageUrl || null,
+            base_price: basePrice ?? null,
             updated_at: new Date().toISOString(),
           };
         })
@@ -429,13 +479,13 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Brief pause between batches to be a good API citizen
-      if (i + CONCURRENCY < sellableProducts.length) {
-        await new Promise(resolve => setTimeout(resolve, 300));
+      // Throttle between batches
+      if (i + CONCURRENCY < productIds.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
 
-    // Dedup by style_number (keep first)
+    // Dedup by style_number
     const seen = new Set<string>();
     const uniqueRecords = records.filter(r => {
       if (seen.has(r.style_number)) return false;
@@ -462,7 +512,7 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        fetchedProducts: sellableProducts.length,
+        fetchedProducts: productIds.length,
         uniqueStyles: uniqueRecords.length,
         upserted,
         errors: errors.slice(0, 20),
