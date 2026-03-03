@@ -1,4 +1,5 @@
 import { SearchBar } from "@/components/SearchBar";
+import aktLogo from "@/assets/aktlogo.png";
 import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
@@ -50,16 +51,19 @@ const SearchGallery = () => {
         <div className="container mx-auto px-4 py-6">
           <div className="flex items-center justify-between w-full">
             <div className="flex items-center gap-3">
-              <h1
-                className="text-2xl font-bold tracking-tight cursor-pointer hover:text-primary transition-colors"
+              <div
+                className="flex items-center gap-3 cursor-pointer"
                 onClick={() => {
                   lastQueryRef.current = null;
                   clearResults();
                   navigate("/", { replace: true });
                 }}
               >
-                AKT Garment Inventory
-              </h1>
+                <img src={aktLogo} alt="AKT" className="h-8 w-auto" />
+                <h1 className="text-2xl font-bold tracking-tight hover:text-primary transition-colors">
+                  Garment Inventory
+                </h1>
+              </div>
               <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
                 Beta
               </span>
