@@ -134,13 +134,14 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Hardcoded distributor roster (5 distributors)
+    // Hardcoded distributor roster
     const distributors = [
-      { id: "sanmar-001", code: "sanmar", name: "SanMar", is_active: true },
-      { id: "ss-activewear-001", code: "ss-activewear", name: "S&S Activewear", is_active: true },
-      { id: "onestop-001", code: "onestop", name: "OneStop", is_active: true },
-      { id: "as-colour-001", code: "as-colour", name: "AS Colour", is_active: false },
-      { id: "mccreary-001", code: "mccreary", name: "McCreary's", is_active: false },
+      { id: "sanmar-001",        code: "sanmar",        name: "SanMar",                 is_active: true  },
+      { id: "ss-activewear-001", code: "ss-activewear", name: "S&S Activewear",          is_active: true  },
+      { id: "onestop-001",       code: "onestop",       name: "OneStop",                 is_active: true  },
+      { id: "acc-001",           code: "acc",           name: "Atlantic Coast Cotton",   is_active: true  },
+      { id: "as-colour-001",     code: "as-colour",     name: "AS Colour",               is_active: false },
+      { id: "mccreary-001",      code: "mccreary",      name: "McCreary's",              is_active: false },
     ];
 
     console.log(`[sourcing-engine] Using hardcoded roster: ${distributors.length} distributors`);
