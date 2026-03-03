@@ -2,15 +2,18 @@ import { SearchBar } from "@/components/SearchBar";
 import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
-import { AlertCircle, Search, Loader2 } from "lucide-react";
+import { AlertCircle, Search, Loader2, HardDrive } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useRef } from "react";
+import { getAuthState } from "@/types/auth";
 
 const SearchGallery = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { role } = getAuthState();
   const { isLoading, response, error, search, clearResults } = useCatalogSearch();
   const lastQueryRef = useRef<string | null>(null);
 
@@ -45,20 +48,33 @@ const SearchGallery = () => {
       {/* Header */}
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-6">
-        <div className="flex items-center gap-3">
-          <h1
-            className="text-2xl font-bold tracking-tight cursor-pointer hover:text-primary transition-colors"
-            onClick={() => {
-              lastQueryRef.current = null;
-              clearResults();
-              navigate("/", { replace: true });
-            }}
-          >
-            AKT Garment Inventory
-          </h1>
-            <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
-              Beta
-            </span>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-3">
+              <h1
+                className="text-2xl font-bold tracking-tight cursor-pointer hover:text-primary transition-colors"
+                onClick={() => {
+                  lastQueryRef.current = null;
+                  clearResults();
+                  navigate("/", { replace: true });
+                }}
+              >
+                AKT Garment Inventory
+              </h1>
+              <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
+                Beta
+              </span>
+            </div>
+            {role === "admin" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate("/admin/data-management")}
+                className="gap-2 text-muted-foreground hover:text-foreground"
+              >
+                <HardDrive className="h-4 w-4" />
+                Data Management
+              </Button>
+            )}
           </div>
         </div>
       </header>

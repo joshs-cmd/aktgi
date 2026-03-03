@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import SearchGallery from "./pages/SearchGallery";
 import ProductDetail from "./pages/ProductDetail";
+import DataManagement from "./pages/DataManagement";
 import NotFound from "./pages/NotFound";
 import { Gatekeeper } from "@/components/Gatekeeper";
 import { UserRole, getAuthState, AUTH_SESSION_KEY, ROLE_SESSION_KEY } from "@/types/auth";
@@ -49,6 +50,7 @@ const App = () => {
           <Routes>
             <Route path="/" element={<SearchGallery />} />
             <Route path="/product" element={<ProductDetail userRole={userRole} />} />
+            <Route path="/admin/data-management" element={<DataManagement />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

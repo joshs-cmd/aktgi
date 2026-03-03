@@ -1,6 +1,31 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const BUCKET = "distributor-archives";
+
+async function saveArchive(
+  supabase: ReturnType<typeof createClient>,
+  distributor: string,
+  filename: string,
+  content: string | Uint8Array,
+  contentType: string
+): Promise<void> {
+  try {
+    const path = `${distributor}/${filename}`;
+    const body = typeof content === "string" ? new TextEncoder().encode(content) : content;
+    const { error } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, body, { contentType, upsert: true });
+    if (error) {
+      console.warn(`[archive] Failed to save ${path}: ${error.message}`);
+    } else {
+      console.log(`[archive] Saved ${path} (${body.byteLength} bytes)`);
+    }
+  } catch (e) {
+    console.warn(`[archive] Exception saving archive: ${e}`);
+  }
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -94,6 +119,11 @@ serve(async (req) => {
     const allVariants = await fetchAllStyles();
     totalFetched = allVariants.length;
     console.log(`[ingest-ss-catalog] Fetched ${totalFetched} variant rows`);
+
+    // Save raw JSON archive before processing
+    const dateStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const archiveFilename = `ss-activewear-${dateStr}.json`;
+    await saveArchive(supabase, "ss-activewear", archiveFilename, JSON.stringify(allVariants), "application/json");
 
     // Deduplicate by styleName — keep the variant with the best (non-null) colorFrontImage
     const styleMap = new Map<string, Record<string, unknown>>();
