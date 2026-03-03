@@ -10,8 +10,8 @@ const corsHeaders = {
 const BUCKET = "distributor-archives";
 const DB_BATCH_SIZE = 500;
 const CONCURRENCY = 4;
-const CHUNK_SIZE = 80;
-const SAFETY_CUTOFF_MS = 48_000;
+const CHUNK_SIZE = 50;
+const SAFETY_CUTOFF_MS = 42_000;
 const ACC_PRODUCT_DATA_ENDPOINT = "https://promo.acc-api.com/live/productData.php";
 const ACC_PRICING_ENDPOINT      = "https://promo.acc-api.com/live/productPricingAndConfig.php";
 
