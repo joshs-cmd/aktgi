@@ -173,8 +173,12 @@ async function fetchAllProductIds(
   password: string,
   parser: XMLParser
 ): Promise<string[]> {
-  // Use a date far in the past to get ALL products
-  const changeTimeStamp = "20100101";
+  // ACC allows max 15 days lookback. Use 14 days to stay within limit.
+  // For first run / full catalog, this still covers all recently active items.
+  // Subsequent daily runs keep everything fresh.
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 14);
+  const changeTimeStamp = cutoff.toISOString().split("T")[0].replace(/-/g, "");
   const res = await fetch(ACC_PRODUCT_DATA_ENDPOINT, {
     method: "POST",
     headers: {
