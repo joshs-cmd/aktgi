@@ -18,54 +18,70 @@ const ACC_PRICING_ENDPOINT      = "https://promo.acc-api.com/live/productPricing
 // ---------------------------------------------------------------------------
 // Brand normalization
 // ---------------------------------------------------------------------------
-const BRAND_ALIASES: [RegExp, string][] = [
-  [/bella\s*[\+&]\s*canvas|bellacanvas/i, "BELLA+CANVAS"],
-  [/next\s*level(\s*apparel)?/i,          "NEXT LEVEL"],
-  [/sport[\s\-]?tek/i,                    "SPORT-TEK"],
-  [/port\s*&?\s*company/i,                "PORT & COMPANY"],
-  [/comfort\s*colors?/i,                  "COMFORT COLORS"],
-  [/gildan/i,                             "GILDAN"],
-  [/hanes/i,                              "HANES"],
-  [/jerzees/i,                            "JERZEES"],
-  [/\ba4\b/i,                             "A4"],
-  [/district(\s*made)?/i,                 "DISTRICT"],
-  [/new\s*era/i,                          "NEW ERA"],
-  [/independent\s*trading(\s*co\.?)?/i,   "INDEPENDENT TRADING"],
-  [/alternative(\s*apparel)?/i,           "ALTERNATIVE"],
+
+/**
+ * ACC-specific: map 2-letter style prefix → canonical brand name.
+ * The productId from ACC carries the prefix (e.g. "BC3001"), so we derive
+ * the brand from the prefix BEFORE calling the API.
+ * Ordered longest-first so "BE" doesn't beat "BG", etc.
+ */
+const ACC_PREFIX_TO_BRAND: [string, string][] = [
+  ["BC", "Bella + Canvas"],
+  ["BE", "Bella + Canvas"],
+  ["NL", "Next Level"],
+  ["GL", "Gildan"],
+  ["HN", "Hanes"],
+  ["CC", "Comfort Colors"],
+  ["CP", "Champion"],
+  ["CV", "Code V"],
+  ["BS", "Burnside"],
+  ["BA", "Badger"],
+  ["BG", "Badger"],
+  ["DK", "Dickies"],
+  ["DN", "Dyenomite"],
+  ["RS", "Rabbit Skins"],
+  ["AA", "American Apparel"],
+  ["AS", "American Apparel"],
+  ["AN", "Anvil"],
+  ["CW", "ComfortWash"],
+  ["AG", "Augusta Sportswear"],
+  ["YP", "Yupoong"],
+  ["VH", "Van Heusen"],
 ];
 
-const BRAND_PREFIX_MAP: Record<string, string[]> = {
-  "BELLA+CANVAS":        ["BC"],
-  "NEXT LEVEL":          ["NL"],
-  "A4":                  ["A4"],
-  "GILDAN":              ["GH400", "GH000", "G"],
-  "SPORT-TEK":           ["BST", "ST"],
-  "PORT & COMPANY":      ["PC"],
-  "COMFORT COLORS":      ["CC"],
-  "DISTRICT":            ["DT"],
-  "JERZEES":             ["J"],
-  "HANES":               ["H"],
-  "NEW ERA":             ["NE"],
-  "INDEPENDENT TRADING": ["IND"],
-  "ALTERNATIVE":         ["AA"],
-};
+/**
+ * Prefixes that are stripped from ACC style numbers before storing in the DB,
+ * so they align with the canonical base used by SanMar / S&S / OneStop.
+ * Only stripped when followed by a digit.
+ */
+const ACC_STRIP_PREFIXES: string[] = ACC_PREFIX_TO_BRAND.map(([p]) => p);
 
-function normalizeBrandName(brand: string): string {
-  const s = brand.trim();
-  for (const [pattern, canonical] of BRAND_ALIASES) {
-    if (pattern.test(s)) return canonical;
+/**
+ * Given an ACC productId (e.g. "BC3001"), return the real brand name.
+ * Falls back to the raw brandName from the API if no prefix match.
+ */
+function getBrandFromAccProductId(productId: string, apiBrand?: string): string {
+  const sn = productId.trim().toUpperCase();
+  for (const [prefix, brand] of ACC_PREFIX_TO_BRAND) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
+      return brand;
+    }
   }
-  return s.toUpperCase();
+  // Fall back to API brand if it's meaningful (not the generic distributor name)
+  if (apiBrand && apiBrand.toLowerCase() !== "atlantic coast cotton") return apiBrand;
+  return "Atlantic Coast Cotton";
 }
 
-function getCanonicalBase(styleNumber: string, brand: string): string {
-  const normalBrand = normalizeBrandName(brand);
-  const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const prefixes = BRAND_PREFIX_MAP[normalBrand] ?? [];
-  for (const prefix of prefixes) {
-    if (sn.startsWith(prefix) && sn.length > prefix.length) {
-      const rest = sn.slice(prefix.length);
-      if (/^\d/.test(rest)) return rest;
+/**
+ * Strip the ACC 2-letter prefix from a style number so it stores as the
+ * canonical base (e.g. "BC3001" → "3001"). The full original productId is
+ * always passed to the ACC API for pricing / inventory.
+ */
+function getCanonicalBase(styleNumber: string): string {
+  const sn = styleNumber.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  for (const prefix of ACC_STRIP_PREFIXES) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
+      return sn.slice(prefix.length);
     }
   }
   return sn;
@@ -496,9 +512,11 @@ Deno.serve(async (req) => {
           ]);
           const detail = detailResult.status === "fulfilled" ? detailResult.value : null;
           const basePrice = basePriceResult.status === "fulfilled" ? basePriceResult.value : null;
-          const brand = detail?.brand || "ATLANTIC COAST COTTON";
+          // Derive brand from style prefix first; fall back to API-supplied brand
+          const brand = getBrandFromAccProductId(productId, detail?.brand);
           const title = detail?.name || productId;
-          const canonicalStyleNumber = getCanonicalBase(productId, brand);
+          // Strip the 2-letter ACC prefix so the style_number aligns with SanMar/S&S canonical keys
+          const canonicalStyleNumber = getCanonicalBase(productId);
           return {
             distributor: "acc",
             brand,
