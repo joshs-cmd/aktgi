@@ -512,9 +512,11 @@ Deno.serve(async (req) => {
           ]);
           const detail = detailResult.status === "fulfilled" ? detailResult.value : null;
           const basePrice = basePriceResult.status === "fulfilled" ? basePriceResult.value : null;
-          const brand = detail?.brand || "ATLANTIC COAST COTTON";
+          // Derive brand from style prefix first; fall back to API-supplied brand
+          const brand = getBrandFromAccProductId(productId, detail?.brand);
           const title = detail?.name || productId;
-          const canonicalStyleNumber = getCanonicalBase(productId, brand);
+          // Strip the 2-letter ACC prefix so the style_number aligns with SanMar/S&S canonical keys
+          const canonicalStyleNumber = getCanonicalBase(productId);
           return {
             distributor: "acc",
             brand,
