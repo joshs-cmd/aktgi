@@ -8,7 +8,7 @@ const corsHeaders = {
 
 const BUCKET = "distributor-archives";
 const DISTRIBUTORS = ["sanmar", "ss-activewear", "onestop"];
-const FILES_PER_DISTRIBUTOR = 7;
+const FILES_PER_DISTRIBUTOR = 1;
 
 type ArchiveFile = { name: string; size: number; created_at: string; downloadUrl: string };
 

@@ -196,7 +196,7 @@ export default function DataManagement() {
                       </div>
                     </div>
                     <CardDescription className="text-xs">
-                      Last 7 sync snapshots · 1-hour download links
+                      Latest sync snapshot · 1-hour download link
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="p-0">
