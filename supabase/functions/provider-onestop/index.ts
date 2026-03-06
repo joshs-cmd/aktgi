@@ -10,6 +10,49 @@ const corsHeaders = {
 const ONESTOP_API_BASE = "https://api.onestopinc.com";
 const ONESTOP_MEDIA_BASE = "https://media.onestopinc.com/";
 
+// ---------- Known OneStop Internal Style Aliases ----------
+// Maps normalized query strings (uppercase, alphanum only) to the OneStop internal style code.
+// These are curated overrides for cases where the API search returns the wrong primary match
+// or where the manufacturer style is stored under a different OneStop-internal identifier.
+const ONESTOP_ALIAS_MAP: Record<string, string> = {
+  // Gildan
+  "GILDAN5000":   "GD210",
+  "G5000":        "GD210",
+  "5000":         "GD210",    // bare style — only applied after brand context confirms Gildan
+  "GILDAN18500":  "GD280",
+  "G18500":       "GD280",
+  "GILDAN64000":  "GD640",
+  "G64000":       "GD640",
+  "GILDAN2000":   "GD200",
+  "G2000":        "GD200",
+  // Bella + Canvas
+  "BC3001":       "CV207",
+  "3001":         "CV207",
+  "BELLA3001":    "CV207",
+  "BC3001CVC":    "CV207CVC",
+  "BC3001Y":      "CV207Y",
+  "BC3005":       "CV265",
+  "BC3413":       "CV208",
+  "BC3415":       "CV2015",
+  "BC3501":       "CV201",
+  "BC3719":       "CV291",
+  "BC6400":       "CV206",
+  "BC6405":       "CV404",
+  // Port & Company
+  "PC54":         "PC54",
+  "PC61":         "PC61",
+  "PC78H":        "PC78H",
+  "PC90H":        "PC90H",
+  // Next Level
+  "NL3600":       "NL3600",
+  "NL6210":       "NL6210",
+  // Hanes
+  "HANES5280":    "HN5280",
+  "5280":         "HN5280",
+  "HANES5250":    "HN5250",
+  "HANES5170":    "HN5170",
+};
+
 // ---------- Size Normalization ----------
 
 function normalizeSize(sizeCode: string): string {
@@ -499,22 +542,54 @@ serve(async (req) => {
       );
     }
 
-    // Find best matching style (exact mill_style_code or style_code match first)
+    // -------- Multi-step style resolution --------
     const queryUpper = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    let bestEntry = styleEntries[0];
-    for (const entry of styleEntries) {
-      const info = entry[1] as Record<string, unknown>;
-      const millStyle = ((info.mill_style_code as string) || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const fullStyle = (entry[0]).toUpperCase().replace(/[^A-Z0-9]/g, "");
-      if (millStyle === queryUpper || fullStyle === queryUpper) {
-        bestEntry = entry;
-        break;
+
+    // Step A: check local alias map first
+    let resolvedStyleCode: string | null = ONESTOP_ALIAS_MAP[queryUpper] ?? null;
+    let resolutionMethod = "alias-map";
+
+    if (resolvedStyleCode) {
+      console.log(`[provider-onestop] Resolved "${query}" to internal SKU "${resolvedStyleCode}" via ${resolutionMethod}`);
+    }
+
+    // Step B: try exact match from search results (mill_style_code or OneStop code)
+    if (!resolvedStyleCode) {
+      for (const entry of styleEntries) {
+        const info = entry[1] as Record<string, unknown>;
+        const millStyle = ((info.mill_style_code as string) || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const fullStyle = entry[0].toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (millStyle === queryUpper || fullStyle === queryUpper) {
+          resolvedStyleCode = entry[0];
+          resolutionMethod = "exact-search-match";
+          console.log(`[provider-onestop] Resolved "${query}" to internal SKU "${resolvedStyleCode}" via ${resolutionMethod}`);
+          break;
+        }
       }
     }
 
-    const [bestStyleCode, bestInfoRaw] = bestEntry;
-    const bestInfo = bestInfoRaw as Record<string, unknown>;
-    console.log(`[provider-onestop] Best match: ${bestStyleCode} (${bestInfo.web_name})`);
+    // Step C: fall back to first search result (best-ranked)
+    if (!resolvedStyleCode) {
+      resolvedStyleCode = styleEntries[0][0];
+      resolutionMethod = "search-fallback";
+      console.log(`[provider-onestop] Resolved "${query}" to internal SKU "${resolvedStyleCode}" via ${resolutionMethod} (first search result)`);
+    }
+
+    // Now look up the entry for the resolved style code — check alias-resolved first, then fall back
+    let bestEntry = styleEntries.find(([k]) => k === resolvedStyleCode) ?? styleEntries[0];
+
+    // If the alias pointed to a code NOT in the search results, we need to do a direct style fetch
+    // by re-using the resolvedStyleCode directly in the inventory call (skip styleEntries lookup)
+    const aliasResolved = resolutionMethod === "alias-map" && !styleEntries.find(([k]) => k === resolvedStyleCode);
+    if (aliasResolved) {
+      console.log(`[provider-onestop] Alias-resolved style "${resolvedStyleCode}" not in search results — will fetch directly`);
+      bestEntry = styleEntries[0]; // use first for metadata, override style code below
+    }
+
+    const bestStyleCode = aliasResolved ? resolvedStyleCode : bestEntry[0];
+    const bestInfo = bestEntry[1] as Record<string, unknown>;
+    console.log(`[provider-onestop] Using internal style: ${bestStyleCode} (${bestInfo.web_name ?? "—"})`);
+    // -------- End resolution --------
 
     // FIX 3: Look up catalog base_price as fallback for colors/sizes that don't get a live price
     let catalogFallbackPrice = 0;
