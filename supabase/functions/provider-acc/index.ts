@@ -488,15 +488,28 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
 
       const warehouses: { code: string; name: string; qty: number }[] = [];
       for (const loc of locs) {
-        // inventoryLocationId and inventoryLocationName may be xmlns-wrapped objects
-        const locCode = extractText(
-          loc?.inventoryLocationId ?? loc?.["ns2:inventoryLocationId"] ??
-          loc?.InventoryLocationId ?? loc?.locationId ?? loc?.LocationId ?? "DEFAULT"
-        ) || "DEFAULT";
-        const locName = extractText(
-          loc?.inventoryLocationName ?? loc?.["ns2:inventoryLocationName"] ??
-          loc?.InventoryLocationName ?? loc?.locationName ?? locCode
-        ) || locCode;
+        // When using the flat fallback, the "loc" IS the part — skip location ID extraction
+        // and log so we can see when this fires
+        let locCode: string;
+        let locName: string;
+        if (usedFlatFallback) {
+          locCode = "ACC";
+          locName = "Atlantic Coast Cotton";
+          if (warehouses.length === 0) {
+            // Only log once per part to avoid spam
+            console.log(`[provider-acc] Flat fallback for partId=${partId}, keys=${Object.keys(loc || {}).join(", ")}`);
+          }
+        } else {
+          // inventoryLocationId and inventoryLocationName may be xmlns-wrapped objects
+          locCode = extractText(
+            loc?.inventoryLocationId ?? loc?.["ns2:inventoryLocationId"] ??
+            loc?.InventoryLocationId ?? loc?.locationId ?? loc?.LocationId ?? ""
+          ) || "ACC";
+          locName = extractText(
+            loc?.inventoryLocationName ?? loc?.["ns2:inventoryLocationName"] ??
+            loc?.InventoryLocationName ?? loc?.locationName ?? ""
+          ) || locCode;
+        }
 
         // Quantity extraction — priority order across all known ACC structural variations
         let qty = 0;
