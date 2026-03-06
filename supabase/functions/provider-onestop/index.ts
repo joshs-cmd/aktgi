@@ -143,6 +143,7 @@ function aggregateItemsWithPricing(
     sizesMap: Map<string, { code: string; order: number; quantity: number; price: number }>;
   }>();
 
+  // --- PASS 1: Build color/size structure and assign any directly-resolved prices ---
   for (const item of items) {
     if (item.active_flag && item.active_flag !== "Y") continue;
 
@@ -175,41 +176,52 @@ function aggregateItemsWithPricing(
     const sizeEntry = colorEntry.sizesMap.get(normalizedSizeCode)!;
     sizeEntry.quantity += item.on_hand || 0;
 
-    // --- FIX 1: Price Broadcasting ---
-    // Step 1: Try direct SKU lookup
+    // Step 1: Direct SKU lookup
     if (sizeEntry.price === 0 && item.code) {
       const skuPrice = skuPriceMap.get(item.code);
-      if (skuPrice && skuPrice > 0) {
-        sizeEntry.price = skuPrice;
-      }
+      if (skuPrice && skuPrice > 0) sizeEntry.price = skuPrice;
     }
 
-    // Step 2: Try color-group broadcast key (populated during pricing fetch)
-    // This ensures ALL sizes of a color get the representative price even if only
-    // one size's SKU was fetched from the API.
+    // Step 2: Color-prefix broadcast key (__color__STYLE-COLORCODE)
     if (sizeEntry.price === 0 && item.code) {
       const parts = item.code.split("-");
       if (parts.length > 1) {
-        const colorKey = `__color__${parts.slice(0, -1).join("-")}`;
-        const colorPrice = skuPriceMap.get(colorKey);
-        if (colorPrice && colorPrice > 0) {
-          sizeEntry.price = colorPrice;
+        const colorPrice = skuPriceMap.get(`__color__${parts.slice(0, -1).join("-")}`);
+        if (colorPrice && colorPrice > 0) sizeEntry.price = colorPrice;
+      }
+    }
+
+    // Step 3: Color-name broadcast key (__colorname__White)
+    if (sizeEntry.price === 0) {
+      const colorNamePrice = skuPriceMap.get(`__colorname__${colorName}`);
+      if (colorNamePrice && colorNamePrice > 0) sizeEntry.price = colorNamePrice;
+    }
+  }
+
+  // --- PASS 2: Color-level sharing — if ANY size in a color has a price, broadcast to all ---
+  // This handles cases where the pricing API returned a price for one SKU but other
+  // sizes of the same color weren't in the representative batch.
+  for (const [colorName, colorEntry] of colorMap.entries()) {
+    const sizeValues = Array.from(colorEntry.sizesMap.values());
+    const representativePrice = sizeValues.find((s) => s.price > 0)?.price ?? 0;
+
+    if (representativePrice > 0) {
+      let sharedCount = 0;
+      for (const s of sizeValues) {
+        if (s.price === 0) {
+          s.price = representativePrice;
+          sharedCount++;
         }
       }
-    }
-
-    // Step 3: Try color-name broadcast key (set during pricing fetch as __colorname__<name>)
-    if (sizeEntry.price === 0) {
-      const colorNameKey = `__colorname__${colorName}`;
-      const colorNamePrice = skuPriceMap.get(colorNameKey);
-      if (colorNamePrice && colorNamePrice > 0) {
-        sizeEntry.price = colorNamePrice;
+      if (sharedCount > 0) {
+        console.log(`[provider-onestop] Shared price $${representativePrice.toFixed(2)} for color "${colorName}" across ${sharedCount} size(s)`);
       }
-    }
-
-    // Step 4: FIX 3 — Catalog base_price fallback so we never show a blank dash
-    if (sizeEntry.price === 0 && catalogFallbackPrice > 0) {
-      sizeEntry.price = catalogFallbackPrice;
+    } else if (catalogFallbackPrice > 0) {
+      // Step 4: DB catalog fallback — entire color had no price from API
+      for (const s of sizeValues) {
+        s.price = catalogFallbackPrice;
+      }
+      console.log(`[provider-onestop] Using catalog fallback $${catalogFallbackPrice.toFixed(2)} for color "${colorName}" (${sizeValues.length} size(s))`);
     }
   }
 
@@ -269,43 +281,65 @@ function deduplicateSkusByColor(skuCodes: string[]): string[] {
 }
 
 /**
- * FIX 2: For high-volume styles (Gildan 5000, BC 3001 etc.) with >100 color/size combos,
- * prioritize the top N most-stocked colors to ensure we get prices before timeout.
- * Returns one representative SKU per color, sorted by on_hand desc, capped at MAX_PRICING_SKUS.
+ * Optimize 2: Guarantee every unique color_name has at least one rep SKU.
+ * For high-volume styles (Gildan 5000, BC 3001 etc.) with >MAX_PRICING_SKUS color groups,
+ * first include ALL color_name groups (de-duped by color_name), then fill remaining
+ * slots with extra stock-sorted entries up to maxSkus.
  */
 function prioritizeSkusForPricing(
   items: OneStopItem[],
   maxSkus: number
 ): string[] {
-  // Group by color, track total on_hand per color and one representative SKU
+  // Group by colorKey (STYLE-COLORCODE prefix), track stock and rep SKU
   const colorGroups = new Map<string, { totalQty: number; repSku: string; colorName: string }>();
+  // Also track one rep SKU per colorName to ensure every named color is covered
+  const colorNameGroups = new Map<string, string>(); // colorName -> repSku
 
   for (const item of items) {
     if (!item.code || item.active_flag === "N") continue;
     const parts = item.code.split("-");
     const colorKey = parts.length > 1 ? parts.slice(0, -1).join("-") : item.code;
-    const existing = colorGroups.get(colorKey);
+    const colorName = item.color_name || "";
     const qty = item.on_hand || 0;
+    const normalized = normalizeSize(item.size_code || "");
+
+    const existing = colorGroups.get(colorKey);
     if (!existing) {
-      colorGroups.set(colorKey, { totalQty: qty, repSku: item.code, colorName: item.color_name || "" });
+      colorGroups.set(colorKey, { totalQty: qty, repSku: item.code, colorName });
     } else {
       existing.totalQty += qty;
-      // Prefer a medium size as representative (L or M) for more accurate pricing
-      const normalized = normalizeSize(item.size_code || "");
-      if (normalized === "L" || normalized === "M") {
-        existing.repSku = item.code;
-      }
+      // Prefer L or M as representative for more accurate pricing
+      if (normalized === "L" || normalized === "M") existing.repSku = item.code;
+    }
+
+    // Ensure every colorName has at least one SKU in the fetch list
+    if (colorName && !colorNameGroups.has(colorName)) {
+      colorNameGroups.set(colorName, item.code);
+    } else if (colorName && (normalized === "L" || normalized === "M")) {
+      colorNameGroups.set(colorName, item.code);
     }
   }
 
-  // Sort by total quantity descending (most-stocked colors first)
-  const sorted = Array.from(colorGroups.entries())
-    .sort((a, b) => b[1].totalQty - a[1].totalQty)
-    .slice(0, maxSkus)
-    .map(([, v]) => v.repSku);
+  // Build final list: start with one rep SKU per colorName (guarantees coverage),
+  // then add any additional colorKey-based reps sorted by stock up to maxSkus.
+  const seen = new Set<string>();
+  const result: string[] = [];
 
-  console.log(`[provider-onestop] prioritizeSkus: ${colorGroups.size} color groups → ${sorted.length} selected (max=${maxSkus})`);
-  return sorted;
+  // Phase 1: one SKU per color name
+  for (const sku of colorNameGroups.values()) {
+    if (!seen.has(sku)) { seen.add(sku); result.push(sku); }
+  }
+
+  // Phase 2: fill remaining slots with highest-stock color groups
+  const stockSorted = Array.from(colorGroups.values())
+    .sort((a, b) => b.totalQty - a.totalQty);
+  for (const g of stockSorted) {
+    if (result.length >= maxSkus) break;
+    if (!seen.has(g.repSku)) { seen.add(g.repSku); result.push(g.repSku); }
+  }
+
+  console.log(`[provider-onestop] prioritizeSkus: ${colorNameGroups.size} color names, ${colorGroups.size} color groups → ${result.length} selected (max=${maxSkus})`);
+  return result;
 }
 
 const MAX_PRICING_SKUS = 250;
@@ -434,14 +468,14 @@ serve(async (req) => {
       "Accept": "application/json; version=1.0",
     };
 
-    const fetchWithTimeout = (url: string, timeoutMs = 15_000): Promise<Response> =>
+    const fetchWithTimeout = (url: string, timeoutMs = 25_000): Promise<Response> =>
       fetch(url, { headers: fetchHeaders, signal: AbortSignal.timeout(timeoutMs) });
 
     // Step 1: Search catalog with flat=Y to find the OneStop style code
     const searchUrl = `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
     console.log(`[provider-onestop] Catalog search: ${searchUrl}`);
 
-    const catalogRes = await fetchWithTimeout(searchUrl, 15_000);
+    const catalogRes = await fetchWithTimeout(searchUrl, 25_000);
     if (!catalogRes.ok) {
       const errBody = await catalogRes.text();
       console.error(`[provider-onestop] Catalog search failed ${catalogRes.status}: ${errBody.substring(0, 500)}`);
@@ -559,9 +593,11 @@ serve(async (req) => {
       );
     }
 
-    if (bestInfo.mill_style_code && typeof bestInfo.mill_style_code === "string" && bestInfo.mill_style_code.length > 0) {
-      product.styleNumber = bestInfo.mill_style_code;
-    }
+    // Fix 4: Always resolve styleNumber — prefer mill_style_code, fall back to bestStyleCode, then the original query
+    product.styleNumber =
+      (typeof bestInfo.mill_style_code === "string" && bestInfo.mill_style_code.length > 0)
+        ? bestInfo.mill_style_code
+        : (product.styleNumber || bestStyleCode || query);
 
     const totalPricedSizes = product.colors.reduce((sum, c) => sum + c.sizes.filter(s => s.price > 0).length, 0);
     const totalSizes = product.colors.reduce((sum, c) => sum + c.sizes.length, 0);
