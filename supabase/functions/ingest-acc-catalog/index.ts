@@ -659,9 +659,9 @@ Deno.serve(async (req) => {
           ]);
           const detail = detailResult.status === "fulfilled" ? detailResult.value : null;
           const basePrice = basePriceResult.status === "fulfilled" ? basePriceResult.value : null;
-          // Derive brand from style prefix first; fall back to API-supplied brand
-          const brand = getBrandFromAccProductId(productId, detail?.brand);
           const title = detail?.name || productId;
+          // Derive brand from style prefix first; fall back to title keyword scan, then API brand
+          const brand = getBrandFromAccProductId(productId, detail?.brand, title);
           // Strip the 2-letter ACC prefix so the style_number aligns with SanMar/S&S canonical keys
           const canonicalStyleNumber = getCanonicalBase(productId);
           return {
