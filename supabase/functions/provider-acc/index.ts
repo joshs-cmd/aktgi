@@ -783,12 +783,34 @@ serve(async (req) => {
     // Re-prefix: the sourcing engine sends the canonical (stripped) style number.
     // ACC's PromoStandards API expects the original prefixed product ID (e.g. "BC3001",
     // "GL5000", "NL3600"). Use the brand from the request body to reconstruct it.
-    const rawBrand: string = (body.brand || "").trim();
+    let rawBrand: string = (body.brand || "").trim();
     const rawQuery = query.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
+
+    // Brand fallback: if brand wasn't supplied, look it up from catalog_products
+    if (!rawBrand) {
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const { data: catalogRow } = await supabase
+          .from("catalog_products")
+          .select("brand")
+          .eq("distributor", "acc")
+          .ilike("style_number", rawQuery)
+          .maybeSingle();
+        if (catalogRow?.brand) {
+          rawBrand = catalogRow.brand;
+          console.log(`[provider-acc] Brand resolved from catalog: "${rawBrand}" for style "${rawQuery}"`);
+        }
+      } catch (lookupErr: any) {
+        console.warn(`[provider-acc] Brand lookup failed: ${lookupErr.message}`);
+      }
+    }
+
     const productId = rawBrand ? getAccProductId(rawQuery, rawBrand) : rawQuery;
 
     console.log(
-      `[provider-acc] query="${query}" brand="${rawBrand}" → productId="${productId}"`
+      `[provider-acc] Mapping incoming ${query} (${rawBrand || "unknown brand"}) -> Outgoing API ID: ${productId}`
     );
 
     const parser = new XMLParser({
