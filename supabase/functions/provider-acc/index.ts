@@ -447,13 +447,28 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
       );
       if (!partId) continue;
 
-      // v2.0.0 supplies InventoryLocationArray with LocationQuantity entries
-      const locArrayEl =
-        part?.["ns2:InventoryLocationArray"] || part?.InventoryLocationArray || part?.inventoryLocationArray;
-      const rawLocs =
-        (locArrayEl?.["ns2:InventoryLocation"] || locArrayEl?.InventoryLocation || locArrayEl?.inventoryLocation) ??
-        [];
-      const locs = Array.isArray(rawLocs) ? rawLocs : (rawLocs ? [rawLocs] : []);
+      // Resolve location array — try multiple structural variations in priority order
+      const rawLocsFromArray = (() => {
+        // 1. InventoryLocationArray (uppercase) — common v2.0.0 style
+        const arr1 =
+          part?.["ns2:InventoryLocationArray"] || part?.InventoryLocationArray;
+        if (arr1) {
+          const locs =
+            arr1?.["ns2:InventoryLocation"] || arr1?.InventoryLocation || arr1?.inventoryLocation;
+          if (locs) return Array.isArray(locs) ? locs : [locs];
+        }
+        // 2. inventoryLocationArray (camelCase) — alternate casing
+        const arr2 = part?.inventoryLocationArray;
+        if (arr2) {
+          const locs =
+            arr2?.["ns2:InventoryLocation"] || arr2?.InventoryLocation || arr2?.inventoryLocation;
+          if (locs) return Array.isArray(locs) ? locs : [locs];
+        }
+        // 3. Treat the part itself as a single location
+        return [part];
+      })();
+
+      const locs: any[] = Array.isArray(rawLocsFromArray) ? rawLocsFromArray : (rawLocsFromArray ? [rawLocsFromArray] : [part]);
 
       const warehouses: { code: string; name: string; qty: number }[] = [];
       for (const loc of locs) {
@@ -467,48 +482,72 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           loc?.InventoryLocationName ?? loc?.locationName ?? locCode
         ) || locCode;
 
-        // ACC v2 stores qty at inventoryLocationQuantity.Quantity.value
-        // Fall back through several other possible structures for safety.
+        // Quantity extraction — priority order across all known ACC structural variations
         let qty = 0;
-        const locQtyEl =
+
+        // 1. loc.inventoryLocationQuantity?.Quantity?.value  (GL5000 style — confirmed working)
+        const ilqEl =
           loc?.inventoryLocationQuantity ?? loc?.["ns2:inventoryLocationQuantity"];
-        if (locQtyEl) {
-          const quantityEl =
-            locQtyEl?.Quantity ?? locQtyEl?.["ns2:Quantity"] ??
-            locQtyEl?.quantity ?? locQtyEl?.["ns2:quantity"];
-          if (quantityEl && typeof quantityEl === "object") {
-            qty = parseInt(extractText(quantityEl?.value ?? quantityEl?.Value ?? "0") || "0", 10) || 0;
+        if (ilqEl) {
+          const qEl =
+            ilqEl?.Quantity ?? ilqEl?.["ns2:Quantity"] ?? ilqEl?.quantity;
+          if (qEl !== undefined) {
+            qty = parseInt(extractText(typeof qEl === "object" ? (qEl?.value ?? qEl?.Value ?? qEl) : qEl) || "0", 10) || 0;
           } else {
-            qty = parseInt(extractText(quantityEl) || "0", 10) || 0;
+            // 2. loc.inventoryLocationQuantity?.value  (flat object)
+            qty = parseInt(extractText(ilqEl?.value ?? ilqEl?.Value ?? ilqEl) || "0", 10) || 0;
           }
         } else {
-          // Legacy fallback: inventoryLevelArray structure
-          const levelArrayEl =
-            loc?.["ns2:inventoryLevelArray"] || loc?.inventoryLevelArray || loc?.InventoryLevelArray;
-          const rawLevels =
-            levelArrayEl?.["ns2:InventoryLevel"] || levelArrayEl?.InventoryLevel ||
-            levelArrayEl?.inventoryLevel || levelArrayEl;
-          const levels = rawLevels ? (Array.isArray(rawLevels) ? rawLevels : [rawLevels]) : [];
-          for (const lvl of levels) {
-            const aqRaw =
-              lvl?.["ns2:availableToSellQuantity"] ?? lvl?.availableToSellQuantity ??
-              lvl?.["ns2:availableQuantity"]       ?? lvl?.availableQuantity       ??
-              lvl?.["ns2:Quantity"]                ?? lvl?.Quantity                ??
-              lvl?.["ns2:quantity"]                ?? lvl?.quantity                ?? "0";
-            qty += parseInt(extractText(aqRaw) || "0", 10) || 0;
-          }
-          if (levels.length === 0) {
-            const qtyRaw =
-              loc?.["ns2:availableToSellQuantity"] ?? loc?.availableToSellQuantity ??
-              loc?.["ns2:Quantity"] ?? loc?.Quantity ?? loc?.["ns2:quantity"] ?? loc?.quantity ?? "0";
-            qty = parseInt(extractText(qtyRaw) || "0", 10) || 0;
+          // 3. loc.InventoryLocationQuantity?.Quantity?.value  (PascalCase variant)
+          const ilqEl2 =
+            loc?.InventoryLocationQuantity ?? loc?.["ns2:InventoryLocationQuantity"];
+          if (ilqEl2) {
+            const qEl2 =
+              ilqEl2?.Quantity ?? ilqEl2?.["ns2:Quantity"] ?? ilqEl2?.quantity;
+            if (qEl2 !== undefined) {
+              qty = parseInt(extractText(typeof qEl2 === "object" ? (qEl2?.value ?? qEl2?.Value ?? qEl2) : qEl2) || "0", 10) || 0;
+            } else {
+              qty = parseInt(extractText(ilqEl2?.value ?? ilqEl2) || "0", 10) || 0;
+            }
+          } else {
+            // 4. loc.quantityAvailable  (simple field)
+            const qa = loc?.quantityAvailable ?? loc?.["ns2:quantityAvailable"];
+            if (qa !== undefined) {
+              qty = parseInt(extractText(qa) || "0", 10) || 0;
+            } else {
+              // 5. loc.Quantity?.value  (minimal structure)
+              const qDirect =
+                loc?.Quantity ?? loc?.["ns2:Quantity"] ?? loc?.quantity;
+              if (qDirect !== undefined) {
+                qty = parseInt(
+                  extractText(typeof qDirect === "object" ? (qDirect?.value ?? qDirect?.Value ?? qDirect) : qDirect) || "0",
+                  10
+                ) || 0;
+              } else {
+                // 6. inventoryLevelArray legacy fallback
+                const levelArrayEl =
+                  loc?.["ns2:inventoryLevelArray"] || loc?.inventoryLevelArray || loc?.InventoryLevelArray;
+                const rawLevels =
+                  levelArrayEl?.["ns2:InventoryLevel"] || levelArrayEl?.InventoryLevel ||
+                  levelArrayEl?.inventoryLevel || levelArrayEl;
+                const levels = rawLevels ? (Array.isArray(rawLevels) ? rawLevels : [rawLevels]) : [];
+                for (const lvl of levels) {
+                  const aqRaw =
+                    lvl?.["ns2:availableToSellQuantity"] ?? lvl?.availableToSellQuantity ??
+                    lvl?.["ns2:availableQuantity"]       ?? lvl?.availableQuantity       ??
+                    lvl?.["ns2:Quantity"]                ?? lvl?.Quantity                ??
+                    lvl?.["ns2:quantity"]                ?? lvl?.quantity                ?? "0";
+                  qty += parseInt(extractText(aqRaw) || "0", 10) || 0;
+                }
+              }
+            }
           }
         }
 
         warehouses.push({ code: locCode, name: locName, qty });
       }
 
-      // If no warehouses from location array, try direct quantity field on the part
+      // If still no warehouses, try direct quantity field on the part itself
       if (warehouses.length === 0) {
         const directQty = parseInt(
           extractText(
@@ -518,11 +557,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           10
         ) || 0;
         warehouses.push({ code: "DEFAULT", name: "Warehouse", qty: directQty });
-      }
-
-      if (entries.length === 0) {
-        console.log("[provider-acc] First inventory entry warehouses:", JSON.stringify(warehouses).substring(0, 400));
-        console.log("[provider-acc] First loc raw:", JSON.stringify(locs[0]).substring(0, 400));
       }
 
       // Parse color and size from partId — ACC typically encodes as "COLOR-SIZE" or similar
