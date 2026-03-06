@@ -143,6 +143,7 @@ function aggregateItemsWithPricing(
     sizesMap: Map<string, { code: string; order: number; quantity: number; price: number }>;
   }>();
 
+  // --- PASS 1: Build color/size structure and assign any directly-resolved prices ---
   for (const item of items) {
     if (item.active_flag && item.active_flag !== "Y") continue;
 
@@ -175,41 +176,52 @@ function aggregateItemsWithPricing(
     const sizeEntry = colorEntry.sizesMap.get(normalizedSizeCode)!;
     sizeEntry.quantity += item.on_hand || 0;
 
-    // --- FIX 1: Price Broadcasting ---
-    // Step 1: Try direct SKU lookup
+    // Step 1: Direct SKU lookup
     if (sizeEntry.price === 0 && item.code) {
       const skuPrice = skuPriceMap.get(item.code);
-      if (skuPrice && skuPrice > 0) {
-        sizeEntry.price = skuPrice;
-      }
+      if (skuPrice && skuPrice > 0) sizeEntry.price = skuPrice;
     }
 
-    // Step 2: Try color-group broadcast key (populated during pricing fetch)
-    // This ensures ALL sizes of a color get the representative price even if only
-    // one size's SKU was fetched from the API.
+    // Step 2: Color-prefix broadcast key (__color__STYLE-COLORCODE)
     if (sizeEntry.price === 0 && item.code) {
       const parts = item.code.split("-");
       if (parts.length > 1) {
-        const colorKey = `__color__${parts.slice(0, -1).join("-")}`;
-        const colorPrice = skuPriceMap.get(colorKey);
-        if (colorPrice && colorPrice > 0) {
-          sizeEntry.price = colorPrice;
+        const colorPrice = skuPriceMap.get(`__color__${parts.slice(0, -1).join("-")}`);
+        if (colorPrice && colorPrice > 0) sizeEntry.price = colorPrice;
+      }
+    }
+
+    // Step 3: Color-name broadcast key (__colorname__White)
+    if (sizeEntry.price === 0) {
+      const colorNamePrice = skuPriceMap.get(`__colorname__${colorName}`);
+      if (colorNamePrice && colorNamePrice > 0) sizeEntry.price = colorNamePrice;
+    }
+  }
+
+  // --- PASS 2: Color-level sharing — if ANY size in a color has a price, broadcast to all ---
+  // This handles cases where the pricing API returned a price for one SKU but other
+  // sizes of the same color weren't in the representative batch.
+  for (const [colorName, colorEntry] of colorMap.entries()) {
+    const sizeValues = Array.from(colorEntry.sizesMap.values());
+    const representativePrice = sizeValues.find((s) => s.price > 0)?.price ?? 0;
+
+    if (representativePrice > 0) {
+      let sharedCount = 0;
+      for (const s of sizeValues) {
+        if (s.price === 0) {
+          s.price = representativePrice;
+          sharedCount++;
         }
       }
-    }
-
-    // Step 3: Try color-name broadcast key (set during pricing fetch as __colorname__<name>)
-    if (sizeEntry.price === 0) {
-      const colorNameKey = `__colorname__${colorName}`;
-      const colorNamePrice = skuPriceMap.get(colorNameKey);
-      if (colorNamePrice && colorNamePrice > 0) {
-        sizeEntry.price = colorNamePrice;
+      if (sharedCount > 0) {
+        console.log(`[provider-onestop] Shared price $${representativePrice.toFixed(2)} for color "${colorName}" across ${sharedCount} size(s)`);
       }
-    }
-
-    // Step 4: FIX 3 — Catalog base_price fallback so we never show a blank dash
-    if (sizeEntry.price === 0 && catalogFallbackPrice > 0) {
-      sizeEntry.price = catalogFallbackPrice;
+    } else if (catalogFallbackPrice > 0) {
+      // Step 4: DB catalog fallback — entire color had no price from API
+      for (const s of sizeValues) {
+        s.price = catalogFallbackPrice;
+      }
+      console.log(`[provider-onestop] Using catalog fallback $${catalogFallbackPrice.toFixed(2)} for color "${colorName}" (${sizeValues.length} size(s))`);
     }
   }
 
