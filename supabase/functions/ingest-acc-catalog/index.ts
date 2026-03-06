@@ -32,22 +32,38 @@ const ACC_PREFIX_TO_BRAND: [string, string][] = [
   ["GL", "Gildan"],
   ["HN", "Hanes"],
   ["CC", "Comfort Colors"],
+  ["CO", "Comfort Colors"],
   ["CP", "Champion"],
+  ["DB", "Champion"],
   ["CV", "Code V"],
   ["BS", "Burnside"],
   ["BA", "Badger"],
   ["BG", "Badger"],
   ["DK", "Dickies"],
   ["DN", "Dyenomite"],
+  ["LA", "Rabbit Skins"],
   ["RS", "Rabbit Skins"],
+  ["DS", "Rabbit Skins"],
   ["AA", "American Apparel"],
   ["AS", "American Apparel"],
   ["AN", "Anvil"],
   ["CW", "ComfortWash"],
   ["AG", "Augusta Sportswear"],
   ["YP", "Yupoong"],
+  ["FF", "Yupoong"],
   ["VH", "Van Heusen"],
+  ["AD", "Adams Headwear"],
+  ["AL", "Alternative"],
+  ["JA", "J-America"],
+  ["RK", "Red Kap"],
+  ["A4", "A4"],
 ];
+
+/**
+ * Service/fee item prefixes — freight, handling, folding fees etc.
+ * These are NOT real garments and should never be ingested.
+ */
+const ACC_SERVICE_PREFIXES = new Set(["FB", "FO", "FR", "HA", "PF", "SF", "SS", "ST", "TA", "TB", "TF", "XT"]);
 
 /**
  * Prefixes that are stripped from ACC style numbers before storing in the DB,
@@ -503,9 +519,13 @@ Deno.serve(async (req) => {
         console.log("[ingest-acc-catalog] Safety cutoff — will self-chain");
         break;
       }
-      const batch = chunk.slice(i, i + CONCURRENCY);
+      const batch = chunk.slice(i, i + CONCURRENCY).filter((productId: string) => {
+        // Skip service/fee items (freight, handling, folding, etc.)
+        const prefix = productId.trim().toUpperCase().slice(0, 2);
+        return !ACC_SERVICE_PREFIXES.has(prefix);
+      });
       const results = await Promise.allSettled(
-        batch.map(async (productId) => {
+        batch.map(async (productId: string) => {
           const [detailResult, basePriceResult] = await Promise.allSettled([
             fetchProductDetail(productId, username, password, parser),
             fetchBasePrice(productId, username, password, parser),
@@ -547,6 +567,9 @@ Deno.serve(async (req) => {
       seen.add(sn);
       return true;
     });
+
+    // Filter already applied at fetch time (service prefixes), but double-check here too
+    // (getBrandFromAccProductId returns "Atlantic Coast Cotton" for unmapped — keep them filtered)
 
     let upserted = 0;
     for (let i = 0; i < uniqueRecords.length; i += DB_BATCH_SIZE) {
