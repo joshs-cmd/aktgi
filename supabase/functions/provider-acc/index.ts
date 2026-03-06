@@ -439,8 +439,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
     }
 
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
-    console.log(`[provider-acc] Inventory: ${parts.length} PartInventory entries`);
-    console.log("[provider-acc] First part keys:", Object.keys(parts[0] || {}).join(", "));
 
     for (const part of parts) {
       const partId = extractText(
@@ -469,7 +467,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           k.toLowerCase().replace(/[^a-z]/g, "").includes("inventorylocationarray")
         );
         if (dynamicKey) {
-          console.log(`[provider-acc] Found location array via dynamic key: ${dynamicKey}`);
           const arr3 = part[dynamicKey];
           const locsKey = Object.keys(arr3 || {}).find(k =>
             k.toLowerCase().replace(/[^a-z]/g, "").includes("inventorylocation")
@@ -495,10 +492,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         if (usedFlatFallback) {
           locCode = "ACC";
           locName = "Atlantic Coast Cotton";
-          if (warehouses.length === 0) {
-            // Only log once per part to avoid spam
-            console.log(`[provider-acc] Flat fallback for partId=${partId}, keys=${Object.keys(loc || {}).join(", ")}`);
-          }
         } else {
           // inventoryLocationId and inventoryLocationName may be xmlns-wrapped objects
           locCode = extractText(
