@@ -858,7 +858,7 @@ serve(async (req) => {
       (async () => {
         try {
           const controller = new AbortController();
-          const tid = setTimeout(() => controller.abort(), 10000);
+          const tid = setTimeout(() => controller.abort(), 25000);
           const res = await fetch(ACC_INVENTORY_ENDPOINT, {
             method: "POST",
             headers: {
