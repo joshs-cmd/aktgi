@@ -135,10 +135,15 @@ const ACC_STRIP_PREFIXES: string[] = ACC_PREFIX_TO_BRAND.map(([p]) => p);
 
 /**
  * Given an ACC productId (e.g. "BC3001"), return the real brand name.
+ * Also handles A4's 3-char prefixes like "A4N3013".
  * Falls back to the raw brandName from the API if no prefix match.
  */
 function getBrandFromAccProductId(productId: string, apiBrand?: string): string {
   const sn = productId.trim().toUpperCase();
+
+  // Special case: A4 uses "A4N" and "A4L" prefixes (3 chars before digit)
+  if (/^A4[A-Z]\d/.test(sn)) return "A4";
+
   for (const [prefix, brand] of ACC_PREFIX_TO_BRAND) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
       return brand;
@@ -150,12 +155,16 @@ function getBrandFromAccProductId(productId: string, apiBrand?: string): string 
 }
 
 /**
- * Strip the ACC 2-letter prefix from a style number so it stores as the
- * canonical base (e.g. "BC3001" → "3001"). The full original productId is
- * always passed to the ACC API for pricing / inventory.
+ * Strip the ACC prefix from a style number so it stores as the
+ * canonical base (e.g. "BC3001" → "3001", "A4N3013" → "N3013").
+ * The full original productId is always passed to the ACC API for pricing / inventory.
  */
 function getCanonicalBase(styleNumber: string): string {
   const sn = styleNumber.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  // Special case: A4 uses "A4N####" / "A4L####" — strip the "A4" leaving "N####"
+  if (/^A4[A-Z]\d/.test(sn)) return sn.slice(2);
+
   for (const prefix of ACC_STRIP_PREFIXES) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
       return sn.slice(prefix.length);
