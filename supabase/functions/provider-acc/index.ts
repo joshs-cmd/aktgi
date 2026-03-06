@@ -467,38 +467,42 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           loc?.InventoryLocationName ?? loc?.locationName ?? locCode
         ) || locCode;
 
-        // Sum ALL inventoryLevel blocks within this location
-        const levelArrayEl =
-          loc?.["ns2:inventoryLevelArray"] || loc?.inventoryLevelArray ||
-          loc?.InventoryLevelArray;
-        const rawLevels =
-          levelArrayEl?.["ns2:InventoryLevel"] || levelArrayEl?.InventoryLevel ||
-          levelArrayEl?.inventoryLevel || levelArrayEl;
-        const levels = rawLevels
-          ? (Array.isArray(rawLevels) ? rawLevels : [rawLevels])
-          : [];
-
+        // ACC v2 stores qty at inventoryLocationQuantity.Quantity.value
+        // Fall back through several other possible structures for safety.
         let qty = 0;
-        if (levels.length > 0) {
+        const locQtyEl =
+          loc?.inventoryLocationQuantity ?? loc?.["ns2:inventoryLocationQuantity"];
+        if (locQtyEl) {
+          const quantityEl =
+            locQtyEl?.Quantity ?? locQtyEl?.["ns2:Quantity"] ??
+            locQtyEl?.quantity ?? locQtyEl?.["ns2:quantity"];
+          if (quantityEl && typeof quantityEl === "object") {
+            qty = parseInt(extractText(quantityEl?.value ?? quantityEl?.Value ?? "0") || "0", 10) || 0;
+          } else {
+            qty = parseInt(extractText(quantityEl) || "0", 10) || 0;
+          }
+        } else {
+          // Legacy fallback: inventoryLevelArray structure
+          const levelArrayEl =
+            loc?.["ns2:inventoryLevelArray"] || loc?.inventoryLevelArray || loc?.InventoryLevelArray;
+          const rawLevels =
+            levelArrayEl?.["ns2:InventoryLevel"] || levelArrayEl?.InventoryLevel ||
+            levelArrayEl?.inventoryLevel || levelArrayEl;
+          const levels = rawLevels ? (Array.isArray(rawLevels) ? rawLevels : [rawLevels]) : [];
           for (const lvl of levels) {
-            // ACC v2 uses multiple possible field names — all may be xmlns-wrapped objects
             const aqRaw =
               lvl?.["ns2:availableToSellQuantity"] ?? lvl?.availableToSellQuantity ??
               lvl?.["ns2:availableQuantity"]       ?? lvl?.availableQuantity       ??
-              lvl?.["ns2:quantityAvailable"]       ?? lvl?.quantityAvailable       ??
-              lvl?.["ns2:onHandQuantity"]          ?? lvl?.onHandQuantity          ??
               lvl?.["ns2:Quantity"]                ?? lvl?.Quantity                ??
               lvl?.["ns2:quantity"]                ?? lvl?.quantity                ?? "0";
             qty += parseInt(extractText(aqRaw) || "0", 10) || 0;
           }
-        } else {
-          // Fallback: quantity directly on the location element
-          const qtyRaw =
-            loc?.["ns2:availableToSellQuantity"] ?? loc?.availableToSellQuantity ??
-            loc?.["ns2:availableQuantity"]       ?? loc?.availableQuantity       ??
-            loc?.["ns2:Quantity"]                ?? loc?.Quantity                ??
-            loc?.["ns2:quantity"]                ?? loc?.quantity                ?? "0";
-          qty = parseInt(extractText(qtyRaw) || "0", 10) || 0;
+          if (levels.length === 0) {
+            const qtyRaw =
+              loc?.["ns2:availableToSellQuantity"] ?? loc?.availableToSellQuantity ??
+              loc?.["ns2:Quantity"] ?? loc?.Quantity ?? loc?.["ns2:quantity"] ?? loc?.quantity ?? "0";
+            qty = parseInt(extractText(qtyRaw) || "0", 10) || 0;
+          }
         }
 
         warehouses.push({ code: locCode, name: locName, qty });
