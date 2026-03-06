@@ -776,12 +776,16 @@ serve(async (req) => {
       );
     }
 
-    // productId to query ACC is the raw query (style number)
-    // Normalise: strip known brand prefix so we send bare style to ACC
-    // ACC stores styles by their own internal code (usually plain numeric)
-    const productId = query.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
+    // Re-prefix: the sourcing engine sends the canonical (stripped) style number.
+    // ACC's PromoStandards API expects the original prefixed product ID (e.g. "BC3001",
+    // "GL5000", "NL3600"). Use the brand from the request body to reconstruct it.
+    const rawBrand: string = (body.brand || "").trim();
+    const rawQuery = query.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
+    const productId = rawBrand ? getAccProductId(rawQuery, rawBrand) : rawQuery;
 
-    console.log(`[provider-acc] Looking up productId: "${productId}" (original: "${query}")`);
+    console.log(
+      `[provider-acc] query="${query}" brand="${rawBrand}" → productId="${productId}"`
+    );
 
     const parser = new XMLParser({
       ignoreAttributes: false,
