@@ -613,7 +613,7 @@ async function fetchProductInfo(
 
   try {
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 8000);
+    const tid = setTimeout(() => controller.abort(), 45000);
     const res = await fetch(PS_PRODUCT_ENDPOINT, {
       method: "POST",
       headers: {
