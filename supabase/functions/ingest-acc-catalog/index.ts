@@ -26,9 +26,39 @@ const ACC_PRICING_ENDPOINT      = "https://promo.acc-api.com/live/productPricing
  * Ordered longest-first so "BE" doesn't beat "BG", etc.
  */
 const ACC_PREFIX_TO_BRAND: [string, string][] = [
-  // Apparel — major brands
+  // -----------------------------------------------------------------------
+  // Apparel — major brands (longest prefixes first to avoid shadowing)
+  // -----------------------------------------------------------------------
+  ["BST", "Sport-Tek"],          // BST#### = Sport-Tek (must precede BS)
+  ["AAF", "American Apparel"],   // AAF#### = American Apparel
+  ["AAR", "American Apparel"],   // AAR#### = American Apparel
+  ["LST", "Lane Seven"],         // LST#### = Lane Seven (must precede LS)
+  ["PSB", "Private Stock"],      // PSB#### = Private Stock (must precede PS)
+  ["CRC", "Carmel"],             // CRC#### = Carmel
+  // Sundog mega-map (many distinct prefixes all belong to Sundog tie-dye line)
+  ["AFF", "Sundog"],
+  ["ANT", "Sundog"],
+  ["APR", "Sundog"],             // NOTE: also matches Big Accessories "BAAPR..." — handled below
+  ["ASD", "Sundog"],
+  ["ASP", "Sundog"],
+  ["ASR", "Sundog"],
+  ["GEM", "Sundog"],
+  ["RET", "Sundog"],
+  ["RTR", "Sundog"],
+  ["SDA", "Sundog"],
+  ["SDC", "Sundog"],
+  ["SDR", "Sundog"],
+  ["SPC", "Sundog"],
+  ["SPT", "Sundog"],
+  ["SWI", "Sundog"],
+  ["TWI", "Sundog"],
+  ["USA", "Sundog"],
+  ["YFF", "Sundog"],
+  // 2-char prefixes — apparel
   ["BC", "Bella + Canvas"],
-  ["BE", "Bella + Canvas"],
+  // BE: "BEBE####" → Bag Edge; "BE####" (digit after) → Bella + Canvas
+  // Handled in getBrandFromAccProductId logic below — listed here for strip table
+  ["BE", "Bella + Canvas"],      // default; overridden by BEBE check in function
   ["NL", "Next Level"],
   ["GL", "Gildan"],
   ["HN", "Hanes"],
@@ -38,7 +68,10 @@ const ACC_PREFIX_TO_BRAND: [string, string][] = [
   ["DB", "Champion"],
   ["CV", "Code V"],
   ["BS", "Burnside"],
-  ["BA", "Badger"],
+  // BA: "BAAPR..." / "BAACC..." etc. (followed by letters) → Big Accessories
+  // "BA####" (followed by digit) → Badger
+  // Handled in getBrandFromAccProductId logic below
+  ["BA", "Badger"],              // default; overridden by BA+letter check in function
   ["BG", "Badger"],
   ["DK", "Dickies"],
   ["DN", "Dyenomite"],
@@ -56,64 +89,53 @@ const ACC_PREFIX_TO_BRAND: [string, string][] = [
   ["AL", "Alternative"],
   ["JA", "J-America"],
   ["RK", "Red Kap"],
-  // A4 — note: A4 uses "A4N" and "A4L" style prefixes as well as bare "A4"
+  // A4 — handled by special case in getBrandFromAccProductId
   ["A4", "A4"],
   // Headwear brands
   ["AD", "Adams Headwear"],
-  ["HP", "Pacific Headwear"],    // HP#### = Pacific Headwear
-  ["PH", "Pacific Headwear"],    // PH#### = Pacific Headwear
-  ["PG", "Pacific Headwear"],    // PG#### = Pacific Headwear
-  ["OC", "Outdoor Cap"],         // OC#### = Outdoor Cap
-  ["KC", "Koozie"],              // KC#### = Koozie / ACCO Brands
-  // Bags / accessories
-  ["LB", "Liberty Bags"],        // LB#### = Liberty Bags
-  ["QT", "Q-Tees"],              // QT#### = Q-Tees
-  // Promotional / outdoor / towel brands
-  ["OD", "OAD"],                 // OD/ODOAD = OAD promotional
   ["HP", "Pacific Headwear"],
+  ["PH", "Pacific Headwear"],
+  ["PG", "Pacific Headwear"],
+  ["OC", "Outdoor Cap"],
+  ["OT", "Outdoor Cap"],         // OT#### = Outdoor Cap (alternate prefix)
+  ["KC", "Kati"],                // KC#### = Kati headwear
+  // Bags / accessories
+  ["LB", "Liberty Bags"],
+  ["QT", "Q-Tees"],
+  ["LS", "Lane Seven"],          // LS#### = Lane Seven
+  // Promotional / outdoor
+  ["OD", "OAD"],
+  ["MS", "Maui & Sons"],         // MS#### = Maui & Sons
+  ["PS", "Private Stock"],       // PS#### = Private Stock
+  ["VT", "Vitronic"],            // VT#### = Vitronic
+  ["AC", "Private Label"],       // AC#### = Three Rivers / Private Label
   // Blankets / fleece
-  ["AF", "Alpine Fleece"],       // AF#### = Alpine Fleece
-  // Sundog / Alpha Factor (sportswear)
-  ["SD", "Sundog"],              // SD/AF/AP/GE/GEM = Sundog brand items
+  ["AF", "Alpine Fleece"],
+  // Sundog core prefix
+  ["SD", "Sundog"],
   ["AP", "Sundog"],
   ["GE", "Sundog"],
   // Holloway / Sport Supply
-  ["HO", "Holloway"],            // HO#### = Holloway Sportswear
-  // Fence / SP brand items
-  ["FT", "Fence"],               // FT#### = Fence/Sport Supply polo/fleece
-  ["SP", "Sport Supply"],        // SP#### = Sport Supply
+  ["HO", "Holloway"],
+  ["FT", "Fence"],
+  ["SP", "Sport Supply"],
   // Harriton
-  ["HT", "Harriton"],            // HT#### = Harriton
-  // Johnnie-O / JC
-  ["JC", "Johnnie-O"],           // JC#### = Johnnie-O
+  ["HT", "Harriton"],
+  // Johnnie-O
+  ["JC", "Johnnie-O"],
   // Stormtech
-  ["SW", "Stormtech"],           // SW#### = Stormtech
+  ["SW", "Stormtech"],
   // Twin Hill
-  ["TW", "Twin Hill"],           // TW#### = Twin Hill
-  // Vantage
-  ["VT", "Vantage"],             // VT#### = Vantage
-  // LS = L/S miscellaneous
-  ["LS", "LS"],
-  // RP = Rappelling/misc
+  ["TW", "Twin Hill"],
+  // Misc / unknown-resolved
   ["RP", "RP"],
-  // RB = Red Bridge
   ["RB", "Red Bridge"],
-  // JH = J. America Headwear
   ["JH", "J-America"],
-  // TP = Team Player
   ["TP", "Team Player"],
-  // PS = Pro Spirits / Pennant
-  ["PS", "Pennant"],
-  // CR = ?
   ["CR", "CR"],
-  // SU = Sun Hats
   ["SU", "SU"],
-  // LC = Lemon & Cloud
   ["LC", "LC"],
-  // IH = Independent Headwear
   ["IH", "Independent Headwear"],
-  // MS, RE, RT, US, YF = misc
-  ["MS", "MS"],
   ["RE", "RE"],
   ["RT", "RT"],
   ["US", "US"],
