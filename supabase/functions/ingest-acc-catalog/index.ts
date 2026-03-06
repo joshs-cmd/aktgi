@@ -591,7 +591,16 @@ Deno.serve(async (req) => {
     let productIds: string[] = [];
 
     if (offset === 0) {
-      // Initial call — fetch IDs from ACC API and persist to storage
+      // Initial call — wipe old ACC records so no stale "Atlantic Coast Cotton" ghosts remain
+      console.log("[ingest-acc-catalog] Wiping old ACC records from catalog_products...");
+      const { error: wipeError } = await supabase
+        .from("catalog_products")
+        .delete()
+        .eq("distributor", "acc");
+      if (wipeError) console.error("[ingest-acc-catalog] Wipe error:", wipeError.message);
+      else console.log("[ingest-acc-catalog] Old ACC records wiped.");
+
+      // Fetch IDs from ACC API and persist to storage
       console.log("[ingest-acc-catalog] Initial call: fetching all product IDs...");
       const result = await fetchAllProductIds(username, password, parser);
       productIds = result.ids;
