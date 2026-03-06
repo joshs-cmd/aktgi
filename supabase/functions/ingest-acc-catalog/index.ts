@@ -564,6 +564,9 @@ Deno.serve(async (req) => {
       return true;
     });
 
+    // Filter already applied at fetch time (service prefixes), but double-check here too
+    // (getBrandFromAccProductId returns "Atlantic Coast Cotton" for unmapped — keep them filtered)
+
     let upserted = 0;
     for (let i = 0; i < uniqueRecords.length; i += DB_BATCH_SIZE) {
       const batch = uniqueRecords.slice(i, i + DB_BATCH_SIZE);
