@@ -360,9 +360,9 @@ async function fetchPricing(
     console.log(`[provider-acc] Pricing: ${parts.length} parts`);
 
     for (const part of parts) {
-      const partId = String(
-        part?.partId || part?.["ns2:partId"] || part?.PartId || ""
-      ).trim();
+      const partId = extractText(
+        part?.partId ?? part?.["ns2:partId"] ?? part?.PartId ?? ""
+      );
       if (!partId) continue;
 
       const priceArrayEl =
@@ -375,8 +375,8 @@ async function fetchPricing(
       let bestPrice = 0;
 
       for (const p of priceList) {
-        const minQty = parseFloat(String(p?.["ns2:minQuantity"] || p?.minQuantity || "1"));
-        const val    = parseFloat(String(p?.["ns2:price"] || p?.price || p?.Price || "0"));
+        const minQty = parseFloat(extractText(p?.["ns2:minQuantity"] ?? p?.minQuantity) || "1");
+        const val    = parseFloat(extractText(p?.["ns2:price"] ?? p?.price ?? p?.Price) || "0");
         if (val > 0 && (minQty <= 1 || bestPrice === 0)) {
           bestPrice = val;
         }
