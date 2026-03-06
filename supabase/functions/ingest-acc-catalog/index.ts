@@ -26,6 +26,7 @@ const ACC_PRICING_ENDPOINT      = "https://promo.acc-api.com/live/productPricing
  * Ordered longest-first so "BE" doesn't beat "BG", etc.
  */
 const ACC_PREFIX_TO_BRAND: [string, string][] = [
+  // Apparel — major brands
   ["BC", "Bella + Canvas"],
   ["BE", "Bella + Canvas"],
   ["NL", "Next Level"],
@@ -52,11 +53,71 @@ const ACC_PREFIX_TO_BRAND: [string, string][] = [
   ["YP", "Yupoong"],
   ["FF", "Yupoong"],
   ["VH", "Van Heusen"],
-  ["AD", "Adams Headwear"],
   ["AL", "Alternative"],
   ["JA", "J-America"],
   ["RK", "Red Kap"],
+  // A4 — note: A4 uses "A4N" and "A4L" style prefixes as well as bare "A4"
   ["A4", "A4"],
+  // Headwear brands
+  ["AD", "Adams Headwear"],
+  ["HP", "Pacific Headwear"],    // HP#### = Pacific Headwear
+  ["PH", "Pacific Headwear"],    // PH#### = Pacific Headwear
+  ["PG", "Pacific Headwear"],    // PG#### = Pacific Headwear
+  ["OC", "Outdoor Cap"],         // OC#### = Outdoor Cap
+  ["KC", "Koozie"],              // KC#### = Koozie / ACCO Brands
+  // Bags / accessories
+  ["LB", "Liberty Bags"],        // LB#### = Liberty Bags
+  ["QT", "Q-Tees"],              // QT#### = Q-Tees
+  // Promotional / outdoor / towel brands
+  ["OD", "OAD"],                 // OD/ODOAD = OAD promotional
+  ["HP", "Pacific Headwear"],
+  // Blankets / fleece
+  ["AF", "Alpine Fleece"],       // AF#### = Alpine Fleece
+  // Sundog / Alpha Factor (sportswear)
+  ["SD", "Sundog"],              // SD/AF/AP/GE/GEM = Sundog brand items
+  ["AP", "Sundog"],
+  ["GE", "Sundog"],
+  // Holloway / Sport Supply
+  ["HO", "Holloway"],            // HO#### = Holloway Sportswear
+  // Fence / SP brand items
+  ["FT", "Fence"],               // FT#### = Fence/Sport Supply polo/fleece
+  ["SP", "Sport Supply"],        // SP#### = Sport Supply
+  // Harriton
+  ["HT", "Harriton"],            // HT#### = Harriton
+  // Johnnie-O / JC
+  ["JC", "Johnnie-O"],           // JC#### = Johnnie-O
+  // Stormtech
+  ["SW", "Stormtech"],           // SW#### = Stormtech
+  // Twin Hill
+  ["TW", "Twin Hill"],           // TW#### = Twin Hill
+  // Vantage
+  ["VT", "Vantage"],             // VT#### = Vantage
+  // LS = L/S miscellaneous
+  ["LS", "LS"],
+  // RP = Rappelling/misc
+  ["RP", "RP"],
+  // RB = Red Bridge
+  ["RB", "Red Bridge"],
+  // JH = J. America Headwear
+  ["JH", "J-America"],
+  // TP = Team Player
+  ["TP", "Team Player"],
+  // PS = Pro Spirits / Pennant
+  ["PS", "Pennant"],
+  // CR = ?
+  ["CR", "CR"],
+  // SU = Sun Hats
+  ["SU", "SU"],
+  // LC = Lemon & Cloud
+  ["LC", "LC"],
+  // IH = Independent Headwear
+  ["IH", "Independent Headwear"],
+  // MS, RE, RT, US, YF = misc
+  ["MS", "MS"],
+  ["RE", "RE"],
+  ["RT", "RT"],
+  ["US", "US"],
+  ["YF", "YF"],
 ];
 
 /**
@@ -74,10 +135,15 @@ const ACC_STRIP_PREFIXES: string[] = ACC_PREFIX_TO_BRAND.map(([p]) => p);
 
 /**
  * Given an ACC productId (e.g. "BC3001"), return the real brand name.
+ * Also handles A4's 3-char prefixes like "A4N3013".
  * Falls back to the raw brandName from the API if no prefix match.
  */
 function getBrandFromAccProductId(productId: string, apiBrand?: string): string {
   const sn = productId.trim().toUpperCase();
+
+  // Special case: A4 uses "A4N" and "A4L" prefixes (3 chars before digit)
+  if (/^A4[A-Z]\d/.test(sn)) return "A4";
+
   for (const [prefix, brand] of ACC_PREFIX_TO_BRAND) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
       return brand;
@@ -89,12 +155,16 @@ function getBrandFromAccProductId(productId: string, apiBrand?: string): string 
 }
 
 /**
- * Strip the ACC 2-letter prefix from a style number so it stores as the
- * canonical base (e.g. "BC3001" → "3001"). The full original productId is
- * always passed to the ACC API for pricing / inventory.
+ * Strip the ACC prefix from a style number so it stores as the
+ * canonical base (e.g. "BC3001" → "3001", "A4N3013" → "N3013").
+ * The full original productId is always passed to the ACC API for pricing / inventory.
  */
 function getCanonicalBase(styleNumber: string): string {
   const sn = styleNumber.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  // Special case: A4 uses "A4N####" / "A4L####" — strip the "A4" leaving "N####"
+  if (/^A4[A-Z]\d/.test(sn)) return sn.slice(2);
+
   for (const prefix of ACC_STRIP_PREFIXES) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
       return sn.slice(prefix.length);
