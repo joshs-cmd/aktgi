@@ -585,7 +585,7 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           ) || "0",
           10
         ) || 0;
-        warehouses.push({ code: "DEFAULT", name: "Warehouse", qty: directQty });
+        warehouses.push({ code: "ACC", name: "Atlantic Coast Cotton", qty: directQty });
       }
 
       // Parse color and size from partId — ACC typically encodes as "COLOR-SIZE" or similar
