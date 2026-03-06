@@ -516,6 +516,11 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         warehouses.push({ code: "DEFAULT", name: "Warehouse", qty: directQty });
       }
 
+      if (entries.length === 0) {
+        console.log("[provider-acc] First inventory entry warehouses:", JSON.stringify(warehouses).substring(0, 400));
+        console.log("[provider-acc] First loc raw:", JSON.stringify(locs[0]).substring(0, 400));
+      }
+
       // Parse color and size from partId — ACC typically encodes as "COLOR-SIZE" or similar
       // We'll store partId directly and cross-reference with pricing partId
       entries.push({ partId, color: "", size: "", warehouses });
