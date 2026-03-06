@@ -457,17 +457,17 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
 
       const warehouses: { code: string; name: string; qty: number }[] = [];
       for (const loc of locs) {
+        // inventoryLocationId and inventoryLocationName may be xmlns-wrapped objects
         const locCode = extractText(
           loc?.inventoryLocationId ?? loc?.["ns2:inventoryLocationId"] ??
-          loc?.InventoryLocationId ?? loc?.locationId ?? "DEFAULT"
+          loc?.InventoryLocationId ?? loc?.locationId ?? loc?.LocationId ?? "DEFAULT"
         ) || "DEFAULT";
         const locName = extractText(
           loc?.inventoryLocationName ?? loc?.["ns2:inventoryLocationName"] ??
-          loc?.InventoryLocationName ?? locCode
+          loc?.InventoryLocationName ?? loc?.locationName ?? locCode
         ) || locCode;
 
-        // Sum ALL inventorySummary / availableQuantity blocks within this location
-        // (ACC returns multiple quantity tiers — we want the total)
+        // Sum ALL inventoryLevel blocks within this location
         const levelArrayEl =
           loc?.["ns2:inventoryLevelArray"] || loc?.inventoryLevelArray ||
           loc?.InventoryLevelArray;
@@ -481,17 +481,23 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         let qty = 0;
         if (levels.length > 0) {
           for (const lvl of levels) {
+            // ACC v2 uses multiple possible field names — all may be xmlns-wrapped objects
             const aqRaw =
               lvl?.["ns2:availableToSellQuantity"] ?? lvl?.availableToSellQuantity ??
-              lvl?.availableQuantity ?? lvl?.["ns2:availableQuantity"] ??
-              lvl?.Quantity ?? lvl?.["ns2:Quantity"] ?? "0";
+              lvl?.["ns2:availableQuantity"]       ?? lvl?.availableQuantity       ??
+              lvl?.["ns2:quantityAvailable"]       ?? lvl?.quantityAvailable       ??
+              lvl?.["ns2:onHandQuantity"]          ?? lvl?.onHandQuantity          ??
+              lvl?.["ns2:Quantity"]                ?? lvl?.Quantity                ??
+              lvl?.["ns2:quantity"]                ?? lvl?.quantity                ?? "0";
             qty += parseInt(extractText(aqRaw) || "0", 10) || 0;
           }
         } else {
           // Fallback: quantity directly on the location element
           const qtyRaw =
-            loc?.["ns2:Quantity"] ?? loc?.Quantity ??
-            loc?.quantity ?? "0";
+            loc?.["ns2:availableToSellQuantity"] ?? loc?.availableToSellQuantity ??
+            loc?.["ns2:availableQuantity"]       ?? loc?.availableQuantity       ??
+            loc?.["ns2:Quantity"]                ?? loc?.Quantity                ??
+            loc?.["ns2:quantity"]                ?? loc?.quantity                ?? "0";
           qty = parseInt(extractText(qtyRaw) || "0", 10) || 0;
         }
 
@@ -501,7 +507,10 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
       // If no warehouses from location array, try direct quantity field on the part
       if (warehouses.length === 0) {
         const directQty = parseInt(
-          extractText(part?.["ns2:quantity"] ?? part?.quantity ?? part?.Quantity ?? "0") || "0",
+          extractText(
+            part?.["ns2:availableToSellQuantity"] ?? part?.availableToSellQuantity ??
+            part?.["ns2:quantity"] ?? part?.quantity ?? part?.Quantity ?? "0"
+          ) || "0",
           10
         ) || 0;
         warehouses.push({ code: "DEFAULT", name: "Warehouse", qty: directQty });
