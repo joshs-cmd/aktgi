@@ -454,6 +454,9 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         (locArrayEl?.["ns2:InventoryLocation"] || locArrayEl?.InventoryLocation || locArrayEl?.inventoryLocation) ??
         [];
       const locs = Array.isArray(rawLocs) ? rawLocs : (rawLocs ? [rawLocs] : []);
+      if (locs.length > 0 && entries.length === 0) {
+        console.log("[provider-acc] First InventoryLocation raw:", JSON.stringify(locs[0]).substring(0, 400));
+      }
 
       const warehouses: { code: string; name: string; qty: number }[] = [];
       for (const loc of locs) {
@@ -622,6 +625,9 @@ async function fetchProductInfo(
     const rawParts =
       (partArrayEl?.["ns2:ProductPart"] || partArrayEl?.ProductPart || partArrayEl?.productPart) ?? [];
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
+    if (parts.length > 0) {
+      console.log("[provider-acc] First ProductPart raw:", JSON.stringify(parts[0]).substring(0, 600));
+    }
 
     for (const part of parts) {
       const pId = extractText(part?.partId ?? part?.["ns2:partId"] ?? "");
