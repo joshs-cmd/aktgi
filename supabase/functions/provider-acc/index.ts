@@ -652,7 +652,6 @@ async function fetchProductInfo(
     }
 
     const xml = await res.text();
-    console.log(`[provider-acc] ProductData XML (${xml.length} chars): ${xml.substring(0, 600)}`);
 
     const parsed = parser.parse(xml);
     const bodyEl = getEnvelopeBody(parsed);
@@ -963,7 +962,6 @@ serve(async (req) => {
             return "";
           }
           const xml = await res.text();
-          console.log(`[provider-acc] Inventory XML (${xml.length} chars): ${xml.substring(0, 600)}`);
           return xml;
         } catch (err: any) {
           console.error("[provider-acc] Inventory fetch error:", err.message || err);
