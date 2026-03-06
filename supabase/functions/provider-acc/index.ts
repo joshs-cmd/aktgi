@@ -180,19 +180,22 @@ function getCanonicalBase(styleNumber: string, brand: string): string {
 /**
  * Given a canonical base style (e.g. "3001") and brand (e.g. "BELLA+CANVAS"),
  * returns the ACC-prefixed product ID (e.g. "BC3001") needed for the live API.
- * If the style already has a known prefix, it is returned unchanged.
+ * IDEMPOTENT: only adds the prefix if the style doesn't already start with it.
  */
 function getAccProductId(styleNumber: string, brand: string): string {
   const normalBrand = normalizeBrandName(brand);
   const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
-  // If the style already looks prefixed (starts with 2+ alpha chars before a digit), keep as-is
-  if (/^[A-Z]{2,}[0-9]/.test(sn)) return sn;
-  if (/^[A-Z][0-9]/.test(sn)) return sn; // e.g. "J5000" already prefixed with 1 char
 
   const prefix = ACC_REPREF_MAP[normalBrand];
   if (prefix) {
-    return `${prefix}${sn}`;
+    // Only prepend if not already starting with this prefix
+    if (!sn.startsWith(prefix)) {
+      return `${prefix}${sn}`;
+    }
+    return sn; // already prefixed — return as-is (idempotent)
   }
+
+  // No known prefix for this brand — return unchanged
   return sn;
 }
 
