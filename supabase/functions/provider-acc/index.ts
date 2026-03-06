@@ -218,6 +218,18 @@ function getSizeOrder(sizeCode: string): number {
 // ---------------------------------------------------------------------------
 // XML helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * ACC's SOAP API returns XML elements with inline xmlns= attributes.
+ * fast-xml-parser parses these as objects: { "#text": "BC3001", "@_xmlns": "..." }
+ * instead of plain strings. extractText handles both cases safely.
+ */
+function extractText(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "object") return String((val as any)["#text"] ?? "").trim();
+  return String(val).trim();
+}
+
 function escapeXml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
