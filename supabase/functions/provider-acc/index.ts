@@ -819,6 +819,17 @@ function buildStandardProduct(
   }
   console.log(`[provider-acc] partMeta total=${partMeta.size} invEntries=${inventoryEntries.length} priceEntries=${priceMap.size}`);
 
+  // Log actual warehouse quantities for first size of the first 6 unique colors
+  const seenColors = new Set<string>();
+  for (const entry of inventoryEntries) {
+    const meta = partMeta.get(entry.partId);
+    if (!meta || seenColors.has(meta.colorName)) continue;
+    seenColors.add(meta.colorName);
+    const whSummary = entry.warehouses.map(w => `${w.code}:${w.qty}`).join(", ");
+    console.log(`[provider-acc] inv color="${meta.colorName}" size="${meta.sizeName}" warehouses=[${whSummary}]`);
+    if (seenColors.size >= 6) break;
+  }
+
   // Group by colorName
   const colorMap = new Map<string, {
     colorCode?: string;
