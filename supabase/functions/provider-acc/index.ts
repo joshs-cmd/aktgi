@@ -454,9 +454,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         (locArrayEl?.["ns2:InventoryLocation"] || locArrayEl?.InventoryLocation || locArrayEl?.inventoryLocation) ??
         [];
       const locs = Array.isArray(rawLocs) ? rawLocs : (rawLocs ? [rawLocs] : []);
-      if (locs.length > 0 && entries.length === 0) {
-        console.log("[provider-acc] First InventoryLocation raw:", JSON.stringify(locs[0]).substring(0, 400));
-      }
 
       const warehouses: { code: string; name: string; qty: number }[] = [];
       for (const loc of locs) {
@@ -625,23 +622,24 @@ async function fetchProductInfo(
     const rawParts =
       (partArrayEl?.["ns2:ProductPart"] || partArrayEl?.ProductPart || partArrayEl?.productPart) ?? [];
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
-    if (parts.length > 0) {
-      console.log("[provider-acc] First ProductPart raw:", JSON.stringify(parts[0]).substring(0, 600));
-    }
 
     for (const part of parts) {
       const pId = extractText(part?.partId ?? part?.["ns2:partId"] ?? "");
       if (!pId) continue;
 
       const colorName = extractText(
-        part?.colorName ?? part?.["ns2:colorName"] ??
-        part?.ColorName ?? part?.color ?? ""
+        part?.ColorArray?.Color?.colorName ?? part?.ColorArray?.Color ??
+        part?.["ns2:ColorArray"]?.["ns2:Color"]?.colorName ?? ""
+      );
+      const hexCode = extractText(
+        part?.ColorArray?.Color?.hex ?? part?.ColorArray?.Color?.hexCode ??
+        part?.["ns2:ColorArray"]?.["ns2:Color"]?.hex ?? ""
       );
       const sizeName = extractText(
-        part?.labelSize ?? part?.["ns2:labelSize"] ??
-        part?.sizeName ?? part?.size ?? ""
+        part?.ApparelSize?.labelSize ?? part?.["ns2:ApparelSize"]?.labelSize ??
+        part?.ApparelSize?.["ns2:labelSize"] ?? ""
       );
-      const colorCode = extractText(
+      const colorCode = hexCode || extractText(
         part?.colorCode ?? part?.["ns2:colorCode"] ?? ""
       ) || undefined;
 
@@ -860,7 +858,7 @@ serve(async (req) => {
       (async () => {
         try {
           const controller = new AbortController();
-          const tid = setTimeout(() => controller.abort(), 10000);
+          const tid = setTimeout(() => controller.abort(), 25000);
           const res = await fetch(ACC_INVENTORY_ENDPOINT, {
             method: "POST",
             headers: {
