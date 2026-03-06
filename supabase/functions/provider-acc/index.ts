@@ -324,7 +324,7 @@ async function fetchPricing(
     }
 
     const xml = await res.text();
-    console.log(`[provider-acc] Pricing XML (${xml.length} chars): ${xml.substring(0, 600)}`);
+    // Pricing XML received
 
     const parsed = parser.parse(xml);
     const bodyEl = getEnvelopeBody(parsed);
@@ -357,7 +357,7 @@ async function fetchPricing(
     }
 
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
-    console.log(`[provider-acc] Pricing: ${parts.length} parts`);
+    
 
     for (const part of parts) {
       const partId = extractText(
@@ -421,7 +421,7 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
     }
 
     const invResp = bodyEl[invKey];
-    console.log(`[provider-acc] Inventory resp keys: ${Object.keys(invResp || {}).join(", ")}`);
+    
 
     // v2.0.0 wraps in Inventory > PartInventoryArray > PartInventory
     const invEl =
