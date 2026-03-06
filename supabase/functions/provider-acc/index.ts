@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { XMLParser } from "https://esm.sh/fast-xml-parser@4.3.2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -180,19 +181,22 @@ function getCanonicalBase(styleNumber: string, brand: string): string {
 /**
  * Given a canonical base style (e.g. "3001") and brand (e.g. "BELLA+CANVAS"),
  * returns the ACC-prefixed product ID (e.g. "BC3001") needed for the live API.
- * If the style already has a known prefix, it is returned unchanged.
+ * IDEMPOTENT: only adds the prefix if the style doesn't already start with it.
  */
 function getAccProductId(styleNumber: string, brand: string): string {
   const normalBrand = normalizeBrandName(brand);
   const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
-  // If the style already looks prefixed (starts with 2+ alpha chars before a digit), keep as-is
-  if (/^[A-Z]{2,}[0-9]/.test(sn)) return sn;
-  if (/^[A-Z][0-9]/.test(sn)) return sn; // e.g. "J5000" already prefixed with 1 char
 
   const prefix = ACC_REPREF_MAP[normalBrand];
   if (prefix) {
-    return `${prefix}${sn}`;
+    // Only prepend if not already starting with this prefix
+    if (!sn.startsWith(prefix)) {
+      return `${prefix}${sn}`;
+    }
+    return sn; // already prefixed — return as-is (idempotent)
   }
+
+  // No known prefix for this brand — return unchanged
   return sn;
 }
 
@@ -450,23 +454,41 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           loc?.InventoryLocationName || locCode
         ).trim();
 
-        // Quantity can live at different levels in v2.0.0
-        const qtyEl =
+        // Sum ALL inventorySummary / availableQuantity blocks within this location
+        // (ACC returns multiple quantity tiers — we want the total)
+        const levelArrayEl =
           loc?.["ns2:inventoryLevelArray"] || loc?.inventoryLevelArray ||
-          loc?.InventoryLevelArray || loc;
-        const qty = parseInt(
-          String(
-            qtyEl?.["ns2:Quantity"]?.["#text"] || qtyEl?.Quantity?.["#text"] ||
-            qtyEl?.["ns2:Quantity"] || qtyEl?.Quantity ||
-            qtyEl?.quantity || loc?.quantity || "0"
-          ),
-          10
-        ) || 0;
+          loc?.InventoryLevelArray;
+        const rawLevels =
+          levelArrayEl?.["ns2:InventoryLevel"] || levelArrayEl?.InventoryLevel ||
+          levelArrayEl?.inventoryLevel || levelArrayEl;
+        const levels = rawLevels
+          ? (Array.isArray(rawLevels) ? rawLevels : [rawLevels])
+          : [];
+
+        let qty = 0;
+        if (levels.length > 0) {
+          for (const lvl of levels) {
+            const aqRaw =
+              lvl?.["ns2:availableToSellQuantity"] || lvl?.availableToSellQuantity ||
+              lvl?.availableQuantity || lvl?.["ns2:availableQuantity"] ||
+              lvl?.Quantity?.["#text"] || lvl?.["ns2:Quantity"]?.["#text"] ||
+              lvl?.Quantity || lvl?.["ns2:Quantity"] || "0";
+            qty += parseInt(String(aqRaw), 10) || 0;
+          }
+        } else {
+          // Fallback: quantity directly on the location element
+          const qtyRaw =
+            loc?.["ns2:Quantity"]?.["#text"] || loc?.Quantity?.["#text"] ||
+            loc?.["ns2:Quantity"] || loc?.Quantity ||
+            loc?.quantity || "0";
+          qty = parseInt(String(qtyRaw), 10) || 0;
+        }
 
         warehouses.push({ code: locCode, name: locName, qty });
       }
 
-      // If no warehouses from location array, try direct quantity field
+      // If no warehouses from location array, try direct quantity field on the part
       if (warehouses.length === 0) {
         const directQty = parseInt(
           String(part?.["ns2:quantity"] || part?.quantity || part?.Quantity || "0"),
@@ -779,12 +801,34 @@ serve(async (req) => {
     // Re-prefix: the sourcing engine sends the canonical (stripped) style number.
     // ACC's PromoStandards API expects the original prefixed product ID (e.g. "BC3001",
     // "GL5000", "NL3600"). Use the brand from the request body to reconstruct it.
-    const rawBrand: string = (body.brand || "").trim();
+    let rawBrand: string = (body.brand || "").trim();
     const rawQuery = query.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
+
+    // Brand fallback: if brand wasn't supplied, look it up from catalog_products
+    if (!rawBrand) {
+      try {
+        const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+        const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const { data: catalogRow } = await supabase
+          .from("catalog_products")
+          .select("brand")
+          .eq("distributor", "acc")
+          .ilike("style_number", rawQuery)
+          .maybeSingle();
+        if (catalogRow?.brand) {
+          rawBrand = catalogRow.brand;
+          console.log(`[provider-acc] Brand resolved from catalog: "${rawBrand}" for style "${rawQuery}"`);
+        }
+      } catch (lookupErr: any) {
+        console.warn(`[provider-acc] Brand lookup failed: ${lookupErr.message}`);
+      }
+    }
+
     const productId = rawBrand ? getAccProductId(rawQuery, rawBrand) : rawQuery;
 
     console.log(
-      `[provider-acc] query="${query}" brand="${rawBrand}" → productId="${productId}"`
+      `[provider-acc] Mapping incoming ${query} (${rawBrand || "unknown brand"}) -> Outgoing API ID: ${productId}`
     );
 
     const parser = new XMLParser({
