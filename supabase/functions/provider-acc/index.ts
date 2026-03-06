@@ -449,23 +449,38 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
       if (!partId) continue;
 
       // Resolve location array — try multiple structural variations in priority order
+      // Track whether we found a real location array or fell back to the flat part
+      let usedFlatFallback = false;
       const rawLocsFromArray = (() => {
-        // 1. InventoryLocationArray (uppercase) — common v2.0.0 style
+        // 1. InventoryLocationArray — try all known namespace/casing variants
         const arr1 =
-          part?.["ns2:InventoryLocationArray"] || part?.InventoryLocationArray;
+          part?.["ns2:InventoryLocationArray"] ||
+          part?.InventoryLocationArray ||
+          part?.inventoryLocationArray;
         if (arr1) {
           const locs =
-            arr1?.["ns2:InventoryLocation"] || arr1?.InventoryLocation || arr1?.inventoryLocation;
+            arr1?.["ns2:InventoryLocation"] ||
+            arr1?.InventoryLocation ||
+            arr1?.inventoryLocation;
           if (locs) return Array.isArray(locs) ? locs : [locs];
         }
-        // 2. inventoryLocationArray (camelCase) — alternate casing
-        const arr2 = part?.inventoryLocationArray;
-        if (arr2) {
-          const locs =
-            arr2?.["ns2:InventoryLocation"] || arr2?.InventoryLocation || arr2?.inventoryLocation;
-          if (locs) return Array.isArray(locs) ? locs : [locs];
+        // 2. Check all keys dynamically for any key containing "inventorylocation" (case-insensitive)
+        const dynamicKey = Object.keys(part || {}).find(k =>
+          k.toLowerCase().replace(/[^a-z]/g, "").includes("inventorylocationarray")
+        );
+        if (dynamicKey) {
+          console.log(`[provider-acc] Found location array via dynamic key: ${dynamicKey}`);
+          const arr3 = part[dynamicKey];
+          const locsKey = Object.keys(arr3 || {}).find(k =>
+            k.toLowerCase().replace(/[^a-z]/g, "").includes("inventorylocation")
+          );
+          if (locsKey) {
+            const locs = arr3[locsKey];
+            if (locs) return Array.isArray(locs) ? locs : [locs];
+          }
         }
-        // 3. Treat the part itself as a single location
+        // 3. Flat fallback — part has no location sub-structure; use part-level qty
+        usedFlatFallback = true;
         return [part];
       })();
 
