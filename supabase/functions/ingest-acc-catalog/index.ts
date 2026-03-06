@@ -134,36 +134,84 @@ const ACC_SERVICE_PREFIXES = new Set(["FB", "FO", "FR", "HA", "PF", "SF", "SS", 
 const ACC_STRIP_PREFIXES: string[] = ACC_PREFIX_TO_BRAND.map(([p]) => p);
 
 /**
+ * Title-based brand keyword fallback — used when no SKU prefix matches.
+ * E.g. Hanes "054X" has no recognizable 2-letter prefix.
+ */
+const TITLE_BRAND_KEYWORDS: [RegExp, string][] = [
+  [/hanes/i,        "Hanes"],
+  [/gildan/i,       "Gildan"],
+  [/badger/i,       "Badger"],
+  [/burnside/i,     "Burnside"],
+  [/champion/i,     "Champion"],
+  [/next\s*level/i, "Next Level"],
+  [/bella/i,        "Bella + Canvas"],
+  [/comfort\s*colors?/i, "Comfort Colors"],
+  [/sport[\s\-]?tek/i,   "Sport-Tek"],
+  [/port\s*&?\s*company/i, "Port & Company"],
+  [/independent\s*trading/i, "Independent Trading Co."],
+  [/alternative/i,  "Alternative"],
+  [/district/i,     "District"],
+  [/jerzees/i,      "Jerzees"],
+  [/anvil/i,        "Anvil"],
+  [/comfort\s*wash/i, "ComfortWash"],
+  [/augusta/i,      "Augusta Sportswear"],
+  [/j[\s\-]?america/i, "J-America"],
+  [/red\s*kap/i,    "Red Kap"],
+  [/dickies/i,      "Dickies"],
+  [/yupoong/i,      "Yupoong"],
+  [/rabbit\s*skin/i, "Rabbit Skins"],
+  [/holloway/i,     "Holloway"],
+  [/harriton/i,     "Harriton"],
+  [/pacific\s*headwear/i, "Pacific Headwear"],
+  [/liberty\s*bags?/i, "Liberty Bags"],
+  [/new\s*era/i,    "New Era"],
+  [/a4\b/i,         "A4"],
+];
+
+/**
  * Given an ACC productId (e.g. "BC3001"), return the real brand name.
  * Also handles A4's 3-char prefixes like "A4N3013".
- * Falls back to the raw brandName from the API if no prefix match.
+ * Falls back first to title keyword scan, then to API brand, then unknown.
  */
-function getBrandFromAccProductId(productId: string, apiBrand?: string): string {
+function getBrandFromAccProductId(productId: string, apiBrand?: string, productTitle?: string): string {
   const sn = productId.trim().toUpperCase();
 
   // Special case: A4 uses "A4N" and "A4L" prefixes (3 chars before digit)
   if (/^A4[A-Z]\d/.test(sn)) return "A4";
+
+  // Also catch bare A4 prefix: "A4####"
+  if (/^A4\d/.test(sn)) return "A4";
 
   for (const [prefix, brand] of ACC_PREFIX_TO_BRAND) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
       return brand;
     }
   }
-  // Fall back to API brand if it's meaningful (not the generic distributor name)
+
+  // Title-based fallback: scan product title for known brand keywords
+  const titleToCheck = productTitle ?? apiBrand ?? "";
+  for (const [pattern, brand] of TITLE_BRAND_KEYWORDS) {
+    if (pattern.test(titleToCheck)) return brand;
+  }
+
+  // API brand fallback if it's meaningful (not the generic distributor name)
   if (apiBrand && apiBrand.toLowerCase() !== "atlantic coast cotton") return apiBrand;
-  return "Atlantic Coast Cotton";
+  return "Unknown";
 }
 
 /**
  * Strip the ACC prefix from a style number so it stores as the
- * canonical base (e.g. "BC3001" → "3001", "A4N3013" → "N3013").
+ * canonical base (e.g. "BC3001" → "3001", "A4N3013" → "N3013", "A43001" → "3001").
  * The full original productId is always passed to the ACC API for pricing / inventory.
  */
 function getCanonicalBase(styleNumber: string): string {
   const sn = styleNumber.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-  // Special case: A4 uses "A4N####" / "A4L####" — strip the "A4" leaving "N####"
+  // Special case: A4 with letter variant prefix "A4N####" / "A4L####" → strip "A4" leaving "N####"
   if (/^A4[A-Z]\d/.test(sn)) return sn.slice(2);
+
+  // Special case: bare A4 numeric "A43001" → strip "A4" leaving "3001"
+  if (/^A4\d/.test(sn)) return sn.slice(2);
 
   for (const prefix of ACC_STRIP_PREFIXES) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
