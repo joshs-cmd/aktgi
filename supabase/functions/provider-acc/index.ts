@@ -72,16 +72,87 @@ const BRAND_PREFIX_MAP: Record<string, string[]> = {
   "BELLA+CANVAS":          ["BC"],
   "NEXT LEVEL":            ["NL"],
   "A4":                    ["A4"],
-  "GILDAN":                ["GH400", "GH000", "G"],
+  "GILDAN":                ["GL", "GH400", "GH000", "G"],
   "SPORT-TEK":             ["BST", "ST"],
   "PORT & COMPANY":        ["PC"],
   "COMFORT COLORS":        ["CC"],
   "DISTRICT":              ["DT"],
   "JERZEES":               ["J"],
-  "HANES":                 ["H"],
+  "HANES":                 ["HN", "H"],
   "NEW ERA":               ["NE"],
   "INDEPENDENT TRADING":   ["IND"],
   "ALTERNATIVE":           ["AA"],
+  "BADGER":                ["BA"],
+  "RABBIT SKINS":          ["RS", "LA"],
+  "YUPOONG":               ["YP", "FF"],
+  "CODE V":                ["CV"],
+  "BURNSIDE":              ["BS"],
+  "CHAMPION":              ["CP", "DB"],
+  "AUGUSTA SPORTSWEAR":    ["AG"],
+  "JAMERICA":              ["JA"],
+  "RED KAP":               ["RK"],
+  "ANVIL":                 ["AN"],
+  "DYENOMITE":             ["DN"],
+  "COMFORT WASH":          ["CW"],
+  "ADAMS HEADWEAR":        ["AD"],
+  "ECONSCIOUS":            ["EC"],
+  "SIERRA PACIFIC":        ["SP"],
+  "OUTDOOR CAP":           ["OC", "OT"],
+  "LIBERTY BAGS":          ["LB"],
+  "LANE SEVEN":            ["LS", "LST"],
+  "Q-TEES":                ["QT"],
+  "KATI":                  ["KC"],
+  "OAD":                   ["OD"],
+  "VITRONIC":              ["VT"],
+  "BIG ACCESSORIES":       ["BA", "BIG"],
+  "AMERICAN APPAREL":      ["AA", "AAF", "AAR"],
+  "JUST HOODS BY AWDIS":   ["JH", "JHA", "JHY"],
+};
+
+/**
+ * Canonical brand → primary ACC product ID prefix.
+ * When the sourcing engine strips a prefix and sends the bare base (e.g. "5000"),
+ * we re-attach the correct ACC prefix before querying the live ACC API.
+ * Ordered from most-specific to least-specific within each brand.
+ */
+const ACC_REPREF_MAP: Record<string, string> = {
+  "BELLA+CANVAS":          "BC",
+  "NEXT LEVEL":            "NL",
+  "GILDAN":                "GL",
+  "SPORT-TEK":             "ST",
+  "PORT & COMPANY":        "PC",
+  "COMFORT COLORS":        "CC",
+  "DISTRICT":              "DT",
+  "JERZEES":               "J",
+  "HANES":                 "HN",
+  "NEW ERA":               "NE",
+  "INDEPENDENT TRADING":   "IND",
+  "ALTERNATIVE":           "AA",
+  "BADGER":                "BA",
+  "RABBIT SKINS":          "RS",
+  "YUPOONG":               "YP",
+  "CODE V":                "CV",
+  "BURNSIDE":              "BS",
+  "CHAMPION":              "CP",
+  "AUGUSTA SPORTSWEAR":    "AG",
+  "JAMERICA":              "JA",
+  "RED KAP":               "RK",
+  "ANVIL":                 "AN",
+  "DYENOMITE":             "DN",
+  "COMFORT WASH":          "CW",
+  "ADAMS HEADWEAR":        "AD",
+  "ECONSCIOUS":            "EC",
+  "SIERRA PACIFIC":        "SP",
+  "OUTDOOR CAP":           "OC",
+  "LIBERTY BAGS":          "LB",
+  "LANE SEVEN":            "LS",
+  "Q-TEES":                "QT",
+  "KATI":                  "KC",
+  "OAD":                   "OD",
+  "VITRONIC":              "VT",
+  "BIG ACCESSORIES":       "BA",
+  "AMERICAN APPAREL":      "AA",
+  "JUST HOODS BY AWDIS":   "JH",
 };
 
 function normalizeBrandName(brand: string): string {
@@ -100,8 +171,27 @@ function getCanonicalBase(styleNumber: string, brand: string): string {
   for (const prefix of prefixes) {
     if (sn.startsWith(prefix) && sn.length > prefix.length) {
       const rest = sn.slice(prefix.length);
-      if (/^\d/.test(rest)) return rest;
+      if (/^\d/.test(rest) || prefix === "JH" || prefix === "JHA" || prefix === "JHY") return rest;
     }
+  }
+  return sn;
+}
+
+/**
+ * Given a canonical base style (e.g. "3001") and brand (e.g. "BELLA+CANVAS"),
+ * returns the ACC-prefixed product ID (e.g. "BC3001") needed for the live API.
+ * If the style already has a known prefix, it is returned unchanged.
+ */
+function getAccProductId(styleNumber: string, brand: string): string {
+  const normalBrand = normalizeBrandName(brand);
+  const sn = styleNumber.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
+  // If the style already looks prefixed (starts with 2+ alpha chars before a digit), keep as-is
+  if (/^[A-Z]{2,}[0-9]/.test(sn)) return sn;
+  if (/^[A-Z][0-9]/.test(sn)) return sn; // e.g. "J5000" already prefixed with 1 char
+
+  const prefix = ACC_REPREF_MAP[normalBrand];
+  if (prefix) {
+    return `${prefix}${sn}`;
   }
   return sn;
 }
@@ -686,12 +776,16 @@ serve(async (req) => {
       );
     }
 
-    // productId to query ACC is the raw query (style number)
-    // Normalise: strip known brand prefix so we send bare style to ACC
-    // ACC stores styles by their own internal code (usually plain numeric)
-    const productId = query.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
+    // Re-prefix: the sourcing engine sends the canonical (stripped) style number.
+    // ACC's PromoStandards API expects the original prefixed product ID (e.g. "BC3001",
+    // "GL5000", "NL3600"). Use the brand from the request body to reconstruct it.
+    const rawBrand: string = (body.brand || "").trim();
+    const rawQuery = query.toUpperCase().replace(/[^A-Z0-9\-]/g, "");
+    const productId = rawBrand ? getAccProductId(rawQuery, rawBrand) : rawQuery;
 
-    console.log(`[provider-acc] Looking up productId: "${productId}" (original: "${query}")`);
+    console.log(
+      `[provider-acc] query="${query}" brand="${rawBrand}" → productId="${productId}"`
+    );
 
     const parser = new XMLParser({
       ignoreAttributes: false,
