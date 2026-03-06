@@ -218,6 +218,18 @@ function getSizeOrder(sizeCode: string): number {
 // ---------------------------------------------------------------------------
 // XML helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * ACC's SOAP API returns XML elements with inline xmlns= attributes.
+ * fast-xml-parser parses these as objects: { "#text": "BC3001", "@_xmlns": "..." }
+ * instead of plain strings. extractText handles both cases safely.
+ */
+function extractText(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "object") return String((val as any)["#text"] ?? "").trim();
+  return String(val).trim();
+}
+
 function escapeXml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -348,9 +360,9 @@ async function fetchPricing(
     console.log(`[provider-acc] Pricing: ${parts.length} parts`);
 
     for (const part of parts) {
-      const partId = String(
-        part?.partId || part?.["ns2:partId"] || part?.PartId || ""
-      ).trim();
+      const partId = extractText(
+        part?.partId ?? part?.["ns2:partId"] ?? part?.PartId ?? ""
+      );
       if (!partId) continue;
 
       const priceArrayEl =
@@ -363,8 +375,8 @@ async function fetchPricing(
       let bestPrice = 0;
 
       for (const p of priceList) {
-        const minQty = parseFloat(String(p?.["ns2:minQuantity"] || p?.minQuantity || "1"));
-        const val    = parseFloat(String(p?.["ns2:price"] || p?.price || p?.Price || "0"));
+        const minQty = parseFloat(extractText(p?.["ns2:minQuantity"] ?? p?.minQuantity) || "1");
+        const val    = parseFloat(extractText(p?.["ns2:price"] ?? p?.price ?? p?.Price) || "0");
         if (val > 0 && (minQty <= 1 || bestPrice === 0)) {
           bestPrice = val;
         }
@@ -430,9 +442,9 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
     console.log(`[provider-acc] Inventory: ${parts.length} PartInventory entries`);
 
     for (const part of parts) {
-      const partId = String(
-        part?.partId || part?.["ns2:partId"] || part?.PartId || ""
-      ).trim();
+      const partId = extractText(
+        part?.partId ?? part?.["ns2:partId"] ?? part?.PartId ?? ""
+      );
       if (!partId) continue;
 
       // v2.0.0 supplies InventoryLocationArray with LocationQuantity entries
@@ -445,14 +457,14 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
 
       const warehouses: { code: string; name: string; qty: number }[] = [];
       for (const loc of locs) {
-        const locCode = String(
-          loc?.inventoryLocationId || loc?.["ns2:inventoryLocationId"] ||
-          loc?.InventoryLocationId || loc?.locationId || "DEFAULT"
-        ).trim();
-        const locName = String(
-          loc?.inventoryLocationName || loc?.["ns2:inventoryLocationName"] ||
-          loc?.InventoryLocationName || locCode
-        ).trim();
+        const locCode = extractText(
+          loc?.inventoryLocationId ?? loc?.["ns2:inventoryLocationId"] ??
+          loc?.InventoryLocationId ?? loc?.locationId ?? "DEFAULT"
+        ) || "DEFAULT";
+        const locName = extractText(
+          loc?.inventoryLocationName ?? loc?.["ns2:inventoryLocationName"] ??
+          loc?.InventoryLocationName ?? locCode
+        ) || locCode;
 
         // Sum ALL inventorySummary / availableQuantity blocks within this location
         // (ACC returns multiple quantity tiers — we want the total)
@@ -470,19 +482,17 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         if (levels.length > 0) {
           for (const lvl of levels) {
             const aqRaw =
-              lvl?.["ns2:availableToSellQuantity"] || lvl?.availableToSellQuantity ||
-              lvl?.availableQuantity || lvl?.["ns2:availableQuantity"] ||
-              lvl?.Quantity?.["#text"] || lvl?.["ns2:Quantity"]?.["#text"] ||
-              lvl?.Quantity || lvl?.["ns2:Quantity"] || "0";
-            qty += parseInt(String(aqRaw), 10) || 0;
+              lvl?.["ns2:availableToSellQuantity"] ?? lvl?.availableToSellQuantity ??
+              lvl?.availableQuantity ?? lvl?.["ns2:availableQuantity"] ??
+              lvl?.Quantity ?? lvl?.["ns2:Quantity"] ?? "0";
+            qty += parseInt(extractText(aqRaw) || "0", 10) || 0;
           }
         } else {
           // Fallback: quantity directly on the location element
           const qtyRaw =
-            loc?.["ns2:Quantity"]?.["#text"] || loc?.Quantity?.["#text"] ||
-            loc?.["ns2:Quantity"] || loc?.Quantity ||
-            loc?.quantity || "0";
-          qty = parseInt(String(qtyRaw), 10) || 0;
+            loc?.["ns2:Quantity"] ?? loc?.Quantity ??
+            loc?.quantity ?? "0";
+          qty = parseInt(extractText(qtyRaw) || "0", 10) || 0;
         }
 
         warehouses.push({ code: locCode, name: locName, qty });
@@ -491,7 +501,7 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
       // If no warehouses from location array, try direct quantity field on the part
       if (warehouses.length === 0) {
         const directQty = parseInt(
-          String(part?.["ns2:quantity"] || part?.quantity || part?.Quantity || "0"),
+          extractText(part?.["ns2:quantity"] ?? part?.quantity ?? part?.Quantity ?? "0") || "0",
           10
         ) || 0;
         warehouses.push({ code: "DEFAULT", name: "Warehouse", qty: directQty });
@@ -582,20 +592,20 @@ async function fetchProductInfo(
       resp?.["ns2:Product"] || resp?.Product || resp?.product;
     if (!productEl) return null;
 
-    const productId2 = String(
-      productEl?.productId || productEl?.["ns2:productId"] || productId
-    ).trim();
-    const name = String(
-      productEl?.productName || productEl?.["ns2:productName"] ||
-      productEl?.name || productId2
-    ).trim();
-    const brand = String(
-      productEl?.brandName || productEl?.["ns2:brandName"] ||
-      productEl?.brand || "Atlantic Coast Cotton"
-    ).trim();
-    const category = String(
-      productEl?.productCategory || productEl?.["ns2:productCategory"] || ""
-    ).trim();
+    const productId2 = extractText(
+      productEl?.productId ?? productEl?.["ns2:productId"] ?? productId
+    ) || productId;
+    const name = extractText(
+      productEl?.productName ?? productEl?.["ns2:productName"] ??
+      productEl?.name ?? productId2
+    ) || productId2;
+    const brand = extractText(
+      productEl?.brandName ?? productEl?.["ns2:brandName"] ??
+      productEl?.brand ?? "Atlantic Coast Cotton"
+    ) || "Atlantic Coast Cotton";
+    const category = extractText(
+      productEl?.productCategory ?? productEl?.["ns2:productCategory"] ?? ""
+    );
 
     // Image
     const mediaArrayEl =
@@ -603,7 +613,7 @@ async function fetchProductInfo(
       productEl?.ProductMarketingPointArray ||
       productEl?.primaryImageUrl ||
       productEl?.primaryImage;
-    const imageUrl = String(mediaArrayEl?.primaryImageUrl || mediaArrayEl || "").trim() || undefined;
+    const imageUrl = extractText(mediaArrayEl?.primaryImageUrl ?? mediaArrayEl ?? "") || undefined;
 
     // Build part map from ProductPartArray
     const partMap = new Map<string, { colorName: string; sizeName: string; colorCode?: string }>();
@@ -614,20 +624,20 @@ async function fetchProductInfo(
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
 
     for (const part of parts) {
-      const pId = String(part?.partId || part?.["ns2:partId"] || "").trim();
+      const pId = extractText(part?.partId ?? part?.["ns2:partId"] ?? "");
       if (!pId) continue;
 
-      const colorName = String(
-        part?.colorName || part?.["ns2:colorName"] ||
-        part?.ColorName || part?.color || ""
-      ).trim();
-      const sizeName = String(
-        part?.labelSize || part?.["ns2:labelSize"] ||
-        part?.sizeName || part?.size || ""
-      ).trim();
-      const colorCode = String(
-        part?.colorCode || part?.["ns2:colorCode"] || ""
-      ).trim() || undefined;
+      const colorName = extractText(
+        part?.colorName ?? part?.["ns2:colorName"] ??
+        part?.ColorName ?? part?.color ?? ""
+      );
+      const sizeName = extractText(
+        part?.labelSize ?? part?.["ns2:labelSize"] ??
+        part?.sizeName ?? part?.size ?? ""
+      );
+      const colorCode = extractText(
+        part?.colorCode ?? part?.["ns2:colorCode"] ?? ""
+      ) || undefined;
 
       partMap.set(pId, { colorName, sizeName, colorCode });
     }
