@@ -592,20 +592,20 @@ async function fetchProductInfo(
       resp?.["ns2:Product"] || resp?.Product || resp?.product;
     if (!productEl) return null;
 
-    const productId2 = String(
-      productEl?.productId || productEl?.["ns2:productId"] || productId
-    ).trim();
-    const name = String(
-      productEl?.productName || productEl?.["ns2:productName"] ||
-      productEl?.name || productId2
-    ).trim();
-    const brand = String(
-      productEl?.brandName || productEl?.["ns2:brandName"] ||
-      productEl?.brand || "Atlantic Coast Cotton"
-    ).trim();
-    const category = String(
-      productEl?.productCategory || productEl?.["ns2:productCategory"] || ""
-    ).trim();
+    const productId2 = extractText(
+      productEl?.productId ?? productEl?.["ns2:productId"] ?? productId
+    ) || productId;
+    const name = extractText(
+      productEl?.productName ?? productEl?.["ns2:productName"] ??
+      productEl?.name ?? productId2
+    ) || productId2;
+    const brand = extractText(
+      productEl?.brandName ?? productEl?.["ns2:brandName"] ??
+      productEl?.brand ?? "Atlantic Coast Cotton"
+    ) || "Atlantic Coast Cotton";
+    const category = extractText(
+      productEl?.productCategory ?? productEl?.["ns2:productCategory"] ?? ""
+    );
 
     // Image
     const mediaArrayEl =
@@ -613,7 +613,7 @@ async function fetchProductInfo(
       productEl?.ProductMarketingPointArray ||
       productEl?.primaryImageUrl ||
       productEl?.primaryImage;
-    const imageUrl = String(mediaArrayEl?.primaryImageUrl || mediaArrayEl || "").trim() || undefined;
+    const imageUrl = extractText(mediaArrayEl?.primaryImageUrl ?? mediaArrayEl ?? "") || undefined;
 
     // Build part map from ProductPartArray
     const partMap = new Map<string, { colorName: string; sizeName: string; colorCode?: string }>();
@@ -624,20 +624,20 @@ async function fetchProductInfo(
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
 
     for (const part of parts) {
-      const pId = String(part?.partId || part?.["ns2:partId"] || "").trim();
+      const pId = extractText(part?.partId ?? part?.["ns2:partId"] ?? "");
       if (!pId) continue;
 
-      const colorName = String(
-        part?.colorName || part?.["ns2:colorName"] ||
-        part?.ColorName || part?.color || ""
-      ).trim();
-      const sizeName = String(
-        part?.labelSize || part?.["ns2:labelSize"] ||
-        part?.sizeName || part?.size || ""
-      ).trim();
-      const colorCode = String(
-        part?.colorCode || part?.["ns2:colorCode"] || ""
-      ).trim() || undefined;
+      const colorName = extractText(
+        part?.colorName ?? part?.["ns2:colorName"] ??
+        part?.ColorName ?? part?.color ?? ""
+      );
+      const sizeName = extractText(
+        part?.labelSize ?? part?.["ns2:labelSize"] ??
+        part?.sizeName ?? part?.size ?? ""
+      );
+      const colorCode = extractText(
+        part?.colorCode ?? part?.["ns2:colorCode"] ?? ""
+      ) || undefined;
 
       partMap.set(pId, { colorName, sizeName, colorCode });
     }
