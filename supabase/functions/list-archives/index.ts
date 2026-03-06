@@ -8,38 +8,49 @@ const corsHeaders = {
 
 const BUCKET = "distributor-archives";
 const DISTRIBUTORS = ["sanmar", "ss-activewear", "onestop"];
-const FILES_PER_DISTRIBUTOR = 1;
+// Fetch enough files to find at least 1 CSV + 1 JSON per folder
+const SCAN_LIMIT = 10;
 
 type ArchiveFile = { name: string; size: number; created_at: string; downloadUrl: string };
 
 async function listFolder(
   supabase: ReturnType<typeof import("https://esm.sh/@supabase/supabase-js@2").createClient>,
-  folder: string,
-  limit: number
+  folder: string
 ): Promise<ArchiveFile[]> {
   const { data: files, error } = await supabase.storage
     .from(BUCKET)
-    .list(folder, { limit, sortBy: { column: "created_at", order: "desc" } });
+    .list(folder, { limit: SCAN_LIMIT, sortBy: { column: "created_at", order: "desc" } });
 
   if (error || !files) return [];
 
-  return Promise.all(
-    files
-      .filter(f => f.name !== ".emptyFolderPlaceholder" && !f.name.endsWith("-ids.json") && !f.name.endsWith("-enriched-"))
-      .slice(0, limit)
-      .map(async (file) => {
-        const filePath = `${folder}/${file.name}`;
-        const { data: signedData } = await supabase.storage
-          .from(BUCKET)
-          .createSignedUrl(filePath, 3600);
-        return {
-          name: file.name,
-          size: file.metadata?.size ?? 0,
-          created_at: file.created_at ?? file.updated_at ?? new Date().toISOString(),
-          downloadUrl: signedData?.signedUrl ?? "",
-        };
-      })
+  const filtered = files.filter(
+    f => f.name !== ".emptyFolderPlaceholder" && !f.name.endsWith("-ids.json") && !f.name.endsWith("-enriched-")
   );
+
+  return Promise.all(
+    filtered.map(async (file) => {
+      const filePath = `${folder}/${file.name}`;
+      const { data: signedData } = await supabase.storage
+        .from(BUCKET)
+        .createSignedUrl(filePath, 3600);
+      return {
+        name: file.name,
+        size: file.metadata?.size ?? 0,
+        created_at: file.created_at ?? file.updated_at ?? new Date().toISOString(),
+        downloadUrl: signedData?.signedUrl ?? "",
+      };
+    })
+  );
+}
+
+/** Return [latestCsv, latestJson] — CSV first, both optional */
+function pickLatestPair(files: ArchiveFile[]): ArchiveFile[] {
+  const csvFiles = files.filter(f => f.name.endsWith(".csv"));
+  const jsonFiles = files.filter(f => f.name.endsWith(".json"));
+  const result: ArchiveFile[] = [];
+  if (csvFiles.length > 0) result.push(csvFiles[0]); // already sorted desc
+  if (jsonFiles.length > 0) result.push(jsonFiles[0]);
+  return result;
 }
 
 Deno.serve(async (req) => {
@@ -55,22 +66,24 @@ Deno.serve(async (req) => {
   try {
     const result: Record<string, ArchiveFile[]> = {};
 
-    // Standard distributors — single root folder
+    // Standard distributors — scan root folder, pick latest CSV + JSON
     for (const distributor of DISTRIBUTORS) {
-      result[distributor] = await listFolder(supabase, distributor, FILES_PER_DISTRIBUTOR);
+      const all = await listFolder(supabase, distributor);
+      result[distributor] = pickLatestPair(all);
     }
 
-    // ACC: merge root JSON files + csv subfolder, interleaved by date
-    const [accJson, accCsv] = await Promise.all([
-      listFolder(supabase, "acc", FILES_PER_DISTRIBUTOR),
-      listFolder(supabase, "acc/csv", FILES_PER_DISTRIBUTOR),
+    // ACC: root folder has JSON, csv subfolder has CSV
+    const [accAll, accCsvAll] = await Promise.all([
+      listFolder(supabase, "acc"),
+      listFolder(supabase, "acc/csv"),
     ]);
 
-    // Merge: pair JSON + CSV by date slug, then sort by date desc
-    const allAcc = [...accJson, ...accCsv].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-    result["acc"] = allAcc.slice(0, FILES_PER_DISTRIBUTOR * 2);
+    const latestAccCsv = accCsvAll.filter(f => f.name.endsWith(".csv"))[0];
+    const latestAccJson = accAll.filter(f => f.name.endsWith(".json"))[0];
+    const accResult: ArchiveFile[] = [];
+    if (latestAccCsv) accResult.push(latestAccCsv);
+    if (latestAccJson) accResult.push(latestAccJson);
+    result["acc"] = accResult;
 
     return new Response(JSON.stringify({ archives: result }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
