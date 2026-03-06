@@ -519,9 +519,13 @@ Deno.serve(async (req) => {
         console.log("[ingest-acc-catalog] Safety cutoff — will self-chain");
         break;
       }
-      const batch = chunk.slice(i, i + CONCURRENCY);
+      const batch = chunk.slice(i, i + CONCURRENCY).filter((productId: string) => {
+        // Skip service/fee items (freight, handling, folding, etc.)
+        const prefix = productId.trim().toUpperCase().slice(0, 2);
+        return !ACC_SERVICE_PREFIXES.has(prefix);
+      });
       const results = await Promise.allSettled(
-        batch.map(async (productId) => {
+        batch.map(async (productId: string) => {
           const [detailResult, basePriceResult] = await Promise.allSettled([
             fetchProductDetail(productId, username, password, parser),
             fetchBasePrice(productId, username, password, parser),
