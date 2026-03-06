@@ -165,52 +165,57 @@ const ACC_STRIP_PREFIXES: string[] = ACC_PREFIX_TO_BRAND.map(([p]) => p);
  * E.g. Hanes "054X" has no recognizable 2-letter prefix.
  */
 const TITLE_BRAND_KEYWORDS: [RegExp, string][] = [
-  [/sundog/i,       "Sundog"],
-  [/big\s*ax/i,     "Big Accessories"],
-  [/bag\s*edge/i,   "Bag Edge"],
-  [/lane\s*seven|l7\b/i, "Lane Seven"],
-  [/liberty\s*bags?/i,   "Liberty Bags"],
-  [/\bkati\b/i,     "Kati"],
-  [/\boad\b/i,      "OAD"],
-  [/q[\s\-]?tees?/i, "Q-Tees"],
-  [/vitronic/i,     "Vitronic"],
-  [/hanes/i,        "Hanes"],
-  [/gildan/i,       "Gildan"],
-  [/badger/i,       "Badger"],
-  [/burnside/i,     "Burnside"],
-  [/champion/i,     "Champion"],
-  [/next\s*level/i, "Next Level"],
-  [/bella/i,        "Bella + Canvas"],
-  [/comfort\s*colors?/i, "Comfort Colors"],
-  [/sport[\s\-]?tek/i,   "Sport-Tek"],
-  [/port\s*&?\s*company/i, "Port & Company"],
-  [/independent\s*trading/i, "Independent Trading Co."],
-  [/alternative/i,  "Alternative"],
-  [/district/i,     "District"],
-  [/jerzees/i,      "Jerzees"],
-  [/anvil/i,        "Anvil"],
-  [/comfort\s*wash/i, "ComfortWash"],
-  [/augusta/i,      "Augusta Sportswear"],
-  [/j[\s\-]?america/i, "J-America"],
-  [/red\s*kap/i,    "Red Kap"],
-  [/dickies/i,      "Dickies"],
-  [/yupoong/i,      "Yupoong"],
-  [/rabbit\s*skin/i, "Rabbit Skins"],
-  [/holloway/i,     "Holloway"],
-  [/harriton/i,     "Harriton"],
-  [/pacific\s*headwear/i, "Pacific Headwear"],
-  [/new\s*era/i,    "New Era"],
-  [/a4\b/i,         "A4"],
-  [/maui\s*&?\s*sons?/i, "Maui & Sons"],
-  [/outdoor\s*cap/i, "Outdoor Cap"],
-  [/american\s*apparel/i, "American Apparel"],
+  // New additions — checked first to avoid false-positive substring matches below
+  [/just\s*hoods?|awdis/i,       "Just Hoods by AWDis"],
+  [/j\s*h\s+/i,                  "Just Hoods by AWDis"],   // "J H " prefix in title
+  [/sierra\s*pacific|\bsp\b/i,   "Sierra Pacific"],
+  [/sundog/i,                    "Sundog"],
+  [/big\s*ax/i,                  "Big Accessories"],
+  [/bag\s*edge/i,                "Bag Edge"],
+  [/lane\s*seven|l7\b/i,        "Lane Seven"],
+  [/liberty\s*bags?/i,           "Liberty Bags"],
+  [/\bkati\b/i,                  "Kati"],
+  [/\boad\b/i,                   "OAD"],
+  [/q[\s\-]?tees?/i,             "Q-Tees"],
+  [/vitronic/i,                  "Vitronic"],
+  [/maui\s*&?\s*sons?/i,         "Maui & Sons"],
+  [/outdoor\s*cap/i,             "Outdoor Cap"],
+  [/american\s*apparel/i,        "American Apparel"],
+  [/rdkap|red\s*kap/i,           "Red Kap"],
+  // Core brands
+  [/hanes/i,                     "Hanes"],
+  [/gildan/i,                    "Gildan"],
+  [/badger/i,                    "Badger"],
+  [/burnside/i,                  "Burnside"],
+  [/champion/i,                  "Champion"],
+  [/next\s*level/i,              "Next Level"],
+  [/bella/i,                     "Bella + Canvas"],
+  [/comfort\s*colors?/i,         "Comfort Colors"],
+  [/sport[\s\-]?tek/i,           "Sport-Tek"],
+  [/port\s*&?\s*company/i,       "Port & Company"],
+  [/independent\s*trading/i,     "Independent Trading Co."],
+  [/alternative/i,               "Alternative"],
+  [/district/i,                  "District"],
+  [/jerzees/i,                   "Jerzees"],
+  [/anvil/i,                     "Anvil"],
+  [/comfort\s*wash/i,            "ComfortWash"],
+  [/augusta/i,                   "Augusta Sportswear"],
+  [/j[\s\-]?america/i,           "J-America"],
+  [/dickies/i,                   "Dickies"],
+  [/yupoong/i,                   "Yupoong"],
+  [/rabbit\s*skin/i,             "Rabbit Skins"],
+  [/holloway/i,                  "Holloway"],
+  [/harriton/i,                  "Harriton"],
+  [/pacific\s*headwear/i,        "Pacific Headwear"],
+  [/new\s*era/i,                 "New Era"],
+  [/a4\b/i,                      "A4"],
 ];
 
 /**
  * Given an ACC productId (e.g. "BC3001"), return the real brand name.
- * Handles multi-letter prefixes (e.g. A4, BST, LST, AAF) and conflict cases:
- *   - "BEBE####" → Bag Edge  (vs "BE####" → Bella + Canvas)
- *   - "BA[A-Z]####" → Big Accessories  (vs "BA[0-9]####" → Badger)
+ * Handles multi-letter prefixes (e.g. A4, BST, LST, AAF, JHA, JHY) and conflict cases:
+ *   - "BEBE####"   → Bag Edge  (vs "BE####" → Bella + Canvas)
+ *   - "BA[A-Z]..." → Big Accessories  (vs "BA[digit]..." → Badger)
  * Falls back to title keyword scan, then API brand, then "Unknown".
  */
 function getBrandFromAccProductId(productId: string, apiBrand?: string, productTitle?: string): string {
@@ -220,41 +225,45 @@ function getBrandFromAccProductId(productId: string, apiBrand?: string, productT
   if (/^A4[A-Z]\d/.test(sn)) return "A4";
   if (/^A4\d/.test(sn)) return "A4";
 
-  // Conflict resolution — BEBE#### → Bag Edge (not Bella + Canvas)
+  // Conflict: BEBE#### → Bag Edge (not Bella + Canvas)
   if (/^BEBE/.test(sn)) return "Bag Edge";
 
-  // Conflict resolution — BA followed by a letter (e.g. BAAPR, BAACC) → Big Accessories
-  // BA followed by a digit (e.g. BA3001) → Badger (handled by normal prefix scan)
+  // Conflict: BA followed by a letter → Big Accessories; BA followed by digit → Badger
   if (/^BA[A-Z]/.test(sn)) return "Big Accessories";
 
-  // Normal prefix scan (longest prefixes first in ACC_PREFIX_TO_BRAND)
+  // Full prefix scan — longest prefixes are listed first in ACC_PREFIX_TO_BRAND
+  // Pass 1: require digit after prefix (standard garment codes)
   for (const [prefix, brand] of ACC_PREFIX_TO_BRAND) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
       return brand;
     }
   }
 
-  // For pure-alpha suffixes matched by Sundog 3-char prefixes (e.g. APR123, GEM456)
+  // Pass 2: allow any character after prefix (catches Sundog alpha codes like APR, GEM, JHA, JHY)
   for (const [prefix, brand] of ACC_PREFIX_TO_BRAND) {
     if (sn.startsWith(prefix) && sn.length > prefix.length) {
       return brand;
     }
   }
 
-  // Title-based fallback: scan product title for known brand keywords
+  // Title-based fallback
   const titleToCheck = productTitle ?? apiBrand ?? "";
   for (const [pattern, brand] of TITLE_BRAND_KEYWORDS) {
     if (pattern.test(titleToCheck)) return brand;
   }
 
-  // API brand fallback if it's meaningful (not the generic distributor name)
+  // API brand fallback if it's meaningful
   if (apiBrand && apiBrand.toLowerCase() !== "atlantic coast cotton") return apiBrand;
   return "Unknown";
 }
 
+// Prefixes that are stripped even when followed by non-digit chars (e.g. JHA001, JHY001)
+const ACC_ALPHA_STRIP_PREFIXES = new Set(["JHA", "JHY", "AFF", "ANT", "APR", "ASD", "ASP", "ASR",
+  "GEM", "RET", "RTR", "SDA", "SDC", "SDR", "SPC", "SPT", "SWI", "TWI", "USA", "YFF", "BIG", "CRC", "BST", "LST", "PSB"]);
+
 /**
  * Strip the ACC prefix from a style number so it stores as the
- * canonical base (e.g. "BC3001" → "3001", "A4N3013" → "N3013", "A43001" → "3001").
+ * canonical base (e.g. "BC3001" → "3001", "A4N3013" → "N3013", "JHA001" → "001").
  * The full original productId is always passed to the ACC API for pricing / inventory.
  */
 function getCanonicalBase(styleNumber: string): string {
@@ -266,6 +275,14 @@ function getCanonicalBase(styleNumber: string): string {
   // Special case: bare A4 numeric "A43001" → strip "A4" leaving "3001"
   if (/^A4\d/.test(sn)) return sn.slice(2);
 
+  // Alpha-suffix prefixes — strip regardless of what follows (digit or letter)
+  for (const prefix of ACC_ALPHA_STRIP_PREFIXES) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length) {
+      return sn.slice(prefix.length);
+    }
+  }
+
+  // Standard stripping — only when followed by a digit
   for (const prefix of ACC_STRIP_PREFIXES) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
       return sn.slice(prefix.length);
