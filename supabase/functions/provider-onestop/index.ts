@@ -446,14 +446,14 @@ serve(async (req) => {
       "Accept": "application/json; version=1.0",
     };
 
-    const fetchWithTimeout = (url: string, timeoutMs = 15_000): Promise<Response> =>
+    const fetchWithTimeout = (url: string, timeoutMs = 25_000): Promise<Response> =>
       fetch(url, { headers: fetchHeaders, signal: AbortSignal.timeout(timeoutMs) });
 
     // Step 1: Search catalog with flat=Y to find the OneStop style code
     const searchUrl = `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
     console.log(`[provider-onestop] Catalog search: ${searchUrl}`);
 
-    const catalogRes = await fetchWithTimeout(searchUrl, 15_000);
+    const catalogRes = await fetchWithTimeout(searchUrl, 25_000);
     if (!catalogRes.ok) {
       const errBody = await catalogRes.text();
       console.error(`[provider-onestop] Catalog search failed ${catalogRes.status}: ${errBody.substring(0, 500)}`);
@@ -571,9 +571,11 @@ serve(async (req) => {
       );
     }
 
-    if (bestInfo.mill_style_code && typeof bestInfo.mill_style_code === "string" && bestInfo.mill_style_code.length > 0) {
-      product.styleNumber = bestInfo.mill_style_code;
-    }
+    // Fix 4: Always resolve styleNumber — prefer mill_style_code, fall back to bestStyleCode, then the original query
+    product.styleNumber =
+      (typeof bestInfo.mill_style_code === "string" && bestInfo.mill_style_code.length > 0)
+        ? bestInfo.mill_style_code
+        : (product.styleNumber || bestStyleCode || query);
 
     const totalPricedSizes = product.colors.reduce((sum, c) => sum + c.sizes.filter(s => s.price > 0).length, 0);
     const totalSizes = product.colors.reduce((sum, c) => sum + c.sizes.length, 0);
