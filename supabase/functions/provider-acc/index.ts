@@ -794,10 +794,29 @@ function buildStandardProduct(
     }
   }
 
-  // Inventory lookup by partId
+  // Primary inventory lookup by exact partId
   const invByPartId = new Map<string, PartEntry>();
   for (const entry of inventoryEntries) {
     invByPartId.set(entry.partId, entry);
+  }
+
+  // Secondary lookup: colorName+sizeName → PartEntry
+  // This is the fix for the case where pricing partIds and inventory partIds
+  // have different formats (e.g. "CC1717-AQUA-S" vs "AQUA-S"), causing
+  // invByPartId.get(partId) to always miss and return the same entry for all colors.
+  const invByColorSize = new Map<string, PartEntry>();
+  for (const entry of inventoryEntries) {
+    const meta = partMeta.get(entry.partId);
+    if (meta) {
+      invByColorSize.set(`${meta.colorName}||${meta.sizeName}`, entry);
+    }
+  }
+
+  // Log a sample to verify partId alignment between inventory and pricing
+  const firstInvPartId = inventoryEntries[0]?.partId;
+  const firstPricePartId = [...priceMap.keys()][0];
+  if (firstInvPartId || firstPricePartId) {
+    console.log(`[provider-acc] partId sample — inv="${firstInvPartId}" price="${firstPricePartId}"`);
   }
 
   // Group by colorName
@@ -816,7 +835,8 @@ function buildStandardProduct(
     }
 
     const price = priceMap.get(partId) ?? 0;
-    const invEntry = invByPartId.get(partId);
+    // Try exact partId match first, then fall back to color+size key
+    const invEntry = invByPartId.get(partId) ?? invByColorSize.get(`${colorName}||${sizeName}`);
     const inventory: StandardInventory[] = (invEntry?.warehouses ?? []).map(w => ({
       warehouseCode: w.code,
       warehouseName: w.name,
