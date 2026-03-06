@@ -454,9 +454,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         (locArrayEl?.["ns2:InventoryLocation"] || locArrayEl?.InventoryLocation || locArrayEl?.inventoryLocation) ??
         [];
       const locs = Array.isArray(rawLocs) ? rawLocs : (rawLocs ? [rawLocs] : []);
-      if (locs.length > 0 && entries.length === 0) {
-        console.log("[provider-acc] First InventoryLocation raw:", JSON.stringify(locs[0]).substring(0, 400));
-      }
 
       const warehouses: { code: string; name: string; qty: number }[] = [];
       for (const loc of locs) {
