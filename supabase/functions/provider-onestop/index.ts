@@ -281,43 +281,65 @@ function deduplicateSkusByColor(skuCodes: string[]): string[] {
 }
 
 /**
- * FIX 2: For high-volume styles (Gildan 5000, BC 3001 etc.) with >100 color/size combos,
- * prioritize the top N most-stocked colors to ensure we get prices before timeout.
- * Returns one representative SKU per color, sorted by on_hand desc, capped at MAX_PRICING_SKUS.
+ * Optimize 2: Guarantee every unique color_name has at least one rep SKU.
+ * For high-volume styles (Gildan 5000, BC 3001 etc.) with >MAX_PRICING_SKUS color groups,
+ * first include ALL color_name groups (de-duped by color_name), then fill remaining
+ * slots with extra stock-sorted entries up to maxSkus.
  */
 function prioritizeSkusForPricing(
   items: OneStopItem[],
   maxSkus: number
 ): string[] {
-  // Group by color, track total on_hand per color and one representative SKU
+  // Group by colorKey (STYLE-COLORCODE prefix), track stock and rep SKU
   const colorGroups = new Map<string, { totalQty: number; repSku: string; colorName: string }>();
+  // Also track one rep SKU per colorName to ensure every named color is covered
+  const colorNameGroups = new Map<string, string>(); // colorName -> repSku
 
   for (const item of items) {
     if (!item.code || item.active_flag === "N") continue;
     const parts = item.code.split("-");
     const colorKey = parts.length > 1 ? parts.slice(0, -1).join("-") : item.code;
-    const existing = colorGroups.get(colorKey);
+    const colorName = item.color_name || "";
     const qty = item.on_hand || 0;
+    const normalized = normalizeSize(item.size_code || "");
+
+    const existing = colorGroups.get(colorKey);
     if (!existing) {
-      colorGroups.set(colorKey, { totalQty: qty, repSku: item.code, colorName: item.color_name || "" });
+      colorGroups.set(colorKey, { totalQty: qty, repSku: item.code, colorName });
     } else {
       existing.totalQty += qty;
-      // Prefer a medium size as representative (L or M) for more accurate pricing
-      const normalized = normalizeSize(item.size_code || "");
-      if (normalized === "L" || normalized === "M") {
-        existing.repSku = item.code;
-      }
+      // Prefer L or M as representative for more accurate pricing
+      if (normalized === "L" || normalized === "M") existing.repSku = item.code;
+    }
+
+    // Ensure every colorName has at least one SKU in the fetch list
+    if (colorName && !colorNameGroups.has(colorName)) {
+      colorNameGroups.set(colorName, item.code);
+    } else if (colorName && (normalized === "L" || normalized === "M")) {
+      colorNameGroups.set(colorName, item.code);
     }
   }
 
-  // Sort by total quantity descending (most-stocked colors first)
-  const sorted = Array.from(colorGroups.entries())
-    .sort((a, b) => b[1].totalQty - a[1].totalQty)
-    .slice(0, maxSkus)
-    .map(([, v]) => v.repSku);
+  // Build final list: start with one rep SKU per colorName (guarantees coverage),
+  // then add any additional colorKey-based reps sorted by stock up to maxSkus.
+  const seen = new Set<string>();
+  const result: string[] = [];
 
-  console.log(`[provider-onestop] prioritizeSkus: ${colorGroups.size} color groups → ${sorted.length} selected (max=${maxSkus})`);
-  return sorted;
+  // Phase 1: one SKU per color name
+  for (const sku of colorNameGroups.values()) {
+    if (!seen.has(sku)) { seen.add(sku); result.push(sku); }
+  }
+
+  // Phase 2: fill remaining slots with highest-stock color groups
+  const stockSorted = Array.from(colorGroups.values())
+    .sort((a, b) => b.totalQty - a.totalQty);
+  for (const g of stockSorted) {
+    if (result.length >= maxSkus) break;
+    if (!seen.has(g.repSku)) { seen.add(g.repSku); result.push(g.repSku); }
+  }
+
+  console.log(`[provider-onestop] prioritizeSkus: ${colorNameGroups.size} color names, ${colorGroups.size} color groups → ${result.length} selected (max=${maxSkus})`);
+  return result;
 }
 
 const MAX_PRICING_SKUS = 250;
