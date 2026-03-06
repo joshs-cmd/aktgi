@@ -32,22 +32,38 @@ const ACC_PREFIX_TO_BRAND: [string, string][] = [
   ["GL", "Gildan"],
   ["HN", "Hanes"],
   ["CC", "Comfort Colors"],
+  ["CO", "Comfort Colors"],
   ["CP", "Champion"],
+  ["DB", "Champion"],
   ["CV", "Code V"],
   ["BS", "Burnside"],
   ["BA", "Badger"],
   ["BG", "Badger"],
   ["DK", "Dickies"],
   ["DN", "Dyenomite"],
+  ["LA", "Rabbit Skins"],
   ["RS", "Rabbit Skins"],
+  ["DS", "Rabbit Skins"],
   ["AA", "American Apparel"],
   ["AS", "American Apparel"],
   ["AN", "Anvil"],
   ["CW", "ComfortWash"],
   ["AG", "Augusta Sportswear"],
   ["YP", "Yupoong"],
+  ["FF", "Yupoong"],
   ["VH", "Van Heusen"],
+  ["AD", "Adams Headwear"],
+  ["AL", "Alternative"],
+  ["JA", "J-America"],
+  ["RK", "Red Kap"],
+  ["A4", "A4"],
 ];
+
+/**
+ * Service/fee item prefixes — freight, handling, folding fees etc.
+ * These are NOT real garments and should never be ingested.
+ */
+const ACC_SERVICE_PREFIXES = new Set(["FB", "FO", "FR", "HA", "PF", "SF", "SS", "ST", "TA", "TB", "TF", "XT"]);
 
 /**
  * Prefixes that are stripped from ACC style numbers before storing in the DB,
