@@ -812,12 +812,12 @@ function buildStandardProduct(
     }
   }
 
-  // Log a sample to verify partId alignment between inventory and pricing
-  const firstInvPartId = inventoryEntries[0]?.partId;
-  const firstPricePartId = [...priceMap.keys()][0];
-  if (firstInvPartId || firstPricePartId) {
-    console.log(`[provider-acc] partId sample — inv="${firstInvPartId}" price="${firstPricePartId}"`);
+  // Log sample partMeta entries to confirm colorName/sizeName resolution
+  const sampleEntries = [...partMeta.entries()].slice(0, 5);
+  for (const [pid, meta] of sampleEntries) {
+    console.log(`[provider-acc] partMeta sample: partId="${pid}" → color="${meta.colorName}" size="${meta.sizeName}"`);
   }
+  console.log(`[provider-acc] partMeta total=${partMeta.size} invEntries=${inventoryEntries.length} priceEntries=${priceMap.size}`);
 
   // Group by colorName
   const colorMap = new Map<string, {
