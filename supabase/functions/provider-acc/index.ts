@@ -440,6 +440,7 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
 
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
     console.log(`[provider-acc] Inventory: ${parts.length} PartInventory entries`);
+    console.log("[provider-acc] First part keys:", Object.keys(parts[0] || {}).join(", "));
 
     for (const part of parts) {
       const partId = extractText(
