@@ -160,6 +160,15 @@ const ACC_STRIP_PREFIXES: string[] = ACC_PREFIX_TO_BRAND.map(([p]) => p);
  * E.g. Hanes "054X" has no recognizable 2-letter prefix.
  */
 const TITLE_BRAND_KEYWORDS: [RegExp, string][] = [
+  [/sundog/i,       "Sundog"],
+  [/big\s*ax/i,     "Big Accessories"],
+  [/bag\s*edge/i,   "Bag Edge"],
+  [/lane\s*seven|l7\b/i, "Lane Seven"],
+  [/liberty\s*bags?/i,   "Liberty Bags"],
+  [/\bkati\b/i,     "Kati"],
+  [/\boad\b/i,      "OAD"],
+  [/q[\s\-]?tees?/i, "Q-Tees"],
+  [/vitronic/i,     "Vitronic"],
   [/hanes/i,        "Hanes"],
   [/gildan/i,       "Gildan"],
   [/badger/i,       "Badger"],
@@ -185,27 +194,44 @@ const TITLE_BRAND_KEYWORDS: [RegExp, string][] = [
   [/holloway/i,     "Holloway"],
   [/harriton/i,     "Harriton"],
   [/pacific\s*headwear/i, "Pacific Headwear"],
-  [/liberty\s*bags?/i, "Liberty Bags"],
   [/new\s*era/i,    "New Era"],
   [/a4\b/i,         "A4"],
+  [/maui\s*&?\s*sons?/i, "Maui & Sons"],
+  [/outdoor\s*cap/i, "Outdoor Cap"],
+  [/american\s*apparel/i, "American Apparel"],
 ];
 
 /**
  * Given an ACC productId (e.g. "BC3001"), return the real brand name.
- * Also handles A4's 3-char prefixes like "A4N3013".
- * Falls back first to title keyword scan, then to API brand, then unknown.
+ * Handles multi-letter prefixes (e.g. A4, BST, LST, AAF) and conflict cases:
+ *   - "BEBE####" → Bag Edge  (vs "BE####" → Bella + Canvas)
+ *   - "BA[A-Z]####" → Big Accessories  (vs "BA[0-9]####" → Badger)
+ * Falls back to title keyword scan, then API brand, then "Unknown".
  */
 function getBrandFromAccProductId(productId: string, apiBrand?: string, productTitle?: string): string {
   const sn = productId.trim().toUpperCase();
 
   // Special case: A4 uses "A4N" and "A4L" prefixes (3 chars before digit)
   if (/^A4[A-Z]\d/.test(sn)) return "A4";
-
-  // Also catch bare A4 prefix: "A4####"
   if (/^A4\d/.test(sn)) return "A4";
 
+  // Conflict resolution — BEBE#### → Bag Edge (not Bella + Canvas)
+  if (/^BEBE/.test(sn)) return "Bag Edge";
+
+  // Conflict resolution — BA followed by a letter (e.g. BAAPR, BAACC) → Big Accessories
+  // BA followed by a digit (e.g. BA3001) → Badger (handled by normal prefix scan)
+  if (/^BA[A-Z]/.test(sn)) return "Big Accessories";
+
+  // Normal prefix scan (longest prefixes first in ACC_PREFIX_TO_BRAND)
   for (const [prefix, brand] of ACC_PREFIX_TO_BRAND) {
     if (sn.startsWith(prefix) && sn.length > prefix.length && /^\d/.test(sn.slice(prefix.length))) {
+      return brand;
+    }
+  }
+
+  // For pure-alpha suffixes matched by Sundog 3-char prefixes (e.g. APR123, GEM456)
+  for (const [prefix, brand] of ACC_PREFIX_TO_BRAND) {
+    if (sn.startsWith(prefix) && sn.length > prefix.length) {
       return brand;
     }
   }
