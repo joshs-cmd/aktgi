@@ -324,7 +324,7 @@ async function fetchPricing(
     }
 
     const xml = await res.text();
-    console.log(`[provider-acc] Pricing XML (${xml.length} chars): ${xml.substring(0, 600)}`);
+    // Pricing XML received
 
     const parsed = parser.parse(xml);
     const bodyEl = getEnvelopeBody(parsed);
@@ -357,7 +357,7 @@ async function fetchPricing(
     }
 
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
-    console.log(`[provider-acc] Pricing: ${parts.length} parts`);
+    
 
     for (const part of parts) {
       const partId = extractText(
@@ -421,7 +421,7 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
     }
 
     const invResp = bodyEl[invKey];
-    console.log(`[provider-acc] Inventory resp keys: ${Object.keys(invResp || {}).join(", ")}`);
+    
 
     // v2.0.0 wraps in Inventory > PartInventoryArray > PartInventory
     const invEl =
@@ -439,8 +439,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
     }
 
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
-    console.log(`[provider-acc] Inventory: ${parts.length} PartInventory entries`);
-    console.log("[provider-acc] First part keys:", Object.keys(parts[0] || {}).join(", "));
 
     for (const part of parts) {
       const partId = extractText(
@@ -469,7 +467,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           k.toLowerCase().replace(/[^a-z]/g, "").includes("inventorylocationarray")
         );
         if (dynamicKey) {
-          console.log(`[provider-acc] Found location array via dynamic key: ${dynamicKey}`);
           const arr3 = part[dynamicKey];
           const locsKey = Object.keys(arr3 || {}).find(k =>
             k.toLowerCase().replace(/[^a-z]/g, "").includes("inventorylocation")
@@ -495,10 +492,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         if (usedFlatFallback) {
           locCode = "ACC";
           locName = "Atlantic Coast Cotton";
-          if (warehouses.length === 0) {
-            // Only log once per part to avoid spam
-            console.log(`[provider-acc] Flat fallback for partId=${partId}, keys=${Object.keys(loc || {}).join(", ")}`);
-          }
         } else {
           // inventoryLocationId and inventoryLocationName may be xmlns-wrapped objects
           locCode = extractText(
@@ -659,7 +652,6 @@ async function fetchProductInfo(
     }
 
     const xml = await res.text();
-    console.log(`[provider-acc] ProductData XML (${xml.length} chars): ${xml.substring(0, 600)}`);
 
     const parsed = parser.parse(xml);
     const bodyEl = getEnvelopeBody(parsed);
@@ -812,23 +804,7 @@ function buildStandardProduct(
     }
   }
 
-  // Log sample partMeta entries to confirm colorName/sizeName resolution
-  const sampleEntries = [...partMeta.entries()].slice(0, 5);
-  for (const [pid, meta] of sampleEntries) {
-    console.log(`[provider-acc] partMeta sample: partId="${pid}" → color="${meta.colorName}" size="${meta.sizeName}"`);
-  }
-  console.log(`[provider-acc] partMeta total=${partMeta.size} invEntries=${inventoryEntries.length} priceEntries=${priceMap.size}`);
-
-  // Log actual warehouse quantities for first size of the first 6 unique colors
-  const seenColors = new Set<string>();
-  for (const entry of inventoryEntries) {
-    const meta = partMeta.get(entry.partId);
-    if (!meta || seenColors.has(meta.colorName)) continue;
-    seenColors.add(meta.colorName);
-    const whSummary = entry.warehouses.map(w => `${w.code}:${w.qty}`).join(", ");
-    console.log(`[provider-acc] inv color="${meta.colorName}" size="${meta.sizeName}" warehouses=[${whSummary}]`);
-    if (seenColors.size >= 6) break;
-  }
+  // (debug logs removed)
 
   // Group by colorName
   const colorMap = new Map<string, {
@@ -986,7 +962,6 @@ serve(async (req) => {
             return "";
           }
           const xml = await res.text();
-          console.log(`[provider-acc] Inventory XML (${xml.length} chars): ${xml.substring(0, 600)}`);
           return xml;
         } catch (err: any) {
           console.error("[provider-acc] Inventory fetch error:", err.message || err);
