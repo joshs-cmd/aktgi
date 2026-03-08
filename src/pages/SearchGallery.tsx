@@ -74,6 +74,21 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                   Garment Inventory
                 </h1>
               </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-accent transition-colors focus:outline-none">
+                    <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem asChild>
+                    <a href="https://calculator.aktenterprises.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                      <Calculator className="h-4 w-4" />
+                      Pricing Calculator
+                    </a>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
                 Beta
               </span>
