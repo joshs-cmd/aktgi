@@ -14,9 +14,9 @@ export const UserMenu = ({ userEmail, onSignOut }: UserMenuProps) => {
           {userEmail}
         </span>
       )}
-      <Button variant="outline" size="icon" onClick={onSignOut} className="h-8 w-8 md:h-9 md:w-auto md:px-3 md:gap-2">
-        <LogOut className="h-3.5 w-3.5 md:h-4 md:w-4" />
-        <span className="hidden md:inline text-sm">Sign Out</span>
+      <Button variant="outline" size="icon" onClick={onSignOut} className="h-8 w-8 lg:h-9 lg:w-auto lg:px-3 lg:gap-2">
+        <LogOut className="h-3.5 w-3.5 lg:h-4 lg:w-4" />
+        <span className="hidden lg:inline text-sm">Sign Out</span>
       </Button>
     </div>
   );
