@@ -8,12 +8,16 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { UserRole, canViewPrices } from "@/types/auth";
+import { AdminBanner } from "@/components/AdminBanner";
+import { UserMenu } from "@/components/UserMenu";
 
 interface ProductDetailProps {
   userRole: UserRole | null;
+  userEmail?: string | null;
+  onSignOut?: () => void;
 }
 
-const ProductDetail = ({ userRole }: ProductDetailProps) => {
+const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isLoading, response, error, search } = useSourcingEngine();
