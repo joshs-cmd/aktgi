@@ -96,7 +96,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                   variant="ghost"
                   size="sm"
                   onClick={() => navigate("/admin/data-management")}
-                  className="gap-2 text-muted-foreground hover:text-foreground hidden md:inline-flex"
+                  className="gap-2 text-muted-foreground hover:text-foreground hidden lg:inline-flex"
                 >
                   <HardDrive className="h-4 w-4" />
                   Data Management
@@ -107,7 +107,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                   variant="ghost"
                   size="icon"
                   onClick={() => navigate("/admin/data-management")}
-                  className="text-muted-foreground hover:text-foreground md:hidden"
+                  className="text-muted-foreground hover:text-foreground lg:hidden"
                 >
                   <HardDrive className="h-4 w-4" />
                 </Button>
