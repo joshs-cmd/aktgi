@@ -8,12 +8,16 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { UserRole, canViewPrices } from "@/types/auth";
+import { AdminBanner } from "@/components/AdminBanner";
+import { UserMenu } from "@/components/UserMenu";
 
 interface ProductDetailProps {
   userRole: UserRole | null;
+  userEmail?: string | null;
+  onSignOut?: () => void;
 }
 
-const ProductDetail = ({ userRole }: ProductDetailProps) => {
+const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isLoading, response, error, search } = useSourcingEngine();
@@ -88,16 +92,20 @@ const ProductDetail = ({ userRole }: ProductDetailProps) => {
 
   return (
     <div className="min-h-screen bg-background">
+      <AdminBanner userRole={userRole} />
       {/* Header */}
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">
-              AKT Garment Inventory
-            </h1>
-            <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
-              Beta
-            </span>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold tracking-tight">
+                AKT Garment Inventory
+              </h1>
+              <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
+                Beta
+              </span>
+            </div>
+            {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}
           </div>
         </div>
       </header>

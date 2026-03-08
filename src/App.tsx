@@ -19,6 +19,7 @@ const ALLOWED_DOMAINS = ["aktenterprises.com", "smartpunk.com"];
 const App = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userRole, setUserRole] = useState<UserRole | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -58,6 +59,7 @@ const App = () => {
       }
 
       setUserRole(data.role as UserRole);
+      setUserEmail(session.user.email ?? null);
       setIsAuthenticated(true);
       setAuthError(null);
     } catch {
@@ -91,6 +93,7 @@ const App = () => {
     await supabase.auth.signOut();
     setIsAuthenticated(false);
     setUserRole(null);
+    setUserEmail(null);
   };
 
   if (isChecking) {
@@ -113,9 +116,9 @@ const App = () => {
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<SearchGallery userRole={userRole} />} />
-            <Route path="/product" element={<ProductDetail userRole={userRole} />} />
-            <Route path="/admin/data-management" element={<DataManagement userRole={userRole} />} />
+            <Route path="/" element={<SearchGallery userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
+            <Route path="/product" element={<ProductDetail userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
+            <Route path="/admin/data-management" element={<DataManagement userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
