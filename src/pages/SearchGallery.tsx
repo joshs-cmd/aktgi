@@ -82,7 +82,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem asChild>
-                    <a href="https://calculator.aktenterprises.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                    <a href="https://calculator.aktenterprises.com" className="flex items-center gap-2">
                       <Calculator className="h-4 w-4" />
                       Pricing Calculator
                     </a>
