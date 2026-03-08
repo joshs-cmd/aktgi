@@ -58,9 +58,11 @@ function getFileType(name: string): string {
 
 interface DataManagementProps {
   userRole?: UserRole | null;
+  userEmail?: string | null;
+  onSignOut?: () => void;
 }
 
-export default function DataManagement({ userRole }: DataManagementProps) {
+export default function DataManagement({ userRole, userEmail, onSignOut }: DataManagementProps) {
   const navigate = useNavigate();
   const [archives, setArchives] = useState<Record<string, ArchiveFile[]> | null>(null);
   const [loading, setLoading] = useState(true);
