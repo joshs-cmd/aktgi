@@ -9,12 +9,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useRef } from "react";
-import { getAuthState } from "@/types/auth";
+import { UserRole } from "@/types/auth";
 
-const SearchGallery = () => {
+interface SearchGalleryProps {
+  userRole?: UserRole | null;
+}
+
+const SearchGallery = ({ userRole }: SearchGalleryProps) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { role } = getAuthState();
+  const role = userRole ?? null;
   const { isLoading, response, error, search, clearResults } = useCatalogSearch();
   const lastQueryRef = useRef<string | null>(null);
 
