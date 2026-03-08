@@ -99,18 +99,18 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
   const skeletonSizeCols = allSizes.length > 0 ? allSizes : ["S", "M", "L", "XL", "2XL", "3XL"];
 
   return (
-    <div className="rounded-lg border bg-card overflow-x-auto">
-      <Table>
+    <div className="rounded-lg border bg-card overflow-x-auto -mx-4 sm:mx-0">
+      <Table className="min-w-[600px]">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="w-[200px]">Distributor</TableHead>
-            <TableHead className="w-[100px]">Status</TableHead>
+            <TableHead className="w-[140px] sm:w-[200px] sticky left-0 bg-card z-10">Distributor</TableHead>
+            <TableHead className="w-[80px] sm:w-[100px]">Status</TableHead>
             {skeletonSizeCols.map((size) => (
-              <TableHead key={size} className="text-center w-[100px]">
+              <TableHead key={size} className="text-center w-[80px] sm:w-[100px]">
                 {size}
               </TableHead>
             ))}
-            <TableHead className="text-right w-[120px]">Total Stock</TableHead>
+            <TableHead className="text-right w-[100px] sm:w-[120px]">Total Stock</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
