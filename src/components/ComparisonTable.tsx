@@ -123,8 +123,8 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                 key={result.distributorId}
                 className={cn(isLoading && "animate-pulse")}
               >
-                <TableCell className="font-medium">
-                  {result.distributorName}
+                <TableCell className="font-medium sticky left-0 bg-card z-10">
+                  <span className="text-xs sm:text-sm">{result.distributorName}</span>
                 </TableCell>
                 <TableCell>
                   <DistributorStatusBadge status={result.status} />
