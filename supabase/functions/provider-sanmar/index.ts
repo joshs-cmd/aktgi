@@ -930,7 +930,7 @@ function aggregateProducts(
     brand: firstProduct.brandName || "SanMar",
     category: firstProduct.category || "",
     imageUrl: firstProduct.productImage || undefined,
-    productUrl: style ? `https://www.sanmar.com/p/${encodeURIComponent(style)}` : undefined,
+    productUrl: style ? `https://www.sanmar.com/search?q=${encodeURIComponent(style)}` : undefined,
     colors,
   };
 }
