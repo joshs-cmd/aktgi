@@ -59,6 +59,7 @@ const App = () => {
       }
 
       setUserRole(data.role as UserRole);
+      setUserEmail(session.user.email ?? null);
       setIsAuthenticated(true);
       setAuthError(null);
     } catch {
