@@ -69,7 +69,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                 }}
               >
                 <img src={aktLogo} alt="AKT" className="h-10 sm:h-11 md:h-14 w-auto" />
-                <h1 className="text-2xl font-bold tracking-tight hover:text-primary transition-colors">
+                <h1 className="text-2xl font-bold tracking-tight hover:text-primary transition-colors" style={{ fontFamily: 'Inter, sans-serif' }}>
                   Garment Inventory
                 </h1>
               </div>
