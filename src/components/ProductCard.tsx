@@ -93,17 +93,6 @@ export function ProductCard({ product, onClick }: ProductCardProps) {
             {product.name}
           </p>
 
-          {/* Stats row */}
-          <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <Palette className="h-3 w-3" />
-              {product.colorCount} Colors
-            </span>
-            <span className="flex items-center gap-1">
-              <Boxes className="h-3 w-3" />
-              {formattedInventory} In Stock
-            </span>
-          </div>
 
           {/* Distributor Source Badges */}
           <div className="flex items-center gap-1 mt-1.5 flex-wrap">
