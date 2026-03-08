@@ -324,13 +324,18 @@ function aggregateProducts(products: SSProduct[], styleInfo?: SSStyle): Standard
     : buildImageUrl(first.colorFrontImage);
   
   const styleID = first.styleID || styleInfo?.styleID;
+  const brandName = first.brandName || styleInfo?.brandName || "";
+  const styleName = first.styleName || String(styleID) || "";
+  const brandSlug = brandName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
   return {
-    styleNumber: first.styleName || String(styleID) || "",
+    styleNumber: styleName,
     name: productName,
-    brand: first.brandName || styleInfo?.brandName || "",
+    brand: brandName,
     category: first.baseCategory || styleInfo?.baseCategory || "",
     imageUrl: styleImage || undefined,
-    productUrl: styleID ? `https://www.ssactivewear.com/p/${styleID}` : undefined,
+    productUrl: brandSlug && styleName
+      ? `https://www.ssactivewear.com/p/${brandSlug}/${encodeURIComponent(styleName)}`
+      : undefined,
     colors,
   };
 }
