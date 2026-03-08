@@ -301,6 +301,7 @@ function aggregateItemsWithPricing(
     brand: first.mill_name || "",
     category: first.filters || "",
     imageUrl: resolveImageUrl(first.images?.main),
+    // productUrl is set later in the handler once bestStyleCode is resolved
     colors,
   };
 }
