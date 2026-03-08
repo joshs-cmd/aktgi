@@ -68,7 +68,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                   navigate("/", { replace: true });
                 }}
               >
-                <img src={aktLogo} alt="AKT" className="h-12 sm:h-14 md:h-[4.5rem] w-auto" />
+                <img src={aktLogo} alt="AKT" className="h-10 sm:h-11 md:h-14 w-auto" />
                 <h1 className="text-2xl font-bold tracking-tight hover:text-primary transition-colors">
                   Garment Inventory
                 </h1>
