@@ -4,11 +4,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Warehouse } from "lucide-react";
+import { Warehouse, ExternalLink } from "lucide-react";
 
 interface WarehouseTooltipProps {
   inventory: StandardInventory[];
   children: React.ReactNode;
+  distributorName?: string;
+  productUrl?: string;
 }
 
 /**
@@ -19,7 +21,7 @@ function formatQuantity(quantity: number, isCapped?: boolean): string {
   return isCapped ? `${formatted}+` : formatted;
 }
 
-export function WarehouseTooltip({ inventory, children }: WarehouseTooltipProps) {
+export function WarehouseTooltip({ inventory, children, distributorName, productUrl }: WarehouseTooltipProps) {
   const totalStock = inventory.reduce((sum, inv) => sum + inv.quantity, 0);
   const hasCapped = inventory.some(inv => inv.isCapped);
 
@@ -56,6 +58,19 @@ export function WarehouseTooltip({ inventory, children }: WarehouseTooltipProps)
           {hasCapped && (
             <div className="mt-2 text-xs text-muted-foreground italic">
               + indicates warehouse cap of 3,000 units
+            </div>
+          )}
+          {productUrl && distributorName && (
+            <div className="mt-2 border-t pt-2">
+              <a
+                href={productUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" />
+                View on {distributorName}
+              </a>
             </div>
           )}
         </div>

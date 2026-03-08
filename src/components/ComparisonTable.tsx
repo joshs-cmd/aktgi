@@ -163,6 +163,8 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                           showPrice={showPrices}
                           isProgramPrice={size.isProgramPrice}
                           distributorCode={result.distributorCode}
+                          distributorName={result.distributorName}
+                          productUrl={result.product?.productUrl}
                         />
                       </TableCell>
                     );

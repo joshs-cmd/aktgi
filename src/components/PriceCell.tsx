@@ -10,6 +10,8 @@ interface PriceCellProps {
   showPrice?: boolean;
   isProgramPrice?: boolean;
   distributorCode?: string;
+  distributorName?: string;
+  productUrl?: string;
 }
 
 /**
@@ -36,13 +38,15 @@ export function PriceCell({
   isLowest, 
   showPrice = true,
   isProgramPrice = false,
-  distributorCode
+  distributorCode,
+  distributorName,
+  productUrl
 }: PriceCellProps) {
   const stockDisplay = formatInventoryTotal(inventory, distributorCode);
   const isSanMar = distributorCode === "sanmar";
 
   return (
-    <WarehouseTooltip inventory={inventory}>
+    <WarehouseTooltip inventory={inventory} distributorName={distributorName} productUrl={productUrl}>
       <button
         className={cn(
           "flex flex-col items-center justify-center rounded-md px-3 py-2 text-center transition-colors",

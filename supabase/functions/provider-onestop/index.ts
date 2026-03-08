@@ -675,6 +675,11 @@ serve(async (req) => {
         ? bestInfo.mill_style_code
         : (product.styleNumber || bestStyleCode || query);
 
+    // Set product URL using the resolved OneStop style code
+    product.productUrl = bestStyleCode
+      ? `https://www.onestopinc.com/product/${encodeURIComponent(bestStyleCode)}`
+      : undefined;
+
     const totalPricedSizes = product.colors.reduce((sum, c) => sum + c.sizes.filter(s => s.price > 0).length, 0);
     const totalSizes = product.colors.reduce((sum, c) => sum + c.sizes.length, 0);
     console.log(`[provider-onestop] Returning: ${product.brand} ${product.styleNumber} — ${product.colors.length} colors, ${totalSizes} size rows, ${totalPricedSizes} priced`);

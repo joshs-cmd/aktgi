@@ -32,6 +32,7 @@ export interface StandardProduct {
   category: string;
   imageUrl?: string;
   description?: string;          // Debug/informational field
+  productUrl?: string;           // Direct link to product on distributor website
   colors?: StandardColor[];      // Color-specific pricing/inventory
   sizes?: StandardSize[];        // Backward compat for non-color distributors
 }

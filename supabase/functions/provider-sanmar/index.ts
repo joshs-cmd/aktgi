@@ -923,12 +923,14 @@ function aggregateProducts(
   
   console.log(`[provider-sanmar] Aggregated: ${colors.length} colors, ${programPriceCount}/${totalPrices} with program pricing, total stock: ${totalStock}`);
   
+  const style = firstProduct.style || firstProduct.styleCode || "";
   return {
-    styleNumber: firstProduct.style || firstProduct.styleCode || "",
-    name: firstProduct.productTitle || `${firstProduct.brandName || ""} ${firstProduct.style || ""}`.trim(),
+    styleNumber: style,
+    name: firstProduct.productTitle || `${firstProduct.brandName || ""} ${style}`.trim(),
     brand: firstProduct.brandName || "SanMar",
     category: firstProduct.category || "",
     imageUrl: firstProduct.productImage || undefined,
+    productUrl: style ? `https://www.sanmar.com/p/${encodeURIComponent(style)}` : undefined,
     colors,
   };
 }

@@ -323,12 +323,14 @@ function aggregateProducts(products: SSProduct[], styleInfo?: SSStyle): Standard
     ? buildImageUrl(styleInfo.styleImage)
     : buildImageUrl(first.colorFrontImage);
   
+  const styleID = first.styleID || styleInfo?.styleID;
   return {
-    styleNumber: first.styleName || String(first.styleID) || "",
+    styleNumber: first.styleName || String(styleID) || "",
     name: productName,
     brand: first.brandName || styleInfo?.brandName || "",
     category: first.baseCategory || styleInfo?.baseCategory || "",
     imageUrl: styleImage || undefined,
+    productUrl: styleID ? `https://www.ssactivewear.com/p/${styleID}` : undefined,
     colors,
   };
 }
