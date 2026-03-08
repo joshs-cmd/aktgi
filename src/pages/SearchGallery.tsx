@@ -10,12 +10,16 @@ import { Button } from "@/components/ui/button";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useRef } from "react";
 import { UserRole } from "@/types/auth";
+import { AdminBanner } from "@/components/AdminBanner";
+import { UserMenu } from "@/components/UserMenu";
 
 interface SearchGalleryProps {
   userRole?: UserRole | null;
+  userEmail?: string | null;
+  onSignOut?: () => void;
 }
 
-const SearchGallery = ({ userRole }: SearchGalleryProps) => {
+const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const role = userRole ?? null;
