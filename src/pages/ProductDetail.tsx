@@ -95,22 +95,17 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
       <AdminBanner userRole={userRole} />
       {/* Header */}
       <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight">
-                AKT Garment Inventory
-              </h1>
-              <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
-                Beta
-              </span>
-            </div>
+        <div className="container mx-auto px-4 py-4 sm:py-6">
+          <div className="flex items-center justify-between w-full gap-2">
+            <h1 className="text-lg sm:text-2xl font-bold truncate">
+              AKT Garment Inventory
+            </h1>
             {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-4 sm:py-8">
         <div className="flex flex-col gap-8">
           {/* Back button */}
           <Button
