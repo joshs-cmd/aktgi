@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getAuthState } from "@/types/auth";
+import { UserRole } from "@/types/auth";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -55,14 +55,18 @@ function getFileType(name: string): string {
   return "FILE";
 }
 
-export default function DataManagement() {
+interface DataManagementProps {
+  userRole?: UserRole | null;
+}
+
+export default function DataManagement({ userRole }: DataManagementProps) {
   const navigate = useNavigate();
   const [archives, setArchives] = useState<Record<string, ArchiveFile[]> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const { role } = getAuthState();
+  const role = userRole ?? null;
   const isAdmin = role === "admin";
 
   const fetchArchives = async () => {
