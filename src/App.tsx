@@ -113,9 +113,9 @@ const App = () => {
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<SearchGallery />} />
+            <Route path="/" element={<SearchGallery userRole={userRole} />} />
             <Route path="/product" element={<ProductDetail userRole={userRole} />} />
-            <Route path="/admin/data-management" element={<DataManagement />} />
+            <Route path="/admin/data-management" element={<DataManagement userRole={userRole} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

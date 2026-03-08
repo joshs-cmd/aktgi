@@ -55,14 +55,18 @@ function getFileType(name: string): string {
   return "FILE";
 }
 
-export default function DataManagement() {
+interface DataManagementProps {
+  userRole?: UserRole | null;
+}
+
+export default function DataManagement({ userRole }: DataManagementProps) {
   const navigate = useNavigate();
   const [archives, setArchives] = useState<Record<string, ArchiveFile[]> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const { role } = getAuthState();
+  const role = userRole ?? null;
   const isAdmin = role === "admin";
 
   const fetchArchives = async () => {
