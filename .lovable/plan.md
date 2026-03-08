@@ -1,28 +1,30 @@
 
-## Two Fixes
 
-### Fix 1 — Routing Collision (Frontend + Catalog Search Edge Function)
+## Plan: Add user email display, sign-out button, and admin banner
 
-**Root cause:** In `deduplicateProducts` (catalog-search edge function), when products from multiple distributors are merged under an `aggressiveKey` (numeric root), `primary = group.items[0]` is whichever product arrived first in the array. If a OneStop alias like `GD210` arrives before Gildan's own `5000`, the deduped card gets `styleNumber: "GD210"` and potentially a different brand. When the user clicks the card, those wrong values are passed to the URL, so the detail page searches for the wrong SKU.
+### What we're building
+Based on the screenshot reference:
+1. **Yellow admin banner** at the very top of the page: "You are logged in as an administrator." — only shown when `userRole === "admin"`
+2. **User email + Sign Out button** in the top-right of the header, replacing or alongside the existing Data Management button
 
-**Fix:**
-- In the dedup loop, after collecting all items into a group, select the "best" representative item as `primary`. Priority: prefer items whose `styleNumber` is closest to the numeric fingerprint (i.e., doesn't look like a proprietary alias). Specifically: if any item in the group has a `distributorCode` of `sanmar` or `ss-activewear` (the "real" manufacturers), prefer that item as `primary` over OneStop items.
-- Alternatively (simpler and more robust): after building `distributorSkuMap`, set `styleNumber` to the value from the most authoritative distributor in the map. Priority: `sanmar` > `ss-activewear` > `onestop`.
+### Changes
 
-### Fix 2 — SanMar PromoStandards 404 (Backend)
+**1. Pass `userEmail` and `onSignOut` to page components**
+- In `App.tsx`, retrieve the user's email from the session and pass it (along with `handleSignOut`) as props to `SearchGallery`, `ProductDetail`, and `DataManagement`.
 
-**Root cause:** The constant `PROMOSTANDARDS_PRICING_ENDPOINT` on line 13 of `provider-sanmar/index.ts` is set to the wrong URL path:
-```
-https://ws.sanmar.com:8080/promostandards/PricingServiceBindingV2_0_0Port
-```
-It must be changed to:
-```
-https://ws.sanmar.com:8080/promostandards/PricingAndConfigurationServiceBinding
-```
+**2. Update `SearchGallery` header**
+- Add a yellow banner above the header when `role === "admin"`: full-width amber/yellow background with centered bold text "You are logged in as an administrator."
+- In the header's right side, show the user's email and a "Sign Out" button with a `LogOut` icon, styled similarly to the screenshot (outlined button).
+- Keep the Data Management link for admins (can move it or keep it alongside).
 
-The debug injection (`standardProduct.description = promoDebugXml`) will be kept intact as requested so you can verify the raw XML response.
+**3. Update `ProductDetail` page**
+- Add the same admin banner and user email/sign-out display to maintain consistency across pages.
 
-### Files to change
-- `supabase/functions/catalog-search/index.ts` — Fix primary item selection in dedup to use the most authoritative distributor's styleNumber/brand
-- `supabase/functions/provider-sanmar/index.ts` — Update `PROMOSTANDARDS_PRICING_ENDPOINT` constant URL
-- Redeploy both edge functions
+**4. Update `DataManagement` page**
+- Same admin banner and user info display.
+
+### Implementation approach
+- Create a shared `AdminBanner` and `UserMenu` component (or inline them) to avoid duplication across pages.
+- The yellow banner uses Tailwind classes like `bg-amber-400 text-gray-900 text-center py-2 font-semibold`.
+- Sign Out button uses `variant="outline"` with `LogOut` icon from lucide-react.
+
