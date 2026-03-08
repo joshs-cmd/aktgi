@@ -989,6 +989,9 @@ serve(async (req) => {
       );
     }
 
+    // Set ACC product URL using the prefixed product ID
+    product.productUrl = `https://www.orderacc.com/cgi-bin/liveb2b/wam_tmpl/catalog_product.p?site=ACC&layout=Responsive&page=catalog_product&product=${encodeURIComponent(productId)}`;
+
     console.log(
       `[provider-acc] Returning product: ${product.styleNumber} "${product.name}" ` +
       `(${product.colors.length} colors)`
