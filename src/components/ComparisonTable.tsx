@@ -187,7 +187,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
           {/* Aggregate Total Row — only shown once all active distributors have resolved */}
           {successResults.length > 0 && results.filter(r => r.status === "loading").length === 0 && (
             <TableRow className="bg-muted/50 font-semibold border-t-2">
-              <TableCell className="font-bold">Total</TableCell>
+              <TableCell className="font-bold sticky left-0 bg-muted/50 z-10">Total</TableCell>
               <TableCell />
               {skeletonSizeCols.map((sizeCode) => {
                 let total = 0;

@@ -36,9 +36,9 @@ export function ProductHeader({
   const hasColors = product.colors && product.colors.length > 0;
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border bg-card p-4">
-      <div className="flex items-start gap-4">
-        <div className="flex h-20 w-20 items-center justify-center rounded-lg bg-muted overflow-hidden">
+    <div className="flex flex-col gap-4 rounded-lg border bg-card p-3 sm:p-4">
+      <div className="flex items-start gap-3 sm:gap-4">
+        <div className="flex h-16 w-16 sm:h-20 sm:w-20 items-center justify-center rounded-lg bg-muted overflow-hidden shrink-0">
           {displayImage ? (
             <img
               src={displayImage}
@@ -54,12 +54,12 @@ export function ProductHeader({
             <Package className="h-8 w-8 text-muted-foreground" />
           )}
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-semibold">{product.name}</h2>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-base sm:text-xl font-semibold">{product.name}</h2>
             <Badge variant="secondary">{product.styleNumber}</Badge>
           </div>
-          <div className="mt-1 flex items-center gap-3 text-sm text-muted-foreground">
+          <div className="mt-1 flex items-center gap-3 text-xs sm:text-sm text-muted-foreground">
             <span>{product.brand}</span>
             {product.category && (
               <>
@@ -73,7 +73,7 @@ export function ProductHeader({
           </p>
           {/* DEBUG: Show raw PromoStandards response */}
           {product.description && (
-            <pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 text-[10px] text-muted-foreground whitespace-pre-wrap break-all">
+            <pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 text-[10px] text-muted-foreground whitespace-pre-wrap break-all hidden sm:block">
               {product.description}
             </pre>
           )}

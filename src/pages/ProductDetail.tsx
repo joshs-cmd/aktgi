@@ -105,7 +105,7 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-4 sm:py-8">
         <div className="flex flex-col gap-8">
           {/* Back button */}
           <Button

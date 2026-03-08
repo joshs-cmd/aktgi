@@ -58,26 +58,26 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
       <AdminBanner userRole={role} />
       {/* Header */}
       <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-3">
+        <div className="container mx-auto px-4 py-4 sm:py-6">
+          <div className="flex items-center justify-between w-full gap-2">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               <div
-                className="flex items-center gap-3 cursor-pointer"
+                className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0"
                 onClick={() => {
                   lastQueryRef.current = null;
                   clearResults();
                   navigate("/", { replace: true });
                 }}
               >
-                <img src={aktLogo} alt="AKT" className="h-10 sm:h-11 md:h-14 w-auto" />
-                <h1 className="text-2xl font-bold hover:text-primary transition-colors">
+                <img src={aktLogo} alt="AKT" className="h-8 sm:h-11 md:h-14 w-auto shrink-0" />
+                <h1 className="text-lg sm:text-2xl font-bold hover:text-primary transition-colors truncate">
                   Garment Inventory
                 </h1>
               </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-accent transition-colors focus:outline-none">
-                    <ChevronDown className="h-5 w-5 text-muted-foreground" />
+                  <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-accent transition-colors focus:outline-none shrink-0">
+                    <ChevronDown className="h-4 w-4 sm:h-5 sm:w-5 text-muted-foreground" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
@@ -90,16 +90,26 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               {role === "admin" && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => navigate("/admin/data-management")}
-                  className="gap-2 text-muted-foreground hover:text-foreground"
+                  className="gap-2 text-muted-foreground hover:text-foreground hidden sm:inline-flex"
                 >
                   <HardDrive className="h-4 w-4" />
                   Data Management
+                </Button>
+              )}
+              {role === "admin" && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => navigate("/admin/data-management")}
+                  className="text-muted-foreground hover:text-foreground sm:hidden"
+                >
+                  <HardDrive className="h-4 w-4" />
                 </Button>
               )}
               {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}

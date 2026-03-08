@@ -54,23 +54,24 @@ export function SearchBar({ onSearch, isLoading, placeholder = "Search by SKU or
 
   return (
     <div className="w-full max-w-2xl">
-      <form onSubmit={handleSubmit} className="flex w-full gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+      <form onSubmit={handleSubmit} className="flex w-full gap-2 sm:gap-3">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 sm:h-5 sm:w-5 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="text"
             value={query}
             onChange={handleChange}
             placeholder={placeholder}
-            className={`h-12 pl-10 text-lg ${validationError ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+            className={`h-10 sm:h-12 pl-9 sm:pl-10 text-sm sm:text-lg ${validationError ? 'border-destructive focus-visible:ring-destructive' : ''}`}
             disabled={isLoading}
           />
         </div>
-        <Button type="submit" size="lg" className="h-12 px-8" disabled={isLoading || !query.trim()}>
+        <Button type="submit" size="lg" className="h-10 sm:h-12 px-4 sm:px-8 shrink-0" disabled={isLoading || !query.trim()}>
           {isLoading ? (
             <>
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              Searching...
+              <Loader2 className="mr-1 sm:mr-2 h-4 w-4 sm:h-5 sm:w-5 animate-spin" />
+              <span className="hidden sm:inline">Searching...</span>
+              <span className="sm:hidden">...</span>
             </>
           ) : (
             "Search"
