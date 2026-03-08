@@ -93,6 +93,7 @@ const App = () => {
     await supabase.auth.signOut();
     setIsAuthenticated(false);
     setUserRole(null);
+    setUserEmail(null);
   };
 
   if (isChecking) {
