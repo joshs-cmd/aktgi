@@ -89,9 +89,6 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <span className="rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
-                Beta
-              </span>
             </div>
             <div className="flex items-center gap-3">
               {role === "admin" && (
