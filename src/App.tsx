@@ -116,9 +116,9 @@ const App = () => {
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<SearchGallery userRole={userRole} />} />
-            <Route path="/product" element={<ProductDetail userRole={userRole} />} />
-            <Route path="/admin/data-management" element={<DataManagement userRole={userRole} />} />
+            <Route path="/" element={<SearchGallery userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
+            <Route path="/product" element={<ProductDetail userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
+            <Route path="/admin/data-management" element={<DataManagement userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>

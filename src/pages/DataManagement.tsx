@@ -108,30 +108,34 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
 
   return (
     <div className="min-h-screen bg-background">
+      <AdminBanner userRole={role} />
       {/* Header */}
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate("/")}
-              className="gap-1.5 text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back
-            </Button>
+          <div className="flex items-center justify-between w-full">
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <HardDrive className="h-5 w-5 text-primary" />
-                <h1 className="text-2xl font-bold tracking-tight">Data Management</h1>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate("/")}
+                className="gap-1.5 text-muted-foreground hover:text-foreground"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back
+              </Button>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="h-5 w-5 text-primary" />
+                  <h1 className="text-2xl font-bold tracking-tight">Data Management</h1>
+                </div>
+                {!isAdmin && (
+                  <Badge variant="outline" className="text-muted-foreground">
+                    Read-only
+                  </Badge>
+                )}
               </div>
-              {!isAdmin && (
-                <Badge variant="outline" className="text-muted-foreground">
-                  Read-only
-                </Badge>
-              )}
             </div>
+            {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}
           </div>
         </div>
       </header>

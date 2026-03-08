@@ -54,6 +54,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
 
   return (
     <div className="min-h-screen bg-background">
+      <AdminBanner userRole={role} />
       {/* Header */}
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-6">
@@ -76,17 +77,20 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                 Beta
               </span>
             </div>
-            {role === "admin" && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => navigate("/admin/data-management")}
-                className="gap-2 text-muted-foreground hover:text-foreground"
-              >
-                <HardDrive className="h-4 w-4" />
-                Data Management
-              </Button>
-            )}
+            <div className="flex items-center gap-3">
+              {role === "admin" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate("/admin/data-management")}
+                  className="gap-2 text-muted-foreground hover:text-foreground"
+                >
+                  <HardDrive className="h-4 w-4" />
+                  Data Management
+                </Button>
+              )}
+              {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}
+            </div>
           </div>
         </div>
       </header>
