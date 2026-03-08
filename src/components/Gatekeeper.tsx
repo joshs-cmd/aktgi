@@ -86,7 +86,7 @@ export const Gatekeeper = ({ onSuccess, error: externalError }: GatekeeperProps)
         </Button>
 
         <p className="text-xs text-muted-foreground">
-          Restricted to AKT Enterprises &amp; SmartPunk accounts
+          Access is restricted to authorized company domains.
         </p>
       </div>
     </div>
