@@ -301,6 +301,7 @@ function aggregateItemsWithPricing(
     brand: first.mill_name || "",
     category: first.filters || "",
     imageUrl: resolveImageUrl(first.images?.main),
+    // productUrl is set later in the handler once bestStyleCode is resolved
     colors,
   };
 }
@@ -673,6 +674,11 @@ serve(async (req) => {
       (typeof bestInfo.mill_style_code === "string" && bestInfo.mill_style_code.length > 0)
         ? bestInfo.mill_style_code
         : (product.styleNumber || bestStyleCode || query);
+
+    // Set product URL using the resolved OneStop style code
+    product.productUrl = bestStyleCode
+      ? `https://www.onestopinc.com/product/${encodeURIComponent(bestStyleCode)}`
+      : undefined;
 
     const totalPricedSizes = product.colors.reduce((sum, c) => sum + c.sizes.filter(s => s.price > 0).length, 0);
     const totalSizes = product.colors.reduce((sum, c) => sum + c.sizes.length, 0);
