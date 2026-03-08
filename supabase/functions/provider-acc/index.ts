@@ -866,7 +866,7 @@ function buildStandardProduct(
     brand: productInfo?.brand || "Atlantic Coast Cotton",
     category: productInfo?.category || "",
     imageUrl: productInfo?.imageUrl,
-    // ACC has no public product page
+    // productUrl is set in the handler where we have the ACC productId
     colors,
   };
 }
