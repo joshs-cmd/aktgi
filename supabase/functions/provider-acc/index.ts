@@ -866,7 +866,7 @@ function buildStandardProduct(
     brand: productInfo?.brand || "Atlantic Coast Cotton",
     category: productInfo?.category || "",
     imageUrl: productInfo?.imageUrl,
-    // ACC has no public product page
+    // productUrl is set in the handler where we have the ACC productId
     colors,
   };
 }
@@ -988,6 +988,9 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // Set ACC product URL using the prefixed product ID
+    product.productUrl = `https://www.orderacc.com/cgi-bin/liveb2b/wam_tmpl/catalog_product.p?site=ACC&layout=Responsive&page=catalog_product&product=${encodeURIComponent(productId)}`;
 
     console.log(
       `[provider-acc] Returning product: ${product.styleNumber} "${product.name}" ` +
