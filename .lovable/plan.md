@@ -1,28 +1,31 @@
 
-## Two Fixes
 
-### Fix 1 — Routing Collision (Frontend + Catalog Search Edge Function)
+## Analysis: "View on [Distributor]" Link in Warehouse Tooltip
 
-**Root cause:** In `deduplicateProducts` (catalog-search edge function), when products from multiple distributors are merged under an `aggressiveKey` (numeric root), `primary = group.items[0]` is whichever product arrived first in the array. If a OneStop alias like `GD210` arrives before Gildan's own `5000`, the deduped card gets `styleNumber: "GD210"` and potentially a different brand. When the user clicks the card, those wrong values are passed to the URL, so the detail page searches for the wrong SKU.
+### What you're asking
 
-**Fix:**
-- In the dedup loop, after collecting all items into a group, select the "best" representative item as `primary`. Priority: prefer items whose `styleNumber` is closest to the numeric fingerprint (i.e., doesn't look like a proprietary alias). Specifically: if any item in the group has a `distributorCode` of `sanmar` or `ss-activewear` (the "real" manufacturers), prefer that item as `primary` over OneStop items.
-- Alternatively (simpler and more robust): after building `distributorSkuMap`, set `styleNumber` to the value from the most authoritative distributor in the map. Priority: `sanmar` > `ss-activewear` > `onestop`.
+You want to add a hyperlink like "View on SanMar" inside the warehouse inventory tooltip that takes the user directly to that product's page on the distributor's website.
 
-### Fix 2 — SanMar PromoStandards 404 (Backend)
+### Do we have the data?
 
-**Root cause:** The constant `PROMOSTANDARDS_PRICING_ENDPOINT` on line 13 of `provider-sanmar/index.ts` is set to the wrong URL path:
-```
-https://ws.sanmar.com:8080/promostandards/PricingServiceBindingV2_0_0Port
-```
-It must be changed to:
-```
-https://ws.sanmar.com:8080/promostandards/PricingAndConfigurationServiceBinding
-```
+**Short answer: Partially.** The current `StandardProduct` and `DistributorResult` types do not carry a product URL field. However, we can construct URLs for most distributors because their product page patterns are predictable:
 
-The debug injection (`standardProduct.description = promoDebugXml`) will be kept intact as requested so you can verify the raw XML response.
+| Distributor | URL Pattern | Feasibility |
+|---|---|---|
+| **SanMar** | `https://www.sanmar.com/p/{styleNumber}` | High — style number is always available |
+| **S&S Activewear** | `https://www.ssactivewear.com/p/{styleID}` (numeric ID) | Medium — we have `styleNumber` but the web URL uses their numeric `styleID`, which we fetch during Stage 2 but don't currently pass through |
+| **OneStop** | `https://www.onestopinc.com/product/{webSKU}` | Medium — the resolved "web SKU" (e.g., `GD210`) is used internally but not surfaced to the frontend |
+| **ACC** | No public product page pattern identified | Low — ACC doesn't appear to have standard public product URLs |
 
-### Files to change
-- `supabase/functions/catalog-search/index.ts` — Fix primary item selection in dedup to use the most authoritative distributor's styleNumber/brand
-- `supabase/functions/provider-sanmar/index.ts` — Update `PROMOSTANDARDS_PRICING_ENDPOINT` constant URL
-- Redeploy both edge functions
+### What would need to change
+
+1. **Add a `productUrl` field** to `StandardProduct` (or `DistributorResult`) — each provider function would construct and return the direct URL.
+2. **Update each provider edge function** (4 functions) to populate that URL using the resolved style/SKU.
+3. **Update `WarehouseTooltip`** to accept and render the link.
+
+### Recommendation
+
+This is very doable for SanMar (straightforward URL pattern). For S&S and OneStop, it requires passing the resolved ID through to the frontend — a small change in each provider. ACC may need to be omitted or link to a search page instead.
+
+Shall I proceed with implementing this?
+
