@@ -10,7 +10,7 @@ export const UserMenu = ({ userEmail, onSignOut }: UserMenuProps) => {
   return (
     <div className="flex items-center gap-3">
       {userEmail && (
-        <span className="text-sm text-muted-foreground hidden sm:inline">
+        <span className="text-sm text-muted-foreground hidden lg:inline">
           {userEmail}
         </span>
       )}
