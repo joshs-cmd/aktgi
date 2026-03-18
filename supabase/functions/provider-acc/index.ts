@@ -489,42 +489,43 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         return [part];
       })();
 
-      const locs: any[] = Array.isArray(rawLocsFromArray) ? rawLocsFromArray : (rawLocsFromArray ? [rawLocsFromArray] : [part]);
-
-      // Distribute partQty evenly across warehouses (qty is per-part, not per-warehouse)
-      const qtyPerWarehouse = locs.length > 1 ? Math.floor(partQty / locs.length) : partQty;
-
       const warehouses: { code: string; name: string; qty: number }[] = [];
-      for (const loc of locs) {
-        let locCode: string;
-        let locName: string;
-        if (usedFlatFallback) {
-          locCode = "ACC";
-          locName = "Atlantic Coast Cotton";
-        } else {
-          locCode = extractText(
+
+      if (usedFlatFallback) {
+        // No InventoryLocationArray — single generic warehouse, qty from part.quantityAvailable
+        warehouses.push({ code: "ACC", name: "Atlantic Coast Cotton", qty: partQty });
+      } else {
+        // Has InventoryLocationArray — each location's qty from loc.inventoryLocationQuantity
+        const locs: any[] = Array.isArray(rawLocsFromArray) ? rawLocsFromArray : (rawLocsFromArray ? [rawLocsFromArray] : []);
+        for (const loc of locs) {
+          const locCode = extractText(
             loc?.inventoryLocationId ?? loc?.["ns2:inventoryLocationId"] ??
             loc?.InventoryLocationId ?? loc?.locationId ?? loc?.LocationId ?? ""
           ) || "ACC";
-          locName = extractText(
+          const locName = extractText(
             loc?.inventoryLocationName ?? loc?.["ns2:inventoryLocationName"] ??
             loc?.InventoryLocationName ?? loc?.locationName ?? ""
           ) || locCode;
+
+          // qty from per-location inventoryLocationQuantity
+          const locQtyRaw =
+            loc?.inventoryLocationQuantity ?? loc?.["ns2:inventoryLocationQuantity"] ??
+            loc?.InventoryLocationQuantity;
+          let locQty = 0;
+          if (locQtyRaw !== undefined && locQtyRaw !== null) {
+            if (typeof locQtyRaw === "object") {
+              const qObj = locQtyRaw?.Quantity ?? locQtyRaw?.["ns2:Quantity"] ?? locQtyRaw;
+              locQty = parseInt(String(qObj?.value ?? qObj?.Value ?? extractText(qObj) ?? "0"), 10) || 0;
+            } else {
+              locQty = parseInt(extractText(locQtyRaw) || "0", 10) || 0;
+            }
+          }
+
+          warehouses.push({ code: locCode, name: locName, qty: locQty });
         }
-
-        warehouses.push({ code: locCode, name: locName, qty: qtyPerWarehouse });
-      }
-
-      // If still no warehouses, try direct quantity field on the part itself
-      if (warehouses.length === 0) {
-        const directQty = parseInt(
-          extractText(
-            part?.["ns2:availableToSellQuantity"] ?? part?.availableToSellQuantity ??
-            part?.["ns2:quantity"] ?? part?.quantity ?? part?.Quantity ?? "0"
-          ) || "0",
-          10
-        ) || 0;
-        warehouses.push({ code: "ACC", name: "Atlantic Coast Cotton", qty: directQty });
+        if (warehouses.length === 0) {
+          warehouses.push({ code: "ACC", name: "Atlantic Coast Cotton", qty: 0 });
+        }
       }
 
       // Parse color and size from partId — ACC typically encodes as "COLOR-SIZE" or similar
