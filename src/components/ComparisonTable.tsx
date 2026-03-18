@@ -22,14 +22,18 @@ interface ComparisonTableProps {
 
 
 export function ComparisonTable({ results, selectedColor, showPrices = true }: ComparisonTableProps) {
-  // Safely get sizes for a result based on selected color — stable, memoized version
+  // Safely get sizes for a result based on selected color — stable, memoized version.
+  // Uses case-insensitive name matching so distributors that return ALL-CAPS color names
+  // (e.g. ACC: "ANTIQUE CHERRY RED") still match a selectedColor set from another
+  // distributor that uses title case (e.g. SanMar: "Antique Cherry Red").
   const getSizesForResult = useMemo(() => {
+    const selectedLower = selectedColor?.toLowerCase() ?? null;
     return (result: DistributorResult): StandardSize[] => {
       if (!result?.product) return [];
       const product = result.product;
       if (Array.isArray(product.colors) && product.colors.length > 0) {
-        if (selectedColor) {
-          const color = product.colors.find((c) => c?.name === selectedColor);
+        if (selectedLower) {
+          const color = product.colors.find((c) => c?.name?.toLowerCase() === selectedLower);
           if (color?.sizes) return color.sizes;
         }
         return product.colors[0]?.sizes || [];
