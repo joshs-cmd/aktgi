@@ -521,9 +521,14 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         let qty = 0;
 
         // 0. FIRST: flat quantityAvailable directly on part/loc (CC1717 style)
-        const flatQty = loc?.quantityAvailable ?? loc?.["ns2:quantityAvailable"];
-        if (flatQty !== undefined && flatQty !== null) {
-          qty = parseInt(extractText(flatQty) || "0", 10) || 0;
+        const flatQtyRaw = loc?.quantityAvailable ?? loc?.["ns2:quantityAvailable"];
+        if (flatQtyRaw !== undefined && flatQtyRaw !== null) {
+          if (typeof flatQtyRaw === "object") {
+            const qObj = flatQtyRaw?.Quantity ?? flatQtyRaw?.["ns2:Quantity"] ?? flatQtyRaw;
+            qty = parseInt(String(qObj?.value ?? qObj?.Value ?? extractText(qObj) ?? "0"), 10) || 0;
+          } else {
+            qty = parseInt(extractText(flatQtyRaw) || "0", 10) || 0;
+          }
         } else {
           // 1. loc.inventoryLocationQuantity?.Quantity?.value  (GL5000 style — confirmed working)
           const ilqEl =
