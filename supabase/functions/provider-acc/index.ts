@@ -459,7 +459,7 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
       }
 
       // Resolve warehouse location array for warehouse names/codes only
-      let usedFlatFallback = false;
+      let usedFlatFallback = false; // (no log yet — only log if flat fallback fires)
       const rawLocsFromArray = (() => {
         const arr1 =
           part?.["ns2:InventoryLocationArray"] ||
@@ -486,6 +486,7 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           }
         }
         usedFlatFallback = true;
+        console.log(`[provider-acc] flatFallback partId=${extractText(part?.partId ?? "")} partQty=${partQty} keys=${Object.keys(part||{}).join(",")}`);
         return [part];
       })();
 
