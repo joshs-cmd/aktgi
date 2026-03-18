@@ -499,15 +499,8 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
         let locCode: string;
         let locName: string;
         if (usedFlatFallback) {
-          const flatColor = extractText(
-            loc?.partColor ?? loc?.["ns2:partColor"] ?? loc?.PartColor ?? ""
-          );
-          const flatSize = extractText(
-            loc?.labelSize ?? loc?.["ns2:labelSize"] ?? loc?.LabelSize ??
-            loc?.ApparelSize?.labelSize ?? loc?.["ns2:ApparelSize"]?.labelSize ?? ""
-          );
-          locCode = flatColor || "ACC";
-          locName = flatSize ? `${flatColor || "ACC"} / ${flatSize}` : (flatColor || "Atlantic Coast Cotton");
+          locCode = "ACC";
+          locName = "Atlantic Coast Cotton";
         } else {
           locCode = extractText(
             loc?.inventoryLocationId ?? loc?.["ns2:inventoryLocationId"] ??
