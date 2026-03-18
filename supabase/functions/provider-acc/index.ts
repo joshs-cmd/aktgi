@@ -440,6 +440,13 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
 
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
 
+    const sampleQty = parts.slice(0, 5).map(p => ({
+      id: extractText(p?.partId ?? ""),
+      qty: p?.quantityAvailable,
+      type: typeof p?.quantityAvailable
+    }));
+    console.log("[provider-acc] sample quantityAvailable:", JSON.stringify(sampleQty));
+
     for (const part of parts) {
       const partId = extractText(
         part?.partId ?? part?.["ns2:partId"] ?? part?.PartId ?? ""
