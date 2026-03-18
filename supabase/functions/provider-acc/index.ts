@@ -777,6 +777,12 @@ function buildStandardProduct(
     const price = priceMap.get(partId) ?? 0;
     // Try exact partId match first, then fall back to color+size key
     const invEntry = invByPartId.get(partId) ?? invByColorSize.get(`${colorName}||${sizeName}`);
+
+    if (colorMap.size < 4) {
+      const invEntryDbg = invByPartId.get(partId) ?? invByColorSize.get(`${colorName}||${sizeName}`);
+      console.log(`[provider-acc] build[${colorMap.size}] partId=${partId} color=${colorName} size=${sizeName} invFound=${!!invEntryDbg} qty=${invEntryDbg?.warehouses?.[0]?.qty ?? "none"} invPartId=${invEntryDbg?.partId ?? "none"}`);
+    }
+
     const inventory: StandardInventory[] = (invEntry?.warehouses ?? []).map(w => ({
       warehouseCode: w.code,
       warehouseName: w.name,
