@@ -440,24 +440,27 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
 
     const parts = Array.isArray(rawParts) ? rawParts : [rawParts];
 
-    const sampleQty = parts.slice(0, 5).map(p => ({
-      id: extractText(p?.partId ?? ""),
-      qty: p?.quantityAvailable,
-      type: typeof p?.quantityAvailable
-    }));
-    console.log("[provider-acc] sample quantityAvailable:", JSON.stringify(sampleQty));
-
     for (const part of parts) {
       const partId = extractText(
         part?.partId ?? part?.["ns2:partId"] ?? part?.PartId ?? ""
       );
       if (!partId) continue;
 
-      // Resolve location array — try multiple structural variations in priority order
-      // Track whether we found a real location array or fell back to the flat part
+      // Extract per-part quantity from part.quantityAvailable (the authoritative per-SKU stock)
+      const partQtyRaw = part?.quantityAvailable ?? part?.["ns2:quantityAvailable"];
+      let partQty = 0;
+      if (partQtyRaw !== undefined && partQtyRaw !== null) {
+        if (typeof partQtyRaw === "object") {
+          const qObj = partQtyRaw?.Quantity ?? partQtyRaw?.["ns2:Quantity"] ?? partQtyRaw;
+          partQty = parseInt(String(qObj?.value ?? qObj?.Value ?? extractText(qObj) ?? "0"), 10) || 0;
+        } else {
+          partQty = parseInt(extractText(partQtyRaw) || "0", 10) || 0;
+        }
+      }
+
+      // Resolve warehouse location array for warehouse names/codes only
       let usedFlatFallback = false;
       const rawLocsFromArray = (() => {
-        // 1. InventoryLocationArray — try all known namespace/casing variants
         const arr1 =
           part?.["ns2:InventoryLocationArray"] ||
           part?.InventoryLocationArray ||
@@ -469,7 +472,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
             arr1?.inventoryLocation;
           if (locs) return Array.isArray(locs) ? locs : [locs];
         }
-        // 2. Check all keys dynamically for any key containing "inventorylocation" (case-insensitive)
         const dynamicKey = Object.keys(part || {}).find(k =>
           k.toLowerCase().replace(/[^a-z]/g, "").includes("inventorylocationarray")
         );
@@ -483,19 +485,20 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
             if (locs) return Array.isArray(locs) ? locs : [locs];
           }
         }
-        // 3. Flat fallback — part has no location sub-structure; use part-level qty
         usedFlatFallback = true;
         return [part];
       })();
 
       const locs: any[] = Array.isArray(rawLocsFromArray) ? rawLocsFromArray : (rawLocsFromArray ? [rawLocsFromArray] : [part]);
 
+      // Distribute partQty evenly across warehouses (qty is per-part, not per-warehouse)
+      const qtyPerWarehouse = locs.length > 1 ? Math.floor(partQty / locs.length) : partQty;
+
       const warehouses: { code: string; name: string; qty: number }[] = [];
       for (const loc of locs) {
         let locCode: string;
         let locName: string;
         if (usedFlatFallback) {
-          // CC1717-style flat structure: use partColor as location code and labelSize as name hint
           const flatColor = extractText(
             loc?.partColor ?? loc?.["ns2:partColor"] ?? loc?.PartColor ?? ""
           );
@@ -506,7 +509,6 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           locCode = flatColor || "ACC";
           locName = flatSize ? `${flatColor || "ACC"} / ${flatSize}` : (flatColor || "Atlantic Coast Cotton");
         } else {
-          // inventoryLocationId and inventoryLocationName may be xmlns-wrapped objects
           locCode = extractText(
             loc?.inventoryLocationId ?? loc?.["ns2:inventoryLocationId"] ??
             loc?.InventoryLocationId ?? loc?.locationId ?? loc?.LocationId ?? ""
@@ -517,74 +519,7 @@ function parseInventoryResponse(xml: string, parser: XMLParser): PartEntry[] {
           ) || locCode;
         }
 
-        // Quantity extraction — priority order across all known ACC structural variations
-        let qty = 0;
-
-        // 0. FIRST: flat quantityAvailable directly on part/loc (CC1717 style)
-        const flatQtyRaw = loc?.quantityAvailable ?? loc?.["ns2:quantityAvailable"];
-        if (flatQtyRaw !== undefined && flatQtyRaw !== null) {
-          if (typeof flatQtyRaw === "object") {
-            const qObj = flatQtyRaw?.Quantity ?? flatQtyRaw?.["ns2:Quantity"] ?? flatQtyRaw;
-            qty = parseInt(String(qObj?.value ?? qObj?.Value ?? extractText(qObj) ?? "0"), 10) || 0;
-          } else {
-            qty = parseInt(extractText(flatQtyRaw) || "0", 10) || 0;
-          }
-        } else {
-          // 1. loc.inventoryLocationQuantity?.Quantity?.value  (GL5000 style — confirmed working)
-          const ilqEl =
-            loc?.inventoryLocationQuantity ?? loc?.["ns2:inventoryLocationQuantity"];
-          if (ilqEl) {
-            const qEl =
-              ilqEl?.Quantity ?? ilqEl?.["ns2:Quantity"] ?? ilqEl?.quantity;
-            if (qEl !== undefined) {
-              qty = parseInt(extractText(typeof qEl === "object" ? (qEl?.value ?? qEl?.Value ?? qEl) : qEl) || "0", 10) || 0;
-            } else {
-              // 2. loc.inventoryLocationQuantity?.value  (flat object)
-              qty = parseInt(extractText(ilqEl?.value ?? ilqEl?.Value ?? ilqEl) || "0", 10) || 0;
-            }
-          } else {
-            // 3. loc.InventoryLocationQuantity?.Quantity?.value  (PascalCase variant)
-            const ilqEl2 =
-              loc?.InventoryLocationQuantity ?? loc?.["ns2:InventoryLocationQuantity"];
-            if (ilqEl2) {
-              const qEl2 =
-                ilqEl2?.Quantity ?? ilqEl2?.["ns2:Quantity"] ?? ilqEl2?.quantity;
-              if (qEl2 !== undefined) {
-                qty = parseInt(extractText(typeof qEl2 === "object" ? (qEl2?.value ?? qEl2?.Value ?? qEl2) : qEl2) || "0", 10) || 0;
-              } else {
-                qty = parseInt(extractText(ilqEl2?.value ?? ilqEl2) || "0", 10) || 0;
-              }
-            } else {
-              // 4. loc.Quantity?.value  (minimal structure)
-              const qDirect =
-                loc?.Quantity ?? loc?.["ns2:Quantity"] ?? loc?.quantity;
-              if (qDirect !== undefined) {
-                qty = parseInt(
-                  extractText(typeof qDirect === "object" ? (qDirect?.value ?? qDirect?.Value ?? qDirect) : qDirect) || "0",
-                  10
-                ) || 0;
-              } else {
-                // 5. inventoryLevelArray legacy fallback
-                const levelArrayEl =
-                  loc?.["ns2:inventoryLevelArray"] || loc?.inventoryLevelArray || loc?.InventoryLevelArray;
-                const rawLevels =
-                  levelArrayEl?.["ns2:InventoryLevel"] || levelArrayEl?.InventoryLevel ||
-                  levelArrayEl?.inventoryLevel || levelArrayEl;
-                const levels = rawLevels ? (Array.isArray(rawLevels) ? rawLevels : [rawLevels]) : [];
-                for (const lvl of levels) {
-                  const aqRaw =
-                    lvl?.["ns2:availableToSellQuantity"] ?? lvl?.availableToSellQuantity ??
-                    lvl?.["ns2:availableQuantity"]       ?? lvl?.availableQuantity       ??
-                    lvl?.["ns2:Quantity"]                ?? lvl?.Quantity                ??
-                    lvl?.["ns2:quantity"]                ?? lvl?.quantity                ?? "0";
-                  qty += parseInt(extractText(aqRaw) || "0", 10) || 0;
-                }
-              }
-            }
-          }
-        }
-
-        warehouses.push({ code: locCode, name: locName, qty });
+        warehouses.push({ code: locCode, name: locName, qty: qtyPerWarehouse });
       }
 
       // If still no warehouses, try direct quantity field on the part itself
