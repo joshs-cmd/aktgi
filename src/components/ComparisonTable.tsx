@@ -22,23 +22,27 @@ interface ComparisonTableProps {
 
 
 export function ComparisonTable({ results, selectedColor, showPrices = true }: ComparisonTableProps) {
-  // Safely get sizes for a result based on selected color
-  const getSizesForResult = (result: DistributorResult): StandardSize[] => {
-    if (!result?.product) return [];
-    const product = result.product;
-    if (Array.isArray(product.colors) && product.colors.length > 0) {
-      if (selectedColor) {
-        const color = product.colors.find((c) => c?.name === selectedColor);
-        if (color?.sizes) return color.sizes;
+  // Safely get sizes for a result based on selected color — stable, memoized version
+  const getSizesForResult = useMemo(() => {
+    return (result: DistributorResult): StandardSize[] => {
+      if (!result?.product) return [];
+      const product = result.product;
+      if (Array.isArray(product.colors) && product.colors.length > 0) {
+        if (selectedColor) {
+          const color = product.colors.find((c) => c?.name === selectedColor);
+          if (color?.sizes) return color.sizes;
+        }
+        return product.colors[0]?.sizes || [];
       }
-      return product.colors[0]?.sizes || [];
-    }
-    return Array.isArray(product.sizes) ? product.sizes : [];
-  };
+      return Array.isArray(product.sizes) ? product.sizes : [];
+    };
+  }, [selectedColor]);
 
   // Only use resolved rows for size/price calculations
-  const resolvedResults = results.filter(r => r.status === "success" || r.status === "error");
-  const successResults = results.filter(r => r.status === "success");
+  const successResults = useMemo(
+    () => results.filter(r => r.status === "success"),
+    [results]
+  );
 
   const allSizes = useMemo(() => {
     const sizeMap = new Map<string, number>();
@@ -52,7 +56,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
     return Array.from(sizeMap.entries())
       .sort((a, b) => a[1] - b[1])
       .map(([code]) => code);
-  }, [results, selectedColor]);
+  }, [successResults, getSizesForResult]);
 
   const lowestPrices = useMemo(() => {
     const lowest: Record<string, number> = {};
@@ -66,7 +70,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
       if (minPrice !== Infinity) lowest[sizeCode] = minPrice;
     });
     return lowest;
-  }, [results, allSizes, selectedColor]);
+  }, [successResults, allSizes, getSizesForResult]);
 
   const getTotalStock = (sizes: StandardSize[]) => {
     let total = 0;
