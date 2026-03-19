@@ -3,7 +3,7 @@ import aktLogo from "@/assets/aktlogo.png";
 import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
-import { AlertCircle, Search, Loader2, HardDrive, ChevronDown, Calculator } from "lucide-react";
+import { AlertCircle, Search, Loader2, HardDrive, ChevronDown, Calculator, Wrench } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,14 +13,17 @@ import { useEffect, useRef } from "react";
 import { UserRole } from "@/types/auth";
 import { AdminBanner } from "@/components/AdminBanner";
 import { UserMenu } from "@/components/UserMenu";
+import { SalesViewBanner } from "@/components/SalesViewBanner";
 
 interface SearchGalleryProps {
   userRole?: UserRole | null;
   userEmail?: string | null;
   onSignOut?: () => void;
+  salesViewMode?: boolean;
+  setSalesViewMode?: (value: boolean) => void;
 }
 
-const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) => {
+const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, setSalesViewMode = () => {} }: SearchGalleryProps) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const role = userRole ?? null;
@@ -62,6 +65,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
 
   return (
     <div className="min-h-screen bg-background">
+      <SalesViewBanner salesViewMode={salesViewMode} setSalesViewMode={setSalesViewMode} />
       <AdminBanner userRole={role} />
       {/* Header */}
       <header className="border-b bg-card">
@@ -102,21 +106,21 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => navigate("/admin/data-management")}
+                  onClick={() => navigate("/admin/tools")}
                   className="gap-2 text-muted-foreground hover:text-foreground hidden lg:inline-flex"
                 >
-                  <HardDrive className="h-4 w-4" />
-                  Data Management
+                  <Wrench className="h-4 w-4" />
+                  Admin Tools
                 </Button>
               )}
               {role === "admin" && (
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => navigate("/admin/data-management")}
+                  onClick={() => navigate("/admin/tools")}
                   className="text-muted-foreground hover:text-foreground lg:hidden"
                 >
-                  <HardDrive className="h-4 w-4" />
+                  <Wrench className="h-4 w-4" />
                 </Button>
               )}
               {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}
