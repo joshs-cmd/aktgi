@@ -109,7 +109,7 @@ const App = () => {
     setIsAuthenticated(false);
     setUserRole(null);
     setUserEmail(null);
-    setSalesViewMode(false);
+    handleSetSalesViewMode(false);
   };
 
   if (isChecking) {
@@ -130,7 +130,7 @@ const App = () => {
     userEmail,
     onSignOut: handleSignOut,
     salesViewMode,
-    setSalesViewMode,
+    setSalesViewMode: handleSetSalesViewMode,
   };
 
   return (
