@@ -23,7 +23,14 @@ const App = () => {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [salesViewMode, setSalesViewMode] = useState(false);
+  const [salesViewMode, setSalesViewMode] = useState(() =>
+    sessionStorage.getItem("salesViewMode") === "true"
+  );
+
+  const handleSetSalesViewMode = (value: boolean) => {
+    sessionStorage.setItem("salesViewMode", String(value));
+    setSalesViewMode(value);
+  };
 
   // When in sales view, present as a viewer role
   const effectiveRole: UserRole | null = salesViewMode ? "viewer" : userRole;

@@ -59,12 +59,12 @@ export function WarehouseTooltip({ inventory, children, distributorName, product
                   {info ? (
                     info.isDropship ? (
                       <p className="text-xs text-amber-600 dark:text-amber-400 leading-snug">
-                        ⚠️ Dropship — Ships from mill in ~14 days. Case quantities only.
+                        Dropship — Ships from mill in ~14 days. Case quantities only.
                       </p>
                     ) : (
                       <div className="flex gap-3 text-xs text-muted-foreground">
-                        <span>📦 Orlando: {formatDays(info.etaOrlando)}</span>
-                        <span>📦 Las Vegas: {formatDays(info.etaLasVegas)}</span>
+                        <span>Orlando: {formatDays(info.etaOrlando)}</span>
+                        <span>Las Vegas: {formatDays(info.etaLasVegas)}</span>
                       </div>
                     )
                   ) : null}
