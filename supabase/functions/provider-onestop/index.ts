@@ -53,6 +53,31 @@ const ONESTOP_ALIAS_MAP: Record<string, string> = {
   "HANES5170":    "HN5170",
 };
 
+// ---------- Brand → OneStop Mill Code Mapping ----------
+const BRAND_TO_MILL_CODE: Record<string, string> = {
+  "BELLACANVAS":          "CV",
+  "BELLACANVAS":          "CV",
+  "BELLA+CANVAS":         "CV",
+  "NEXTLEVEL":            "NL",
+  "NEXTLEVELAPPAREL":     "NL",
+  "GILDAN":               "GD",
+  "HANES":                "HN",
+  "PORTCOMPANY":          "PC",
+  "PORTANDCOMPANY":       "PC",
+  "COMFORTCOLORS":        "CF",
+  "JERZEES":              "JZ",
+  "DISTRICT":             "DT",
+  "SPORTTEK":             "ST",
+  "INDEPENDENTTRADING":   "SS",
+  "ALTERNATIVEAPPAREL":   "AA",
+  "ALTERNATIVE":          "AA",
+};
+
+function getMillCode(brand: string): string {
+  const slug = brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return BRAND_TO_MILL_CODE[slug] ?? brand;
+}
+
 // ---------- Size Normalization ----------
 
 function normalizeSize(sizeCode: string): string {
@@ -520,7 +545,7 @@ serve(async (req) => {
     const queryUpperForAlias = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
     const useMillSearch = !ONESTOP_ALIAS_MAP[queryUpperForAlias] && !!brand;
     const searchUrl = useMillSearch
-      ? `${ONESTOP_API_BASE}/items/?mill=${encodeURIComponent(brand)}&mill_style_code=${encodeURIComponent(query)}&flat=Y`
+      ? `${ONESTOP_API_BASE}/items/?mill=${encodeURIComponent(getMillCode(brand))}&mill_style_code=${encodeURIComponent(query)}&flat=Y`
       : `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
     console.log(`[provider-onestop] Search method: ${useMillSearch ? "mill+style" : "search/alias"} — ${searchUrl}`);
 
