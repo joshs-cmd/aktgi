@@ -30,16 +30,18 @@ export function WarehouseTooltip({ inventory, children, distributorName, product
   const totalStock = inventory.reduce((sum, inv) => sum + inv.quantity, 0);
   const hasCapped = inventory.some(inv => inv.isCapped);
 
+  const useGrid = inventory.length >= 4;
+
   return (
     <Tooltip delayDuration={200}>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side="bottom" className="w-72 p-0">
+      <TooltipContent side="bottom" className={`${useGrid ? "w-[480px]" : "w-72"} p-0`}>
         <div className="p-3">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium">
             <Warehouse className="h-4 w-4" />
             Warehouse Breakdown
           </div>
-          <div className="space-y-2.5">
+          <div className={useGrid ? "grid grid-cols-2 gap-x-4 gap-y-2.5" : "space-y-2.5"}>
             {inventory.map((inv) => {
               const info = getWarehouseInfo(inv.warehouseCode);
               const locationLabel = info
