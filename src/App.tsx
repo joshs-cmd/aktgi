@@ -35,6 +35,8 @@ const App = () => {
   // When in sales view, present as a viewer role
   const effectiveRole: UserRole | null = salesViewMode ? "viewer" : userRole;
 
+
+
   const checkUserRole = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
