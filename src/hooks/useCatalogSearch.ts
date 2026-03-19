@@ -16,15 +16,26 @@ export function useCatalogSearch() {
   const [error, setError] = useState<string | null>(null);
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
 
-  const search = useCallback(async (query: string) => {
+  /** Evict a specific query (or all entries) from the micro-cache */
+  const bustCache = useCallback((query?: string) => {
+    if (query) {
+      cacheRef.current.delete(query.trim().toLowerCase());
+    } else {
+      cacheRef.current.clear();
+    }
+  }, []);
+
+  const search = useCallback(async (query: string, skipCache = false) => {
     const normalizedQuery = query.trim().toLowerCase();
 
-    // Check micro-cache
-    const cached = cacheRef.current.get(normalizedQuery);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      setResponse(cached.response);
-      setError(null);
-      return;
+    // Check micro-cache (unless caller requests a fresh fetch)
+    if (!skipCache) {
+      const cached = cacheRef.current.get(normalizedQuery);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+        setResponse(cached.response);
+        setError(null);
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -41,7 +52,7 @@ export function useCatalogSearch() {
       const catalogResponse = data as CatalogSearchResponse;
       setResponse(catalogResponse);
 
-      // Store in cache
+      // Overwrite any stale cache entry
       cacheRef.current.set(normalizedQuery, {
         response: catalogResponse,
         timestamp: Date.now(),
@@ -60,5 +71,5 @@ export function useCatalogSearch() {
     setError(null);
   }, []);
 
-  return { isLoading, response, error, search, clearResults };
+  return { isLoading, response, error, search, clearResults, bustCache };
 }
