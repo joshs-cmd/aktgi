@@ -154,15 +154,6 @@ function generateQueryVariants(query: string): string[] {
     }
   }
   
-  // Generic pattern: letters followed by numbers without space
-  const genericMatch = lower.match(/^([a-z]+)(\d+)$/);
-  if (genericMatch && variants.length === 1) {
-    const [, letters, numbers] = genericMatch;
-    const spaced = `${letters} ${numbers}`;
-    if (!variants.includes(spaced)) variants.push(spaced);
-    if (!variants.includes(numbers)) variants.push(numbers);
-  }
-  
   // If query has spaces, also try without spaces (collapsed)
   if (trimmed.includes(" ")) {
     const collapsed = trimmed.replace(/\s+/g, "");
