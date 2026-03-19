@@ -486,7 +486,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { query } = body;
+    const { query, brand } = body;
 
     if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
