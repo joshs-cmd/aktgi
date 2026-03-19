@@ -167,7 +167,8 @@ function generateQueryVariants(query: string): string[] {
 const PRIORITY_BRANDS = [
   "GILDAN", "PORT & COMPANY", "PORT AND COMPANY", "BELLA + CANVAS", 
   "BELLA+CANVAS", "BELLACANVAS", "NEXT LEVEL", "NEXT LEVEL APPAREL",
-  "HANES", "JERZEES", "FRUIT OF THE LOOM", "CHAMPION", "AMERICAN APPAREL"
+  "HANES", "JERZEES", "FRUIT OF THE LOOM", "CHAMPION", "AMERICAN APPAREL",
+  "INDEPENDENT TRADING", "INDEPENDENT TRADING CO"
 ];
 
 /**
@@ -391,7 +392,14 @@ serve(async (req) => {
     let matchedVariant = "";
 
     // Step 1 & 2: Try direct products lookup with each variant
+    // Skip pure-numeric fallbacks in the direct products lookup —
+    // they cause false matches (e.g. SS650 → 650 → VC300Y).
+    // The styles search handles fuzzy matching with proper scoring.
+    const originalIsAlphanumeric = /[A-Za-z]/.test(query);
     for (const variant of variants) {
+      const isNumericOnly = /^\d+$/.test(variant);
+      if (isNumericOnly && originalIsAlphanumeric) continue;
+
       const url = `${SS_API_BASE}/products/?style=${encodeURIComponent(variant)}`;
       console.log(`[provider-ss-activewear] Trying: ${url}`);
       
