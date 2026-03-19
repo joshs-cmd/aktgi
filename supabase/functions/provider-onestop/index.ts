@@ -53,6 +53,31 @@ const ONESTOP_ALIAS_MAP: Record<string, string> = {
   "HANES5170":    "HN5170",
 };
 
+// ---------- Brand → OneStop Mill Code Mapping ----------
+const BRAND_TO_MILL_CODE: Record<string, string> = {
+  "BELLACANVAS":          "CV",
+  "BELLACANVAS":          "CV",
+  "BELLA+CANVAS":         "CV",
+  "NEXTLEVEL":            "NL",
+  "NEXTLEVELAPPAREL":     "NL",
+  "GILDAN":               "GD",
+  "HANES":                "HN",
+  "PORTCOMPANY":          "PC",
+  "PORTANDCOMPANY":       "PC",
+  "COMFORTCOLORS":        "CF",
+  "JERZEES":              "JZ",
+  "DISTRICT":             "DT",
+  "SPORTTEK":             "ST",
+  "INDEPENDENTTRADING":   "SS",
+  "ALTERNATIVEAPPAREL":   "AA",
+  "ALTERNATIVE":          "AA",
+};
+
+function getMillCode(brand: string): string {
+  const slug = brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return BRAND_TO_MILL_CODE[slug] ?? brand;
+}
+
 // ---------- Size Normalization ----------
 
 function normalizeSize(sizeCode: string): string {
