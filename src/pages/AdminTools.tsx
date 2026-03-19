@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { HardDrive, Eye } from "lucide-react";
 import { UserRole } from "@/types/auth";
@@ -22,12 +23,14 @@ export default function AdminTools({
   setSalesViewMode,
 }: AdminToolsProps) {
   const navigate = useNavigate();
+  const [redirected, setRedirected] = useState(false);
 
-  // Only admins (real role) may access this page
-  if (userRole !== "admin") {
+  if (userRole !== "admin" && !redirected) {
+    setRedirected(true);
     navigate("/");
-    return null;
   }
+
+  if (userRole !== "admin") return null;
 
   const tools = [
     {
@@ -39,8 +42,8 @@ export default function AdminTools({
         setSalesViewMode(true);
         navigate("/");
       },
-      color: "text-amber-600",
-      bg: "bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30",
+      colorClass: "text-amber-600 dark:text-amber-400",
+      bgClass: "border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20",
     },
     {
       icon: HardDrive,
@@ -48,8 +51,8 @@ export default function AdminTools({
       description:
         "View and download raw distributor catalog archive files. Manage catalog ingestion and sync logs.",
       action: () => navigate("/admin/data-management"),
-      color: "text-primary",
-      bg: "bg-primary/10 hover:bg-primary/20 border-primary/30",
+      colorClass: "text-primary",
+      bgClass: "border-primary/30 bg-primary/10 hover:bg-primary/20",
     },
   ];
 
@@ -78,18 +81,16 @@ export default function AdminTools({
 
       <main className="container mx-auto px-4 py-10">
         <div className="max-w-2xl mx-auto space-y-6">
-          <p className="text-muted-foreground text-sm">
-            Select a tool to continue.
-          </p>
+          <p className="text-muted-foreground text-sm">Select a tool to continue.</p>
           <div className="grid gap-4 sm:grid-cols-2">
             {tools.map((tool) => (
               <button
                 key={tool.title}
                 onClick={tool.action}
-                className={`flex flex-col gap-4 rounded-xl border p-6 text-left transition-colors ${tool.bg}`}
+                className={`flex flex-col gap-4 rounded-xl border p-6 text-left transition-colors ${tool.bgClass}`}
               >
-                <div className={`rounded-lg p-3 w-fit ${tool.bg}`}>
-                  <tool.icon className={`h-7 w-7 ${tool.color}`} />
+                <div className={`rounded-lg p-3 w-fit border ${tool.bgClass}`}>
+                  <tool.icon className={`h-7 w-7 ${tool.colorClass}`} />
                 </div>
                 <div>
                   <h2 className="text-base font-semibold">{tool.title}</h2>

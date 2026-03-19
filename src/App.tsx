@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import SearchGallery from "./pages/SearchGallery";
 import ProductDetail from "./pages/ProductDetail";
 import DataManagement from "./pages/DataManagement";
+import AdminTools from "./pages/AdminTools";
 import NotFound from "./pages/NotFound";
 import { Gatekeeper } from "@/components/Gatekeeper";
 import { UserRole } from "@/types/auth";
@@ -22,6 +23,10 @@ const App = () => {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [salesViewMode, setSalesViewMode] = useState(false);
+
+  // When in sales view, present as a viewer role
+  const effectiveRole: UserRole | null = salesViewMode ? "viewer" : userRole;
 
   const checkUserRole = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -79,6 +84,7 @@ const App = () => {
         } else if (event === "SIGNED_OUT") {
           setIsAuthenticated(false);
           setUserRole(null);
+          setSalesViewMode(false);
         }
       }
     );
@@ -94,6 +100,7 @@ const App = () => {
     setIsAuthenticated(false);
     setUserRole(null);
     setUserEmail(null);
+    setSalesViewMode(false);
   };
 
   if (isChecking) {
@@ -109,6 +116,14 @@ const App = () => {
     );
   }
 
+  const sharedProps = {
+    userRole: effectiveRole,
+    userEmail,
+    onSignOut: handleSignOut,
+    salesViewMode,
+    setSalesViewMode,
+  };
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -116,9 +131,10 @@ const App = () => {
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<SearchGallery userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
-            <Route path="/product" element={<ProductDetail userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
-            <Route path="/admin/data-management" element={<DataManagement userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
+            <Route path="/" element={<SearchGallery {...sharedProps} />} />
+            <Route path="/product" element={<ProductDetail {...sharedProps} />} />
+            <Route path="/admin/data-management" element={<DataManagement userRole={effectiveRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
+            <Route path="/admin/tools" element={<AdminTools userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} salesViewMode={salesViewMode} setSalesViewMode={setSalesViewMode} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
