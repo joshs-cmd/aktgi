@@ -19,7 +19,7 @@ const BRAND_ALIASES: [RegExp, string][] = [
   [/bella\s*[\+&]\s*canvas|bellacanvas/i,        "BELLA+CANVAS"],
   [/next\s*level(\s*apparel)?/i,                  "NEXT LEVEL"],
   [/sport[\s\-]?tek/i,                            "SPORT-TEK"],
-  [/port\s*&?\s*company/i,                        "PORT & COMPANY"],
+  [/port\s*&?\s*co(?:mpany)?\.?/i,                 "PORT & COMPANY"],
   [/comfort\s*colors?/i,                          "COMFORT COLORS"],
   [/gildan/i,                                     "GILDAN"],
   [/hanes/i,                                      "HANES"],
