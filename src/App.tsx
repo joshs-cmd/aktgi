@@ -93,7 +93,7 @@ const App = () => {
         } else if (event === "SIGNED_OUT") {
           setIsAuthenticated(false);
           setUserRole(null);
-          setSalesViewMode(false);
+          handleSetSalesViewMode(false);
         }
       }
     );
