@@ -24,8 +24,15 @@ const SearchGallery = ({ userRole, userEmail, onSignOut }: SearchGalleryProps) =
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const role = userRole ?? null;
-  const { isLoading, response, error, search, clearResults } = useCatalogSearch();
+  const { isLoading, response, error, search, clearResults, bustCache } = useCatalogSearch();
   const lastQueryRef = useRef<string | null>(null);
+
+  // On mount: bust the cache for the current ?q= so we always fetch fresh results
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q) bustCache(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Restore search from URL param (for back navigation)
   useEffect(() => {
