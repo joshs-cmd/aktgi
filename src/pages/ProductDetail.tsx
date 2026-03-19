@@ -51,14 +51,27 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
     navigate(`/?q=${encodeURIComponent(queryParam)}`);
   };
 
-  // Get the first successful product
+  // Get the first successful product — prefer distributors that are in the skuMap
+  // so that e.g. SS650 doesn't show VC300Y data sourced from an unrelated distributor.
   const firstProduct = useMemo(() => {
     if (!response?.results) return null;
-    return (
-      response.results.find((r) => r.status === "success" && r.product)
-        ?.product ?? null
+    const successResults = response.results.filter(
+      (r) => r.status === "success" && r.product
     );
-  }, [response?.results]);
+    if (successResults.length === 0) return null;
+
+    // If we have a skuMap, prefer a result whose distributorCode is a key in it
+    if (distributorSkuMap && Object.keys(distributorSkuMap).length > 0) {
+      const skuKeys = Object.keys(distributorSkuMap);
+      const preferred = successResults.find((r) =>
+        skuKeys.includes(r.distributorCode)
+      );
+      if (preferred) return preferred.product;
+    }
+
+    // Fallback: first successful result regardless of distributor
+    return successResults[0].product ?? null;
+  }, [response?.results, distributorSkuMap]);
 
   // Available colors
   const availableColors = useMemo(() => {
