@@ -10,14 +10,17 @@ import { Button } from "@/components/ui/button";
 import { UserRole, canViewPrices } from "@/types/auth";
 import { AdminBanner } from "@/components/AdminBanner";
 import { UserMenu } from "@/components/UserMenu";
+import { SalesViewBanner } from "@/components/SalesViewBanner";
 
 interface ProductDetailProps {
   userRole: UserRole | null;
   userEmail?: string | null;
   onSignOut?: () => void;
+  salesViewMode?: boolean;
+  setSalesViewMode?: (value: boolean) => void;
 }
 
-const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) => {
+const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, setSalesViewMode = () => {} }: ProductDetailProps) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isLoading, response, error, search } = useSourcingEngine();
@@ -52,7 +55,6 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
   };
 
   // Get the first successful product — prefer distributors that are in the skuMap
-  // so that e.g. SS650 doesn't show VC300Y data sourced from an unrelated distributor.
   const firstProduct = useMemo(() => {
     if (!response?.results) return null;
     const successResults = response.results.filter(
@@ -60,7 +62,6 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
     );
     if (successResults.length === 0) return null;
 
-    // If we have a skuMap, prefer a result whose distributorCode is a key in it
     if (distributorSkuMap && Object.keys(distributorSkuMap).length > 0) {
       const skuKeys = Object.keys(distributorSkuMap);
       const preferred = successResults.find((r) =>
@@ -69,7 +70,6 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
       if (preferred) return preferred.product;
     }
 
-    // Fallback: first successful result regardless of distributor
     return successResults[0].product ?? null;
   }, [response?.results, distributorSkuMap]);
 
@@ -86,7 +86,6 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
     }
   }, [availableColors, selectedColor]);
 
-  // Still loading if any active row is in skeleton state
   const anyLoading = response?.results?.some((r) => r.status === "loading") ?? false;
 
   const allResultsEmpty =
@@ -105,6 +104,7 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
 
   return (
     <div className="min-h-screen bg-background">
+      <SalesViewBanner salesViewMode={salesViewMode} setSalesViewMode={setSalesViewMode} />
       <AdminBanner userRole={userRole} />
       {/* Header */}
       <header className="border-b bg-card">
@@ -132,7 +132,6 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
           </Button>
 
           {/* Loading State */}
-          {/* Initial page-level skeleton — only shown before first skeleton rows appear */}
           {isLoading && !response && (
             <div className="w-full max-w-4xl space-y-6">
               <div className="rounded-lg border bg-card p-4 space-y-3">
@@ -189,7 +188,6 @@ const ProductDetail = ({ userRole, userEmail, onSignOut }: ProductDetailProps) =
                   onColorSelect={setSelectedColor}
                 />
               ) : anyLoading ? (
-                // Skeleton header while first API result arrives
                 <div className="space-y-3">
                   <Skeleton className="h-8 w-64" />
                   <Skeleton className="h-5 w-48" />
