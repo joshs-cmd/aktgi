@@ -23,10 +23,19 @@ const App = () => {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [salesViewMode, setSalesViewMode] = useState(false);
+  const [salesViewMode, setSalesViewMode] = useState(() =>
+    sessionStorage.getItem("salesViewMode") === "true"
+  );
+
+  const handleSetSalesViewMode = (value: boolean) => {
+    sessionStorage.setItem("salesViewMode", String(value));
+    setSalesViewMode(value);
+  };
 
   // When in sales view, present as a viewer role
   const effectiveRole: UserRole | null = salesViewMode ? "viewer" : userRole;
+
+
 
   const checkUserRole = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -84,7 +93,7 @@ const App = () => {
         } else if (event === "SIGNED_OUT") {
           setIsAuthenticated(false);
           setUserRole(null);
-          setSalesViewMode(false);
+          handleSetSalesViewMode(false);
         }
       }
     );
@@ -100,7 +109,7 @@ const App = () => {
     setIsAuthenticated(false);
     setUserRole(null);
     setUserEmail(null);
-    setSalesViewMode(false);
+    handleSetSalesViewMode(false);
   };
 
   if (isChecking) {
@@ -121,7 +130,7 @@ const App = () => {
     userEmail,
     onSignOut: handleSignOut,
     salesViewMode,
-    setSalesViewMode,
+    setSalesViewMode: handleSetSalesViewMode,
   };
 
   return (
@@ -134,7 +143,7 @@ const App = () => {
             <Route path="/" element={<SearchGallery {...sharedProps} />} />
             <Route path="/product" element={<ProductDetail {...sharedProps} />} />
             <Route path="/admin/data-management" element={<DataManagement userRole={effectiveRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
-            <Route path="/admin/tools" element={<AdminTools userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} salesViewMode={salesViewMode} setSalesViewMode={setSalesViewMode} />} />
+            <Route path="/admin/tools" element={<AdminTools userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} salesViewMode={salesViewMode} setSalesViewMode={handleSetSalesViewMode} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
