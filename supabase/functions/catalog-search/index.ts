@@ -167,8 +167,7 @@ serve(async (req) => {
 
     for (const row of rows) {
       const canonicalBase = getCanonicalBase(row.style_number, row.brand);
-      const brandSlug = row.brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const groupKey = `${brandSlug}::${canonicalBase}`;
+      const groupKey = `${canonicalBrandSlug(row.brand)}::${canonicalBase}`;
 
       if (productMap.has(groupKey)) {
         // Merge distributor info into existing card
