@@ -516,8 +516,13 @@ serve(async (req) => {
       fetch(url, { headers: fetchHeaders, signal: AbortSignal.timeout(timeoutMs) });
 
     // Step 1: Search catalog with flat=Y to find the OneStop style code
-    const searchUrl = `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
-    console.log(`[provider-onestop] Catalog search: ${searchUrl}`);
+    // Use alias map (Step A) first; if no alias AND brand is available, use mill+mill_style_code
+    const queryUpperForAlias = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const useMillSearch = !ONESTOP_ALIAS_MAP[queryUpperForAlias] && !!brand;
+    const searchUrl = useMillSearch
+      ? `${ONESTOP_API_BASE}/items/?mill=${encodeURIComponent(brand)}&mill_style_code=${encodeURIComponent(query)}&flat=Y`
+      : `${ONESTOP_API_BASE}/items/?search=${encodeURIComponent(query)}&flat=Y`;
+    console.log(`[provider-onestop] Search method: ${useMillSearch ? "mill+style" : "search/alias"} — ${searchUrl}`);
 
     const catalogRes = await fetchWithTimeout(searchUrl, 25_000);
     if (!catalogRes.ok) {
