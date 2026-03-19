@@ -41,6 +41,20 @@ const DIST_LABELS: Record<string, string> = {
   onestop: "OneStop",
 };
 
+const BRAND_SLUG_CANONICAL: Record<string, string> = {
+  "NEXTLEVELAPPAREL": "NEXTLEVEL",
+  "PORTANDCOMPANY": "PORTCOMPANY",
+  "PORTCO": "PORTCOMPANY",
+  "DISTRICTMADE": "DISTRICT",
+  "ALTERNATIVEAPPAREL": "ALTERNATIVE",
+  "INDEPENDENTTRADINGCO": "INDEPENDENTTRADING",
+};
+
+function canonicalBrandSlug(brand: string): string {
+  const slug = brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return BRAND_SLUG_CANONICAL[slug] ?? slug;
+}
+
 /**
  * Strip known brand prefixes to get canonical base for display.
  * Must mirror the SQL function's logic exactly.
@@ -153,8 +167,7 @@ serve(async (req) => {
 
     for (const row of rows) {
       const canonicalBase = getCanonicalBase(row.style_number, row.brand);
-      const brandSlug = row.brand.toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const groupKey = `${brandSlug}::${canonicalBase}`;
+      const groupKey = `${canonicalBrandSlug(row.brand)}::${canonicalBase}`;
 
       if (productMap.has(groupKey)) {
         // Merge distributor info into existing card
