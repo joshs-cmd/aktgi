@@ -8,12 +8,14 @@ interface ProductHeaderProps {
   product: StandardProduct;
   selectedColor?: string | null;
   onColorSelect?: (colorName: string) => void;
+  availableColors?: StandardProduct["colors"];
 }
 
 export function ProductHeader({
   product,
   selectedColor,
   onColorSelect,
+  availableColors,
 }: ProductHeaderProps) {
   // Get the selected color's image, fallback to product image
   const displayImage = useMemo(() => {
@@ -25,6 +27,7 @@ export function ProductHeader({
   }, [product, selectedColor]);
 
   const hasColors = product.colors && product.colors.length > 0;
+  const colorsToShow = availableColors ?? product.colors;
 
   return (
     <div className="flex flex-col gap-4 rounded-lg border bg-card p-3 sm:p-4">
@@ -57,10 +60,10 @@ export function ProductHeader({
       </div>
 
       {/* Color Selector */}
-      {hasColors && selectedColor && onColorSelect && (
+      {colorsToShow && colorsToShow.length > 0 && selectedColor && onColorSelect && (
         <div className="border-t pt-4">
           <ColorSelector
-            colors={product.colors!}
+            colors={colorsToShow}
             selectedColor={selectedColor}
             onColorSelect={onColorSelect}
           />
