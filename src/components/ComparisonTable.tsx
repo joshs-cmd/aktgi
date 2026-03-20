@@ -19,21 +19,43 @@ interface ComparisonTableProps {
   showPrices?: boolean;
 }
 
+function normalizeColorName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\bhthr\b/g, "heather")
+    .replace(/\bwht\b/g, "white")
+    .replace(/\bblk\b/g, "black")
+    .replace(/\bnvy\b/g, "navy")
+    .replace(/\bsleeves?\b/g, "")
+    .replace(/\bbody\b/g, "")
+    .replace(/\bpremium\b/g, "")
+    .replace(/[\/\-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
+function colorMatchScore(a: string, b: string): number {
+  const normA = normalizeColorName(a);
+  const normB = normalizeColorName(b);
+  if (normA === normB) return 3;
+  const primaryA = normA.split(" ")[0];
+  const primaryB = normB.split(" ")[0];
+  if (primaryA === primaryB && primaryA.length > 3) return 2;
+  if (normA.includes(primaryB) || normB.includes(primaryA)) return 1;
+  return 0;
+}
 
 export function ComparisonTable({ results, selectedColor, showPrices = true }: ComparisonTableProps) {
-  // Safely get sizes for a result based on selected color — stable, memoized version.
-  // Uses case-insensitive name matching so distributors that return ALL-CAPS color names
-  // (e.g. ACC: "ANTIQUE CHERRY RED") still match a selectedColor set from another
-  // distributor that uses title case (e.g. SanMar: "Antique Cherry Red").
   const getSizesForResult = useMemo(() => {
-    const selectedLower = selectedColor?.toLowerCase() ?? null;
     return (result: DistributorResult): StandardSize[] => {
       if (!result?.product) return [];
       const product = result.product;
       if (Array.isArray(product.colors) && product.colors.length > 0) {
-        if (selectedLower) {
-          const color = product.colors.find((c) => c?.name?.toLowerCase() === selectedLower);
+        if (selectedColor) {
+          const color = product.colors
+            .map(c => ({ c, score: colorMatchScore(c?.name ?? "", selectedColor) }))
+            .filter(({ score }) => score > 0)
+            .sort((a, b) => b.score - a.score)[0]?.c;
           if (color?.sizes) return color.sizes;
         }
         return product.colors[0]?.sizes || [];
