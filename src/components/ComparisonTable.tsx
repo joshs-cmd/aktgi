@@ -114,7 +114,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
             <TableHead className="w-[140px] sm:w-[200px] sticky left-0 bg-card z-10">Distributor</TableHead>
             <TableHead className="w-[80px] sm:w-[100px]">Status</TableHead>
             {skeletonSizeCols.map((size) => (
-              <TableHead key={size} className="text-center w-[80px] sm:w-[100px]">
+              <TableHead key={size} className="text-center w-[80px]">
                 {size}
               </TableHead>
             ))}
