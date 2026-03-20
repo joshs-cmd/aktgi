@@ -8,6 +8,7 @@ import SearchGallery from "./pages/SearchGallery";
 import ProductDetail from "./pages/ProductDetail";
 import DataManagement from "./pages/DataManagement";
 import AdminTools from "./pages/AdminTools";
+import AliasManager from "./pages/AliasManager";
 import NotFound from "./pages/NotFound";
 import { Gatekeeper } from "@/components/Gatekeeper";
 import { UserRole } from "@/types/auth";
