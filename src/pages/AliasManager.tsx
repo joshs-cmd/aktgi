@@ -63,13 +63,6 @@ export default function AliasManager({
   const [saving, setSaving] = useState(false);
   const [redirected, setRedirected] = useState(false);
 
-  if (userRole !== "admin" && !redirected) {
-    setRedirected(true);
-    navigate("/");
-    return null;
-  }
-  if (userRole !== "admin") return null;
-
   const fetchAliases = async () => {
     setLoading(true);
     const { data, error } = await supabase
@@ -85,8 +78,15 @@ export default function AliasManager({
   };
 
   useEffect(() => {
-    fetchAliases();
-  }, []);
+    if (userRole === "admin") fetchAliases();
+  }, [userRole]);
+
+  if (userRole !== "admin" && !redirected) {
+    setRedirected(true);
+    navigate("/");
+    return null;
+  }
+  if (userRole !== "admin") return null;
 
   const openAdd = () => {
     setEditingAlias(null);
