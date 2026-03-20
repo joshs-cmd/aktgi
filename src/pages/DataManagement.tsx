@@ -537,7 +537,6 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
                             {sku.display_name && <span className="text-muted-foreground"> — {sku.display_name}</span>}
                           </td>
                           <td className="px-4 py-2 text-center">
-                          <td className="px-4 py-2 text-center">
                             {isAdmin ? (
                               <Switch
                                 checked={sku.active}
