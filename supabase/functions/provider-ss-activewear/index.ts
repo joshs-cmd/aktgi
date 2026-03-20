@@ -468,7 +468,7 @@ serve(async (req) => {
             }
 
             const scoredStyles = candidateStyles
-              .map((s) => ({ style: s, score: scoreStyleMatch(s, variant) }))
+              .map((s) => ({ style: s, score: scoreStyleMatch(s, variant, brand ?? undefined) }))
               .sort((a, b) => b.score - a.score);
             
             const bestMatch = scoredStyles[0];

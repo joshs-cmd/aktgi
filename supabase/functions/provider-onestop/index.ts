@@ -531,11 +531,19 @@ serve(async (req) => {
       );
     }
 
-    // FIX 4: Build headers only — NO shared signal. Each fetch gets its own AbortSignal.timeout().
-    const fetchHeaders: Record<string, string> = {
-      "Authorization": `Token ${apiToken}`,
-      "Accept": "application/json; version=1.0",
-    };
+    // Load alias map from database
+    const supabaseClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    const { data: aliasRows } = await supabaseClient
+      .from("onestop_aliases")
+      .select("query, internal_code");
+    const ONESTOP_ALIAS_MAP: Record<string, string> = {};
+    for (const row of aliasRows ?? []) {
+      ONESTOP_ALIAS_MAP[row.query.toUpperCase()] = row.internal_code;
+    }
+    console.log(`[provider-onestop] Loaded ${Object.keys(ONESTOP_ALIAS_MAP).length} aliases from DB`);
 
     const fetchWithTimeout = (url: string, timeoutMs = 25_000): Promise<Response> =>
       fetch(url, { headers: fetchHeaders, signal: AbortSignal.timeout(timeoutMs) });
