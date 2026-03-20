@@ -526,8 +526,17 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
                         <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Style</th>
                         <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Brand / Name</th>
                         <th className="px-4 py-2 text-center font-medium text-muted-foreground text-xs">Active</th>
-...
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredSkus.map((sku) => (
+                        <tr key={sku.id} className="border-b hover:bg-muted/20 transition-colors">
+                          <td className="px-4 py-2 font-mono text-xs font-medium">{sku.style_number}</td>
+                          <td className="px-4 py-2 text-xs">
+                            <span className="font-medium">{sku.brand}</span>
+                            {sku.display_name && <span className="text-muted-foreground"> — {sku.display_name}</span>}
                           </td>
+                          <td className="px-4 py-2 text-center">
                           <td className="px-4 py-2 text-center">
                             {isAdmin ? (
                               <Switch
