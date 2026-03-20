@@ -27,6 +27,7 @@ export function ProductHeader({
   }, [product, selectedColor]);
 
   const hasColors = product.colors && product.colors.length > 0;
+  const colorsToShow = availableColors ?? product.colors;
 
   return (
     <div className="flex flex-col gap-4 rounded-lg border bg-card p-3 sm:p-4">
