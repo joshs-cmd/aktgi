@@ -18,7 +18,7 @@ export function useSourcingEngine() {
 
   const search = useCallback(async (
     query: string,
-    options?: { distributorSkuMap?: Record<string, string>; brand?: string }
+    options?: { distributorSkuMap?: Record<string, string>; brand?: string; force_refresh?: boolean }
   ) => {
     // Cancel any in-flight requests
     abortRef.current?.abort();
