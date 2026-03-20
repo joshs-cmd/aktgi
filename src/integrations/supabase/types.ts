@@ -150,6 +150,30 @@ export type Database = {
           },
         ]
       }
+      onestop_aliases: {
+        Row: {
+          created_at: string | null
+          id: string
+          internal_code: string
+          notes: string | null
+          query: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          internal_code: string
+          notes?: string | null
+          query: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          internal_code?: string
+          notes?: string | null
+          query?: string
+        }
+        Relationships: []
+      }
       price_history: {
         Row: {
           distributor_id: string
