@@ -537,12 +537,7 @@ serve(async (req) => {
 
     console.log(`[provider-onestop] Catalog returned ${styleEntries.length} styles`);
 
-    if (styleEntries.length === 0) {
-      return new Response(
-        JSON.stringify({ product: null }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // Note: we don't return early here for 0 results — alias-resolved paths handle it below
 
     // -------- Multi-step style resolution --------
     const queryUpper = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
