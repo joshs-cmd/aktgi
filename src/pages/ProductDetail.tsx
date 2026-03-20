@@ -135,16 +135,30 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
 
       <main className="container mx-auto px-4 py-4 sm:py-8">
         <div className="flex flex-col gap-8">
-          {/* Back button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="self-start -ml-2"
-            onClick={handleBackToResults}
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Results
-          </Button>
+          {/* Back button + Refresh */}
+          <div className="flex items-center justify-between -ml-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              onClick={handleBackToResults}
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Results
+            </Button>
+            {response && !isLoading && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="gap-1.5"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+                {isRefreshing ? "Refreshing…" : "Refresh"}
+              </Button>
+            )}
+          </div>
 
           {/* Loading State */}
           {isLoading && !response && (
