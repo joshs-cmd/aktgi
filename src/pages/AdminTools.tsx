@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { HardDrive, Eye } from "lucide-react";
+import { HardDrive, Eye, List } from "lucide-react";
 import { UserRole } from "@/types/auth";
 import { AdminBanner } from "@/components/AdminBanner";
 import { UserMenu } from "@/components/UserMenu";
