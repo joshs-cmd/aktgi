@@ -174,7 +174,7 @@ const PRIORITY_BRANDS = [
 /**
  * Score a style match for best result selection - prioritizes industry brands
  */
-function scoreStyleMatch(style: SSStyle, query: string): number {
+function scoreStyleMatch(style: SSStyle, query: string, originalBrand?: string): number {
   let score = 0;
   const queryLower = query.toLowerCase();
   const styleName = (style.styleName || "").toLowerCase();
@@ -189,6 +189,14 @@ function scoreStyleMatch(style: SSStyle, query: string): number {
   );
   if (brandIdx !== -1) {
     score += 500 - (brandIdx * 10); // Gildan gets 500, Port & Co gets 490, etc.
+  }
+
+  // Original brand match bonus
+  if (originalBrand) {
+    const origBrandLower = originalBrand.toLowerCase();
+    if (brandName.includes(origBrandLower) || origBrandLower.includes(brandName.split(" ")[0])) {
+      score += 200;
+    }
   }
   
   // Exact matches get high score

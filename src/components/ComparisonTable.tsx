@@ -217,7 +217,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                 const hasCap = hasSSCap || hasSanMarCap;
 
                 return (
-                  <TableCell key={sizeCode} className="text-center">
+                  <TableCell key={sizeCode} className="text-center w-[80px]">
                     {total > 0 ? (
                       <span className="tabular-nums font-semibold">
                         {total.toLocaleString()}{hasCap ? "+" : ""}
