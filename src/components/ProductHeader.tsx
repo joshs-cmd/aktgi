@@ -15,6 +15,7 @@ export function ProductHeader({
   product,
   selectedColor,
   onColorSelect,
+  availableColors,
 }: ProductHeaderProps) {
   // Get the selected color's image, fallback to product image
   const displayImage = useMemo(() => {
