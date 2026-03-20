@@ -73,11 +73,18 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
     return successResults[0].product ?? null;
   }, [response?.results, distributorSkuMap]);
 
-  // Available colors
+  // Available colors — use the distributor with the most colors
   const availableColors = useMemo(() => {
-    if (!firstProduct?.colors || firstProduct.colors.length === 0) return [];
-    return firstProduct.colors;
-  }, [firstProduct]);
+    if (!response?.results) return [];
+    const successResults = response.results.filter(
+      (r) => r.status === "success" && r.product?.colors?.length
+    );
+    if (successResults.length === 0) return [];
+    const richest = successResults.reduce((best, r) =>
+      (r.product!.colors!.length > best.product!.colors!.length) ? r : best
+    );
+    return richest.product!.colors!;
+  }, [response?.results]);
 
   // Auto-select first color
   useMemo(() => {
