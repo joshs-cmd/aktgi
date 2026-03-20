@@ -25,6 +25,7 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
   const navigate = useNavigate();
   const { isLoading, response, error, search } = useSourcingEngine();
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const hasSearched = useRef(false);
 
   const styleParam = searchParams.get("style") || "";
