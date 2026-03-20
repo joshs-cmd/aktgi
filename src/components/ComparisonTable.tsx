@@ -29,6 +29,7 @@ function normalizeColorName(name: string): string {
   n = n.replace(/whte/g, "white");        // not word-bounded — catches "heatherwhte"
   n = n.replace(/\bblk\b/g, "black");
   n = n.replace(/\bnvy\b/g, "navy");
+  n = n.replace(/\bvtg\b/g, "vintage");
   // Insert spaces before known color words that are concatenated (e.g. "HeatherWhite" → "Heather White")
   n = n.replace(/(?<=[a-z])(heather|white|black|vintage|navy|pink|purple|royal|red|blue|green|grey|gray)/g, " $1");
   // Expand newly standalone abbreviations
