@@ -502,6 +502,28 @@ serve(async (req) => {
     }
     console.log(`[provider-onestop] Loaded ${Object.keys(ONESTOP_ALIAS_MAP).length} aliases from DB`);
 
+    // Cache lookup
+    const forceRefresh = force_refresh === true;
+    const cacheKey = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    if (!forceRefresh) {
+      const { data: cached } = await supabaseClient
+        .from("product_cache")
+        .select("response_data")
+        .eq("distributor", "onestop")
+        .eq("style_number", cacheKey)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (cached?.response_data) {
+        console.log(`[provider-onestop] Cache hit for ${cacheKey}`);
+        return new Response(
+          JSON.stringify(cached.response_data),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // FIX 4: Build headers only — NO shared signal. Each fetch gets its own AbortSignal.timeout().
     const fetchHeaders: Record<string, string> = {
       "Authorization": `Token ${apiToken}`,

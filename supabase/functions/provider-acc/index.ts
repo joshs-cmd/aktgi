@@ -836,6 +836,7 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const query: string = (body.query || "").trim();
+    const forceRefresh = body.force_refresh === true;
 
     if (!query) {
       return new Response(
