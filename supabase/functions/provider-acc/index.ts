@@ -856,6 +856,31 @@ serve(async (req) => {
       );
     }
 
+    // Cache lookup — ACC uses its own supabase client (already imported)
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    const cacheKey = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    if (!forceRefresh) {
+      const { data: cached } = await supabase
+        .from("product_cache")
+        .select("response_data")
+        .eq("distributor", "acc")
+        .eq("style_number", cacheKey)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (cached?.response_data) {
+        console.log(`[provider-acc] Cache hit for ${cacheKey}`);
+        return new Response(
+          JSON.stringify(cached.response_data),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     // Re-prefix: the sourcing engine sends the canonical (stripped) style number.
     // ACC's PromoStandards API expects the original prefixed product ID (e.g. "BC3001",
     // "GL5000", "NL3600"). Use the brand from the request body to reconstruct it.
