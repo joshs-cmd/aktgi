@@ -6,24 +6,15 @@ import { useMemo } from "react";
 
 interface ProductHeaderProps {
   product: StandardProduct;
-  query: string;
-  searchedAt: string;
   selectedColor?: string | null;
   onColorSelect?: (colorName: string) => void;
 }
 
 export function ProductHeader({
   product,
-  query,
-  searchedAt,
   selectedColor,
   onColorSelect,
 }: ProductHeaderProps) {
-  const formattedTime = new Date(searchedAt).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
   // Get the selected color's image, fallback to product image
   const displayImage = useMemo(() => {
     if (product.colors && selectedColor) {
@@ -68,15 +59,6 @@ export function ProductHeader({
               </>
             )}
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Searched for "{query}" at {formattedTime}
-          </p>
-          {/* DEBUG: Show raw PromoStandards response */}
-          {product.description && (
-            <pre className="mt-2 max-h-32 overflow-auto rounded bg-muted p-2 text-[10px] text-muted-foreground whitespace-pre-wrap break-all hidden sm:block">
-              {product.description}
-            </pre>
-          )}
         </div>
       </div>
 
