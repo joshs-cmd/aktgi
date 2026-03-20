@@ -69,6 +69,8 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
             .filter(({ score }) => score > 0)
             .sort((a, b) => b.score - a.score)[0]?.c;
           if (color?.sizes) return color.sizes;
+          // No match found for this color — return empty so table shows --
+          return [];
         }
         return product.colors[0]?.sizes || [];
       }
