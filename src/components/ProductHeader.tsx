@@ -8,6 +8,7 @@ interface ProductHeaderProps {
   product: StandardProduct;
   selectedColor?: string | null;
   onColorSelect?: (colorName: string) => void;
+  availableColors?: StandardProduct["colors"];
 }
 
 export function ProductHeader({

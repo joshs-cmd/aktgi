@@ -191,6 +191,7 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                   product={firstProduct}
                   selectedColor={selectedColor}
                   onColorSelect={setSelectedColor}
+                  availableColors={availableColors}
                 />
               ) : anyLoading ? (
                 <div className="space-y-3">
