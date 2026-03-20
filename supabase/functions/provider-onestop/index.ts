@@ -712,7 +712,7 @@ serve(async (req) => {
     const totalPricedSizes = product.colors.reduce((sum, c) => sum + c.sizes.filter(s => s.price > 0).length, 0);
     const totalSizes = product.colors.reduce((sum, c) => sum + c.sizes.length, 0);
     console.log(`[provider-onestop] Returning: ${product.brand} ${product.styleNumber} — ${product.colors.length} colors, ${totalSizes} size rows, ${totalPricedSizes} priced`);
-    console.log(`[provider-onestop] All colors: ${product.colors.map(c => c.name).join(" | ")}`);
+    
 
     return new Response(
       JSON.stringify({ product }),
