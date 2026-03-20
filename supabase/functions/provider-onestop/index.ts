@@ -468,7 +468,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { query, brand } = body;
+    const { query, brand, force_refresh } = body;
 
     if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
@@ -501,6 +501,28 @@ serve(async (req) => {
       ONESTOP_ALIAS_MAP[row.query.toUpperCase()] = row.internal_code;
     }
     console.log(`[provider-onestop] Loaded ${Object.keys(ONESTOP_ALIAS_MAP).length} aliases from DB`);
+
+    // Cache lookup
+    const forceRefresh = force_refresh === true;
+    const cacheKey = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    if (!forceRefresh) {
+      const { data: cached } = await supabaseClient
+        .from("product_cache")
+        .select("response_data")
+        .eq("distributor", "onestop")
+        .eq("style_number", cacheKey)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (cached?.response_data) {
+        console.log(`[provider-onestop] Cache hit for ${cacheKey}`);
+        return new Response(
+          JSON.stringify(cached.response_data),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     // FIX 4: Build headers only — NO shared signal. Each fetch gets its own AbortSignal.timeout().
     const fetchHeaders: Record<string, string> = {
@@ -712,7 +734,27 @@ serve(async (req) => {
     const totalPricedSizes = product.colors.reduce((sum, c) => sum + c.sizes.filter(s => s.price > 0).length, 0);
     const totalSizes = product.colors.reduce((sum, c) => sum + c.sizes.length, 0);
     console.log(`[provider-onestop] Returning: ${product.brand} ${product.styleNumber} — ${product.colors.length} colors, ${totalSizes} size rows, ${totalPricedSizes} priced`);
-    
+
+    // Write to cache
+    try {
+      const { data: ttlRow } = await supabaseClient
+        .from("cache_settings")
+        .select("ttl_hours")
+        .eq("distributor", "onestop")
+        .maybeSingle();
+      const ttlHours = ttlRow?.ttl_hours ?? 14;
+      const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+      await supabaseClient.from("product_cache").upsert({
+        distributor: "onestop",
+        style_number: cacheKey,
+        response_data: { product },
+        cached_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      }, { onConflict: "distributor,style_number" });
+      console.log(`[provider-onestop] Cached ${cacheKey} (TTL: ${ttlHours}h)`);
+    } catch (cacheErr) {
+      console.warn(`[provider-onestop] Cache write failed:`, cacheErr);
+    }
 
     return new Response(
       JSON.stringify({ product }),

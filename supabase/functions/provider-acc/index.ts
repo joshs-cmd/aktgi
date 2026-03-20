@@ -836,6 +836,7 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const query: string = (body.query || "").trim();
+    const forceRefresh = body.force_refresh === true;
 
     if (!query) {
       return new Response(
@@ -853,6 +854,31 @@ serve(async (req) => {
         JSON.stringify({ product: null, error: "Provider credentials not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // Cache lookup — ACC uses its own supabase client (already imported)
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    const cacheKey = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    if (!forceRefresh) {
+      const { data: cached } = await supabase
+        .from("product_cache")
+        .select("response_data")
+        .eq("distributor", "acc")
+        .eq("style_number", cacheKey)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (cached?.response_data) {
+        console.log(`[provider-acc] Cache hit for ${cacheKey}`);
+        return new Response(
+          JSON.stringify(cached.response_data),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     // Re-prefix: the sourcing engine sends the canonical (stripped) style number.
@@ -950,6 +976,27 @@ serve(async (req) => {
       `[provider-acc] Returning product: ${product.styleNumber} "${product.name}" ` +
       `(${product.colors.length} colors)`
     );
+
+    // Write to cache
+    try {
+      const { data: ttlRow } = await supabase
+        .from("cache_settings")
+        .select("ttl_hours")
+        .eq("distributor", "acc")
+        .maybeSingle();
+      const ttlHours = ttlRow?.ttl_hours ?? 24;
+      const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+      await supabase.from("product_cache").upsert({
+        distributor: "acc",
+        style_number: cacheKey,
+        response_data: { product },
+        cached_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      }, { onConflict: "distributor,style_number" });
+      console.log(`[provider-acc] Cached ${cacheKey} (TTL: ${ttlHours}h)`);
+    } catch (cacheErr) {
+      console.warn(`[provider-acc] Cache write failed:`, cacheErr);
+    }
 
     return new Response(
       JSON.stringify({ product }),

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -347,7 +348,7 @@ serve(async (req) => {
   }
 
   try {
-    const { query, distributorId, brand } = await req.json();
+    const { query, distributorId, brand, force_refresh } = await req.json();
     const brandFilter = brand ? brand.toLowerCase().trim() : null;
 
     if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
@@ -358,6 +359,32 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
+    }
+
+    // Cache lookup
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    const forceRefresh = force_refresh === true;
+    const cacheKey = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    if (!forceRefresh) {
+      const { data: cached } = await supabase
+        .from("product_cache")
+        .select("response_data")
+        .eq("distributor", "ss-activewear")
+        .eq("style_number", cacheKey)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (cached?.response_data) {
+        console.log(`[provider-ss-activewear] Cache hit for ${cacheKey}`);
+        return new Response(
+          JSON.stringify(cached.response_data),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     console.log(`[provider-ss-activewear] Searching for: ${query}`);
@@ -528,7 +555,27 @@ serve(async (req) => {
     // Fuzzy brand checks were causing valid items (e.g. "LAT" vs "LAT Apparel") to be rejected.
 
     console.log(`[provider-ss-activewear] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
-    
+
+    // Write to cache
+    try {
+      const { data: ttlRow } = await supabase
+        .from("cache_settings")
+        .select("ttl_hours")
+        .eq("distributor", "ss-activewear")
+        .maybeSingle();
+      const ttlHours = ttlRow?.ttl_hours ?? 14;
+      const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+      await supabase.from("product_cache").upsert({
+        distributor: "ss-activewear",
+        style_number: cacheKey,
+        response_data: { product: standardProduct },
+        cached_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      }, { onConflict: "distributor,style_number" });
+      console.log(`[provider-ss-activewear] Cached ${cacheKey} (TTL: ${ttlHours}h)`);
+    } catch (cacheErr) {
+      console.warn(`[provider-ss-activewear] Cache write failed:`, cacheErr);
+    }
 
     return new Response(
       JSON.stringify({ product: standardProduct }),

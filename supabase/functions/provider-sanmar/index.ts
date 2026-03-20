@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { XMLParser } from "https://esm.sh/fast-xml-parser@4.3.2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -941,13 +942,39 @@ serve(async (req) => {
   }
 
   try {
-    const { query, distributorId } = await req.json();
+    const { query, distributorId, force_refresh } = await req.json();
 
     if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
       return new Response(
         JSON.stringify({ error: "Invalid query format" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // Cache lookup
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    const forceRefresh = force_refresh === true;
+    const cacheKey = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    if (!forceRefresh) {
+      const { data: cached } = await supabase
+        .from("product_cache")
+        .select("response_data")
+        .eq("distributor", "sanmar")
+        .eq("style_number", cacheKey)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (cached?.response_data) {
+        console.log(`[provider-sanmar] Cache hit for ${cacheKey}`);
+        return new Response(
+          JSON.stringify(cached.response_data),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     console.log(`[provider-sanmar] Searching for: ${query}`);
@@ -1117,6 +1144,27 @@ serve(async (req) => {
     // PromoStandards pricing successfully integrated — debug injection removed
 
     console.log(`[provider-sanmar] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
+
+    // Write to cache
+    try {
+      const { data: ttlRow } = await supabase
+        .from("cache_settings")
+        .select("ttl_hours")
+        .eq("distributor", "sanmar")
+        .maybeSingle();
+      const ttlHours = ttlRow?.ttl_hours ?? 14;
+      const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+      await supabase.from("product_cache").upsert({
+        distributor: "sanmar",
+        style_number: cacheKey,
+        response_data: { product: standardProduct },
+        cached_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      }, { onConflict: "distributor,style_number" });
+      console.log(`[provider-sanmar] Cached ${cacheKey} (TTL: ${ttlHours}h)`);
+    } catch (cacheErr) {
+      console.warn(`[provider-sanmar] Cache write failed:`, cacheErr);
+    }
 
     return new Response(
       JSON.stringify({ product: standardProduct }),
