@@ -20,18 +20,29 @@ interface ComparisonTableProps {
 }
 
 function normalizeColorName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/\bhthr\b/g, "heather")
-    .replace(/\bwht\b/g, "white")
-    .replace(/\bblk\b/g, "black")
-    .replace(/\bnvy\b/g, "navy")
-    .replace(/\bsleeves?\b/g, "")
-    .replace(/\bbody\b/g, "")
-    .replace(/\bpremium\b/g, "")
-    .replace(/[\/\-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  let n = name.toLowerCase();
+  // Fix typos
+  n = n.replace(/\bheahter\b/g, "heather");
+  // Expand word-bounded abbreviations
+  n = n.replace(/\bhthr\b/g, "heather");
+  n = n.replace(/\bwht\b/g, "white");
+  n = n.replace(/whte/g, "white");        // not word-bounded — catches "heatherwhte"
+  n = n.replace(/\bblk\b/g, "black");
+  n = n.replace(/\bnvy\b/g, "navy");
+  // Insert spaces before known color words that are concatenated (e.g. "HeatherWhite" → "Heather White")
+  n = n.replace(/(?<=[a-z])(heather|white|black|vintage|navy|pink|purple|royal|red|blue|green|grey|gray)/g, " $1");
+  // Expand newly standalone abbreviations
+  n = n.replace(/\bvint\b/g, "vintage");
+  n = n.replace(/\bheath\b/g, "heather");
+  n = n.replace(/\bprem\b/g, "");
+  // Strip qualifiers
+  n = n.replace(/\bsleeves?\b/g, "");
+  n = n.replace(/\bbody\b/g, "");
+  n = n.replace(/\bpremium\b/g, "");
+  // Normalize separators and whitespace
+  n = n.replace(/[\/\-]/g, " ");
+  n = n.replace(/\s+/g, " ");
+  return n.trim();
 }
 
 function colorMatchScore(a: string, b: string): number {
