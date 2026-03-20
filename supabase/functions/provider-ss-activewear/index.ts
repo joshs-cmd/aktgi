@@ -528,6 +528,7 @@ serve(async (req) => {
     // Fuzzy brand checks were causing valid items (e.g. "LAT" vs "LAT Apparel") to be rejected.
 
     console.log(`[provider-ss-activewear] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
+    console.log(`[provider-ss-activewear] All colors: ${standardProduct.colors.map(c => c.name).join(" | ")}`);
 
     return new Response(
       JSON.stringify({ product: standardProduct }),
