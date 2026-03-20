@@ -81,14 +81,22 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
     return successResults[0].product ?? null;
   }, [response?.results, distributorSkuMap]);
 
-  // Available colors — use the distributor with the most colors
+  // Available colors — prefer distributors with swatch/hex data, then most colors
   const availableColors = useMemo(() => {
     if (!response?.results) return [];
     const successResults = response.results.filter(
       (r) => r.status === "success" && r.product?.colors?.length
     );
     if (successResults.length === 0) return [];
-    const richest = successResults.reduce((best, r) =>
+
+    // Prefer distributors whose colors have swatch/hex data
+    const withSwatches = successResults.filter((r) =>
+      r.product!.colors!.some((c) => c.hexCode || c.swatchUrl)
+    );
+
+    const pool = withSwatches.length > 0 ? withSwatches : successResults;
+
+    const richest = pool.reduce((best, r) =>
       (r.product!.colors!.length > best.product!.colors!.length) ? r : best
     );
     return richest.product!.colors!;
