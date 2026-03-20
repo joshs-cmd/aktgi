@@ -977,6 +977,27 @@ serve(async (req) => {
       `(${product.colors.length} colors)`
     );
 
+    // Write to cache
+    try {
+      const { data: ttlRow } = await supabase
+        .from("cache_settings")
+        .select("ttl_hours")
+        .eq("distributor", "acc")
+        .maybeSingle();
+      const ttlHours = ttlRow?.ttl_hours ?? 24;
+      const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+      await supabase.from("product_cache").upsert({
+        distributor: "acc",
+        style_number: cacheKey,
+        response_data: { product },
+        cached_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      }, { onConflict: "distributor,style_number" });
+      console.log(`[provider-acc] Cached ${cacheKey} (TTL: ${ttlHours}h)`);
+    } catch (cacheErr) {
+      console.warn(`[provider-acc] Cache write failed:`, cacheErr);
+    }
+
     return new Response(
       JSON.stringify({ product }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

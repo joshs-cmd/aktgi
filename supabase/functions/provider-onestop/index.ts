@@ -734,7 +734,27 @@ serve(async (req) => {
     const totalPricedSizes = product.colors.reduce((sum, c) => sum + c.sizes.filter(s => s.price > 0).length, 0);
     const totalSizes = product.colors.reduce((sum, c) => sum + c.sizes.length, 0);
     console.log(`[provider-onestop] Returning: ${product.brand} ${product.styleNumber} — ${product.colors.length} colors, ${totalSizes} size rows, ${totalPricedSizes} priced`);
-    
+
+    // Write to cache
+    try {
+      const { data: ttlRow } = await supabaseClient
+        .from("cache_settings")
+        .select("ttl_hours")
+        .eq("distributor", "onestop")
+        .maybeSingle();
+      const ttlHours = ttlRow?.ttl_hours ?? 14;
+      const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+      await supabaseClient.from("product_cache").upsert({
+        distributor: "onestop",
+        style_number: cacheKey,
+        response_data: { product },
+        cached_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      }, { onConflict: "distributor,style_number" });
+      console.log(`[provider-onestop] Cached ${cacheKey} (TTL: ${ttlHours}h)`);
+    } catch (cacheErr) {
+      console.warn(`[provider-onestop] Cache write failed:`, cacheErr);
+    }
 
     return new Response(
       JSON.stringify({ product }),
