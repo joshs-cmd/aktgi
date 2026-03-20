@@ -348,7 +348,7 @@ serve(async (req) => {
   }
 
   try {
-    const { query, distributorId, brand } = await req.json();
+    const { query, distributorId, brand, force_refresh } = await req.json();
     const brandFilter = brand ? brand.toLowerCase().trim() : null;
 
     if (!query || typeof query !== "string" || query.length > 100 || !/^[a-zA-Z0-9\s\-\+\&\.]+$/.test(query)) {
@@ -359,6 +359,32 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
       );
+    }
+
+    // Cache lookup
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    const forceRefresh = force_refresh === true;
+    const cacheKey = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+    if (!forceRefresh) {
+      const { data: cached } = await supabase
+        .from("product_cache")
+        .select("response_data")
+        .eq("distributor", "ss-activewear")
+        .eq("style_number", cacheKey)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+
+      if (cached?.response_data) {
+        console.log(`[provider-ss-activewear] Cache hit for ${cacheKey}`);
+        return new Response(
+          JSON.stringify(cached.response_data),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     console.log(`[provider-ss-activewear] Searching for: ${query}`);
