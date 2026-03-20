@@ -408,6 +408,19 @@ serve(async (req) => {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data) && data.length > 0) {
+          // Brand validation: skip if brand is provided and doesn't match
+          if (brand) {
+            const brandLower = brand.toLowerCase();
+            const brandMatches = data.some((p: SSProduct) =>
+              (p.brandName || "").toLowerCase().includes(brandLower) ||
+              brandLower.includes((p.brandName || "").toLowerCase().split(" ")[0])
+            );
+            if (!brandMatches) {
+              console.log(`[provider-ss-activewear] Brand mismatch for variant ${variant} — expected ${brand}, got ${data[0]?.brandName ?? "unknown"}, skipping`);
+              await res.text().catch(() => {});
+              continue;
+            }
+          }
           products = data;
           matchedVariant = variant;
           console.log(`[provider-ss-activewear] Found ${products.length} SKUs with variant: ${variant}`);
