@@ -108,7 +108,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
 
   return (
     <div className="rounded-lg border bg-card overflow-x-auto -mx-4 sm:mx-0">
-      <Table className="min-w-[600px]">
+      <Table className="min-w-[600px] table-fixed">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead className="w-[140px] sm:w-[200px] sticky left-0 bg-card z-10">Distributor</TableHead>
