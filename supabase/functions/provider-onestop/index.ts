@@ -537,12 +537,7 @@ serve(async (req) => {
 
     console.log(`[provider-onestop] Catalog returned ${styleEntries.length} styles`);
 
-    if (styleEntries.length === 0) {
-      return new Response(
-        JSON.stringify({ product: null }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // Note: we don't return early here for 0 results — alias-resolved paths handle it below
 
     // -------- Multi-step style resolution --------
     const queryUpper = query.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -553,6 +548,40 @@ serve(async (req) => {
 
     if (resolvedStyleCode) {
       console.log(`[provider-onestop] Resolved "${query}" to internal SKU "${resolvedStyleCode}" via ${resolutionMethod}`);
+    }
+
+    // If alias resolved but catalog returned 0 results, skip straight to inventory fetch
+    const aliasResolved = resolutionMethod === "alias-map" && resolvedStyleCode !== null && !styleEntries.find(([k]) => k === resolvedStyleCode);
+    if (aliasResolved && styleEntries.length === 0) {
+      console.log(`[provider-onestop] Alias-resolved style "${resolvedStyleCode}" — catalog empty, fetching inventory directly`);
+      const directInvUrl = `${ONESTOP_API_BASE}/items/?style=${encodeURIComponent(resolvedStyleCode!)}`;
+      console.log(`[provider-onestop] Fetching inventory directly for alias: ${directInvUrl}`);
+      const invRes = await fetchWithTimeout(directInvUrl, 20_000);
+      if (!invRes.ok) {
+        console.error(`[provider-onestop] Direct inventory fetch failed: ${invRes.status}`);
+        return new Response(JSON.stringify({ product: null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const rawInvData = await invRes.json();
+      const directItems: OneStopItem[] = Array.isArray(rawInvData.results) ? rawInvData.results : [];
+      if (directItems.length === 0) {
+        return new Response(JSON.stringify({ product: null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      const repSkus = prioritizeSkusForPricing(directItems, MAX_PRICING_SKUS);
+      const skuPriceMap = await fetchPricingBySku(repSkus, fetchHeaders, directItems);
+      const directProduct = aggregateItemsWithPricing(directItems, skuPriceMap, 0);
+      if (!directProduct) {
+        return new Response(JSON.stringify({ product: null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+      directProduct.styleNumber = directProduct.styleNumber || resolvedStyleCode!;
+      return new Response(JSON.stringify({ product: directProduct }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // styleEntries is empty and no alias — nothing to return
+    if (styleEntries.length === 0) {
+      return new Response(
+        JSON.stringify({ product: null }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // Step B: try exact match from search results (mill_style_code or OneStop code)
@@ -580,15 +609,13 @@ serve(async (req) => {
     // Now look up the entry for the resolved style code — check alias-resolved first, then fall back
     let bestEntry = styleEntries.find(([k]) => k === resolvedStyleCode) ?? styleEntries[0];
 
-    // If the alias pointed to a code NOT in the search results, we need to do a direct style fetch
-    // by re-using the resolvedStyleCode directly in the inventory call (skip styleEntries lookup)
-    const aliasResolved = resolutionMethod === "alias-map" && !styleEntries.find(([k]) => k === resolvedStyleCode);
+    // If the alias pointed to a code NOT in the search results, use first entry for metadata
     if (aliasResolved) {
       console.log(`[provider-onestop] Alias-resolved style "${resolvedStyleCode}" not in search results — will fetch directly`);
-      bestEntry = styleEntries[0]; // use first for metadata, override style code below
+      bestEntry = styleEntries[0];
     }
 
-    const bestStyleCode = aliasResolved ? resolvedStyleCode : bestEntry[0];
+    const bestStyleCode = aliasResolved ? resolvedStyleCode! : bestEntry[0];
     const bestInfo = bestEntry[1] as Record<string, unknown>;
     console.log(`[provider-onestop] Using internal style: ${bestStyleCode} (${bestInfo.web_name ?? "—"})`);
     // -------- End resolution --------

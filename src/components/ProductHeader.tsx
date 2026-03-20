@@ -52,12 +52,6 @@ export function ProductHeader({
           </div>
           <div className="mt-1 flex items-center gap-3 text-xs sm:text-sm text-muted-foreground">
             <span>{product.brand}</span>
-            {product.category && (
-              <>
-                <span>•</span>
-                <span>{product.category}</span>
-              </>
-            )}
           </div>
         </div>
       </div>
