@@ -145,6 +145,7 @@ const App = () => {
             <Route path="/product" element={<ProductDetail {...sharedProps} />} />
             <Route path="/admin/data-management" element={<DataManagement userRole={effectiveRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
             <Route path="/admin/tools" element={<AdminTools userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} salesViewMode={salesViewMode} setSalesViewMode={handleSetSalesViewMode} />} />
+            <Route path="/admin/aliases" element={<AliasManager userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} salesViewMode={salesViewMode} setSalesViewMode={handleSetSalesViewMode} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
