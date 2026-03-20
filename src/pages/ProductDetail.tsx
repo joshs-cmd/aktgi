@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { ProductHeader } from "@/components/ProductHeader";
 import { useSourcingEngine } from "@/hooks/useSourcingEngine";
-import { AlertCircle, Search, ArrowLeft } from "lucide-react";
+import { AlertCircle, Search, ArrowLeft, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
