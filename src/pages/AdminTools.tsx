@@ -64,6 +64,8 @@ export default function AdminTools({
       bgClass: "border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20",
     },
   ];
+
+  return (
     <div className="min-h-screen bg-background">
       <SalesViewBanner salesViewMode={salesViewMode} setSalesViewMode={setSalesViewMode} />
       <AdminBanner userRole={userRole} />
