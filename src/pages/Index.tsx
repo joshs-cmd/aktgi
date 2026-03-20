@@ -136,8 +136,6 @@ const Index = ({ userRole }: IndexProps) => {
               {firstProduct && (
                 <ProductHeader
                   product={firstProduct}
-                  query={response.query}
-                  searchedAt={response.searchedAt}
                   selectedColor={selectedColor}
                   onColorSelect={setSelectedColor}
                 />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { HardDrive, Eye } from "lucide-react";
+import { HardDrive, Eye, List } from "lucide-react";
 import { UserRole } from "@/types/auth";
 import { AdminBanner } from "@/components/AdminBanner";
 import { UserMenu } from "@/components/UserMenu";
@@ -53,6 +53,15 @@ export default function AdminTools({
       action: () => navigate("/admin/data-management"),
       colorClass: "text-primary",
       bgClass: "border-primary/30 bg-primary/10 hover:bg-primary/20",
+    },
+    {
+      icon: List,
+      title: "OneStop Aliases",
+      description:
+        "Manage style number aliases used to map manufacturer codes to OneStop's internal identifiers.",
+      action: () => navigate("/admin/aliases"),
+      colorClass: "text-emerald-600 dark:text-emerald-400",
+      bgClass: "border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20",
     },
   ];
 

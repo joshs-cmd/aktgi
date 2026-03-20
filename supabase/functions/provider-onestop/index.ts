@@ -10,49 +10,6 @@ const corsHeaders = {
 const ONESTOP_API_BASE = "https://api.onestopinc.com";
 const ONESTOP_MEDIA_BASE = "https://media.onestopinc.com/";
 
-// ---------- Known OneStop Internal Style Aliases ----------
-// Maps normalized query strings (uppercase, alphanum only) to the OneStop internal style code.
-// These are curated overrides for cases where the API search returns the wrong primary match
-// or where the manufacturer style is stored under a different OneStop-internal identifier.
-const ONESTOP_ALIAS_MAP: Record<string, string> = {
-  // Gildan
-  "GILDAN5000":   "GD210",
-  "G5000":        "GD210",
-  "5000":         "GD210",    // bare style — only applied after brand context confirms Gildan
-  "GILDAN18500":  "GD280",
-  "G18500":       "GD280",
-  "GILDAN64000":  "GD640",
-  "G64000":       "GD640",
-  "GILDAN2000":   "GD200",
-  "G2000":        "GD200",
-  // Bella + Canvas
-  "BC3001":       "CV207",
-  "3001":         "CV207",
-  "BELLA3001":    "CV207",
-  "BC3001CVC":    "CV207CVC",
-  "BC3001Y":      "CV207Y",
-  "BC3005":       "CV265",
-  "BC3413":       "CV208",
-  "BC3415":       "CV2015",
-  "BC3501":       "CV201",
-  "BC3719":       "CV291",
-  "BC6400":       "CV206",
-  "BC6405":       "CV404",
-  // Port & Company
-  "PC54":         "PC54",
-  "PC61":         "PC61",
-  "PC78H":        "PC78H",
-  "PC90H":        "PC90H",
-  // Next Level
-  "NL3600":       "NL3600",
-  "NL6210":       "NL6210",
-  // Hanes
-  "HANES5280":    "HN5280",
-  "5280":         "HN5280",
-  "HANES5250":    "HN5250",
-  "HANES5170":    "HN5170",
-};
-
 // ---------- Brand → OneStop Mill Code Mapping ----------
 const BRAND_TO_MILL_CODE: Record<string, string> = {
   "BELLACANVAS":          "CV",
@@ -530,6 +487,20 @@ serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    // Load alias map from database
+    const supabaseClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+    const { data: aliasRows } = await supabaseClient
+      .from("onestop_aliases")
+      .select("query, internal_code");
+    const ONESTOP_ALIAS_MAP: Record<string, string> = {};
+    for (const row of aliasRows ?? []) {
+      ONESTOP_ALIAS_MAP[row.query.toUpperCase()] = row.internal_code;
+    }
+    console.log(`[provider-onestop] Loaded ${Object.keys(ONESTOP_ALIAS_MAP).length} aliases from DB`);
 
     // FIX 4: Build headers only — NO shared signal. Each fetch gets its own AbortSignal.timeout().
     const fetchHeaders: Record<string, string> = {

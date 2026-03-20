@@ -182,8 +182,6 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
               {firstProduct ? (
                 <ProductHeader
                   product={firstProduct}
-                  query={response.query}
-                  searchedAt={response.searchedAt}
                   selectedColor={selectedColor}
                   onColorSelect={setSelectedColor}
                 />

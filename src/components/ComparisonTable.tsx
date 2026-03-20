@@ -108,13 +108,13 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
 
   return (
     <div className="rounded-lg border bg-card overflow-x-auto -mx-4 sm:mx-0">
-      <Table className="min-w-[600px]">
+      <Table className="min-w-[600px] table-fixed">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead className="w-[140px] sm:w-[200px] sticky left-0 bg-card z-10">Distributor</TableHead>
             <TableHead className="w-[80px] sm:w-[100px]">Status</TableHead>
             {skeletonSizeCols.map((size) => (
-              <TableHead key={size} className="text-center w-[80px] sm:w-[100px]">
+              <TableHead key={size} className="text-center w-[80px]">
                 {size}
               </TableHead>
             ))}
@@ -154,7 +154,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
 
                     if (!size || result.status !== "success") {
                       return (
-                        <TableCell key={sizeCode} className="text-center">
+                        <TableCell key={sizeCode} className="text-center w-[80px]">
                           <span className="text-muted-foreground">--</span>
                         </TableCell>
                       );
@@ -163,7 +163,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                     const isLowest = size.price > 0 && lowestPrices[sizeCode] === size.price;
 
                     return (
-                      <TableCell key={sizeCode} className="text-center p-1">
+                      <TableCell key={sizeCode} className="text-center w-[80px] p-1">
                         <PriceCell
                           price={size.price}
                           inventory={size.inventory}
@@ -217,7 +217,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                 const hasCap = hasSSCap || hasSanMarCap;
 
                 return (
-                  <TableCell key={sizeCode} className="text-center">
+                  <TableCell key={sizeCode} className="text-center w-[80px]">
                     {total > 0 ? (
                       <span className="tabular-nums font-semibold">
                         {total.toLocaleString()}{hasCap ? "+" : ""}

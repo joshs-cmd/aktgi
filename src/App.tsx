@@ -8,6 +8,7 @@ import SearchGallery from "./pages/SearchGallery";
 import ProductDetail from "./pages/ProductDetail";
 import DataManagement from "./pages/DataManagement";
 import AdminTools from "./pages/AdminTools";
+import AliasManager from "./pages/AliasManager";
 import NotFound from "./pages/NotFound";
 import { Gatekeeper } from "@/components/Gatekeeper";
 import { UserRole } from "@/types/auth";
@@ -144,6 +145,7 @@ const App = () => {
             <Route path="/product" element={<ProductDetail {...sharedProps} />} />
             <Route path="/admin/data-management" element={<DataManagement userRole={effectiveRole} userEmail={userEmail} onSignOut={handleSignOut} />} />
             <Route path="/admin/tools" element={<AdminTools userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} salesViewMode={salesViewMode} setSalesViewMode={handleSetSalesViewMode} />} />
+            <Route path="/admin/aliases" element={<AliasManager userRole={userRole} userEmail={userEmail} onSignOut={handleSignOut} salesViewMode={salesViewMode} setSalesViewMode={handleSetSalesViewMode} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
