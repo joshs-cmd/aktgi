@@ -555,7 +555,27 @@ serve(async (req) => {
     // Fuzzy brand checks were causing valid items (e.g. "LAT" vs "LAT Apparel") to be rejected.
 
     console.log(`[provider-ss-activewear] Returning: ${standardProduct.brand} ${standardProduct.styleNumber} with ${standardProduct.colors.length} colors`);
-    
+
+    // Write to cache
+    try {
+      const { data: ttlRow } = await supabase
+        .from("cache_settings")
+        .select("ttl_hours")
+        .eq("distributor", "ss-activewear")
+        .maybeSingle();
+      const ttlHours = ttlRow?.ttl_hours ?? 14;
+      const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+      await supabase.from("product_cache").upsert({
+        distributor: "ss-activewear",
+        style_number: cacheKey,
+        response_data: { product: standardProduct },
+        cached_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      }, { onConflict: "distributor,style_number" });
+      console.log(`[provider-ss-activewear] Cached ${cacheKey} (TTL: ${ttlHours}h)`);
+    } catch (cacheErr) {
+      console.warn(`[provider-ss-activewear] Cache write failed:`, cacheErr);
+    }
 
     return new Response(
       JSON.stringify({ product: standardProduct }),
