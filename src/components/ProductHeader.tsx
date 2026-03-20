@@ -60,10 +60,10 @@ export function ProductHeader({
       </div>
 
       {/* Color Selector */}
-      {hasColors && selectedColor && onColorSelect && (
+      {colorsToShow && colorsToShow.length > 0 && selectedColor && onColorSelect && (
         <div className="border-t pt-4">
           <ColorSelector
-            colors={product.colors!}
+            colors={colorsToShow}
             selectedColor={selectedColor}
             onColorSelect={onColorSelect}
           />
