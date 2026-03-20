@@ -46,14 +46,42 @@ function normalizeColorName(name: string): string {
   return n.trim();
 }
 
+const GENERIC_COLOR_WORDS = new Set(['heather', 'white', 'black', 'vintage', 'navy', 'grey', 'gray']);
+
 function colorMatchScore(a: string, b: string): number {
   const normA = normalizeColorName(a);
   const normB = normalizeColorName(b);
+
+  // Exact normalized match
   if (normA === normB) return 3;
-  const primaryA = normA.split(" ")[0];
-  const primaryB = normB.split(" ")[0];
-  if (primaryA === primaryB && primaryA.length > 3) return 2;
-  if (normA.includes(primaryB) || normB.includes(primaryA)) return 1;
+
+  const wordsA = normA.split(" ");
+  const wordsB = normB.split(" ");
+  const setA = new Set(wordsA);
+  const setB = new Set(wordsB);
+  const specificA = new Set([...setA].filter(w => !GENERIC_COLOR_WORDS.has(w)));
+  const specificB = new Set([...setB].filter(w => !GENERIC_COLOR_WORDS.has(w)));
+  const sharedSpecific = [...specificA].filter(w => specificB.has(w));
+
+  const primaryA = wordsA[0] ?? "";
+  const primaryB = wordsB[0] ?? "";
+
+  // Primary word match — only if the primary word is specific (not a generic color word)
+  if (primaryA === primaryB && !GENERIC_COLOR_WORDS.has(primaryA) && primaryA.length > 3) return 2;
+
+  // Two-word prefix match — requires at least 1 shared specific word
+  // Prevents 'vintage black/vintage black' falsely matching 'vintage black/heather white'
+  // since both 'vintage' and 'black' are generic — no specific words are shared
+  const prefixA = wordsA.slice(0, 2).join(" ");
+  const prefixB = wordsB.slice(0, 2).join(" ");
+  if (prefixA === prefixB && prefixA.length > 6 && sharedSpecific.length >= 1) return 2;
+
+  // Significant word overlap — must share at least 2 non-generic specific words
+  if (sharedSpecific.length >= 2) return 1;
+
+  // Single specific word match only if both colors are simple (1-2 words total)
+  if (sharedSpecific.length === 1 && wordsA.length <= 2 && wordsB.length <= 2) return 1;
+
   return 0;
 }
 
