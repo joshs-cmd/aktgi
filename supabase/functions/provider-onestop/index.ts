@@ -545,6 +545,12 @@ serve(async (req) => {
     }
     console.log(`[provider-onestop] Loaded ${Object.keys(ONESTOP_ALIAS_MAP).length} aliases from DB`);
 
+    // FIX 4: Build headers only — NO shared signal. Each fetch gets its own AbortSignal.timeout().
+    const fetchHeaders: Record<string, string> = {
+      "Authorization": `Token ${apiToken}`,
+      "Accept": "application/json; version=1.0",
+    };
+
     const fetchWithTimeout = (url: string, timeoutMs = 25_000): Promise<Response> =>
       fetch(url, { headers: fetchHeaders, signal: AbortSignal.timeout(timeoutMs) });
 
