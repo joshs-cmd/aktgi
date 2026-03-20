@@ -32,6 +32,27 @@ export type Database = {
         }
         Relationships: []
       }
+      cache_settings: {
+        Row: {
+          distributor: string
+          notes: string | null
+          pre_warm_enabled: boolean
+          ttl_hours: number
+        }
+        Insert: {
+          distributor: string
+          notes?: string | null
+          pre_warm_enabled?: boolean
+          ttl_hours?: number
+        }
+        Update: {
+          distributor?: string
+          notes?: string | null
+          pre_warm_enabled?: boolean
+          ttl_hours?: number
+        }
+        Relationships: []
+      }
       catalog_products: {
         Row: {
           base_price: number | null
@@ -174,6 +195,36 @@ export type Database = {
         }
         Relationships: []
       }
+      popular_skus: {
+        Row: {
+          active: boolean
+          annual_units: number | null
+          brand: string | null
+          created_at: string
+          display_name: string | null
+          id: string
+          style_number: string
+        }
+        Insert: {
+          active?: boolean
+          annual_units?: number | null
+          brand?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          style_number: string
+        }
+        Update: {
+          active?: boolean
+          annual_units?: number | null
+          brand?: string | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          style_number?: string
+        }
+        Relationships: []
+      }
       price_history: {
         Row: {
           distributor_id: string
@@ -257,6 +308,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      product_cache: {
+        Row: {
+          cached_at: string
+          distributor: string
+          expires_at: string
+          id: string
+          response_data: Json
+          style_number: string
+        }
+        Insert: {
+          cached_at?: string
+          distributor: string
+          expires_at: string
+          id?: string
+          response_data: Json
+          style_number: string
+        }
+        Update: {
+          cached_at?: string
+          distributor?: string
+          expires_at?: string
+          id?: string
+          response_data?: Json
+          style_number?: string
+        }
+        Relationships: []
       }
       product_sizes: {
         Row: {
