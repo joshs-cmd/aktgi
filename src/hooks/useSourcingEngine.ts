@@ -100,9 +100,9 @@ export function useSourcingEngine() {
         let queryForProvider = originalSku ?? query;
 
         try {
-          const { data, error: fnError } = await supabase.functions.invoke(
+        const { data, error: fnError } = await supabase.functions.invoke(
             `provider-${distributor.code}`,
-            { body: { query: queryForProvider, distributorId: distributor.id, brand } }
+            { body: { query: queryForProvider, distributorId: distributor.id, brand, force_refresh: options?.force_refresh ?? false } }
           );
 
           if (abort.signal.aborted) return;
