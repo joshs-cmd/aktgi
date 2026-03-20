@@ -54,9 +54,16 @@ export default function AdminTools({
       colorClass: "text-primary",
       bgClass: "border-primary/30 bg-primary/10 hover:bg-primary/20",
     },
+    {
+      icon: List,
+      title: "OneStop Aliases",
+      description:
+        "Manage style number aliases used to map manufacturer codes to OneStop's internal identifiers.",
+      action: () => navigate("/admin/aliases"),
+      colorClass: "text-emerald-600 dark:text-emerald-400",
+      bgClass: "border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/20",
+    },
   ];
-
-  return (
     <div className="min-h-screen bg-background">
       <SalesViewBanner salesViewMode={salesViewMode} setSalesViewMode={setSalesViewMode} />
       <AdminBanner userRole={userRole} />
