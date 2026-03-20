@@ -525,22 +525,8 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
                       <tr className="border-b bg-muted/30">
                         <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Style</th>
                         <th className="px-4 py-2 text-left font-medium text-muted-foreground text-xs">Brand / Name</th>
-                        <th className="px-4 py-2 text-right font-medium text-muted-foreground text-xs">Annual Units</th>
                         <th className="px-4 py-2 text-center font-medium text-muted-foreground text-xs">Active</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {filteredSkus.map((sku) => (
-                        <tr key={sku.id} className="hover:bg-muted/20">
-                          <td className="px-4 py-2 font-mono text-xs font-medium">{sku.style_number}</td>
-                          <td className="px-4 py-2">
-                            <p className="font-medium text-xs">{sku.brand}</p>
-                            {sku.display_name && (
-                              <p className="text-[11px] text-muted-foreground truncate max-w-[200px]">{sku.display_name}</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-2 text-right text-xs tabular-nums">
-                            {sku.annual_units?.toLocaleString() ?? "—"}
+...
                           </td>
                           <td className="px-4 py-2 text-center">
                             {isAdmin ? (
