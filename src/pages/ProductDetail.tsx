@@ -55,6 +55,13 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
     navigate(`/?q=${encodeURIComponent(queryParam)}`);
   };
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setSelectedColor(null);
+    await search(styleParam, { distributorSkuMap, brand: brandParam, force_refresh: true });
+    setIsRefreshing(false);
+  };
+
   // Get the first successful product — prefer distributors that are in the skuMap
   const firstProduct = useMemo(() => {
     if (!response?.results) return null;
