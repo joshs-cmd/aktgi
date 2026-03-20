@@ -154,7 +154,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
 
                     if (!size || result.status !== "success") {
                       return (
-                        <TableCell key={sizeCode} className="text-center">
+                        <TableCell key={sizeCode} className="text-center w-[80px]">
                           <span className="text-muted-foreground">--</span>
                         </TableCell>
                       );
@@ -163,7 +163,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                     const isLowest = size.price > 0 && lowestPrices[sizeCode] === size.price;
 
                     return (
-                      <TableCell key={sizeCode} className="text-center p-1">
+                      <TableCell key={sizeCode} className="text-center w-[80px] p-1">
                         <PriceCell
                           price={size.price}
                           inventory={size.inventory}
