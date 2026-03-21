@@ -259,10 +259,6 @@ Deno.serve(async (req) => {
     }
 
     // Upsert to DB
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     let totalUpserted = 0;
     const errors: string[] = [];
