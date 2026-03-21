@@ -4,6 +4,21 @@ import { Package } from "lucide-react";
 import { ColorSelector } from "./ColorSelector";
 import { useMemo } from "react";
 
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&reg;/g, '®')
+    .replace(/&trade;/g, '™')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\.\s+[A-Z0-9]+$/, '')
+    .trim();
+}
+
 interface ProductHeaderProps {
   product: StandardProduct;
   selectedColor?: string | null;
@@ -26,7 +41,6 @@ export function ProductHeader({
     return product.imageUrl;
   }, [product, selectedColor]);
 
-  const hasColors = product.colors && product.colors.length > 0;
   const colorsToShow = availableColors ?? product.colors;
 
   return (
@@ -36,7 +50,7 @@ export function ProductHeader({
           {displayImage ? (
             <img
               src={displayImage}
-              alt={product.name}
+              alt={decodeHtmlEntities(product.name)}
               className="h-full w-full rounded-lg object-cover"
               onError={(e) => {
                 e.currentTarget.style.display = "none";
@@ -50,7 +64,7 @@ export function ProductHeader({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-base sm:text-xl font-semibold">{product.name}</h2>
+            <h2 className="text-base sm:text-xl font-semibold">{decodeHtmlEntities(product.name)}</h2>
             <Badge variant="secondary">{product.styleNumber}</Badge>
           </div>
           <div className="mt-1 flex items-center gap-3 text-xs sm:text-sm text-muted-foreground">

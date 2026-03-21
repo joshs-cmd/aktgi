@@ -3,17 +3,74 @@ import aktLogo from "@/assets/aktlogo.png";
 import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
-import { AlertCircle, Search, Loader2, HardDrive, ChevronDown, Calculator, Wrench } from "lucide-react";
+import { AlertCircle, Search, Loader2, ChevronDown, Calculator, Wrench, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { UserRole } from "@/types/auth";
 import { AdminBanner } from "@/components/AdminBanner";
 import { UserMenu } from "@/components/UserMenu";
 import { SalesViewBanner } from "@/components/SalesViewBanner";
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&reg;/g, '®')
+    .replace(/&trade;/g, '™')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\.\s+[A-Z0-9]+$/, '')
+    .trim();
+}
+
+const PRIORITY_BRANDS = [
+  'comfort colors', 'gildan', 'bella + canvas', 'bella+canvas',
+  'next level apparel', 'next level', 'independent trading co.',
+  'port & co', 'port & company', 'as colour', 'hanes',
+  'awdis', 'just hoods', 'american apparel', 'bayside',
+  'district', 'jerzees', 'champion', 'alternative apparel',
+  'tultex', 'rabbit skins', 'colortone',
+];
+
+const BRAND_DISPLAY: Record<string, string> = {
+  'BELLA + CANVAS': 'Bella + Canvas',
+  'BELLA+CANVAS': 'Bella + Canvas',
+  'NEXT LEVEL': 'Next Level Apparel',
+  'PORT & CO': 'Port & Company',
+  'JERZEES': 'Jerzees',
+};
+
+function normalizeBrand(brand: string): string {
+  return BRAND_DISPLAY[brand.toUpperCase().trim()] ?? brand;
+}
+
+function getCategory(name: string): string {
+  const n = name.toLowerCase();
+  if (/hoodie|hooded|full.zip hood|half.zip hood/.test(n)) return 'Hoodies';
+  if (/sweatshirt|crewneck fleece|crew fleece|pullover fleece/.test(n)) return 'Sweatshirts';
+  if (/polo/.test(n)) return 'Polos';
+  if (/jacket|windbreaker|anorak|vest/.test(n)) return 'Outerwear';
+  if (/long.sleeve|l\/s/.test(n)) return 'Long Sleeve';
+  if (/tank|muscle|racerback/.test(n)) return 'Tanks';
+  if (/tote|bag|duffel|backpack|sack/.test(n)) return 'Bags & Totes';
+  if (/jogger|pant|\bshorts\b/.test(n)) return 'Bottoms';
+  if (/tee|t-shirt|t shirt/.test(n)) return 'T-Shirts';
+  return 'Other';
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 interface SearchGalleryProps {
   userRole?: UserRole | null;
@@ -29,6 +86,9 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
   const role = userRole ?? null;
   const { isLoading, response, error, search, clearResults, bustCache } = useCatalogSearch();
   const lastQueryRef = useRef<string | null>(null);
+
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
 
   // On mount: bust the cache for the current ?q= so we always fetch fresh results
   useEffect(() => {
@@ -49,6 +109,8 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
   const handleSearch = (query: string) => {
     lastQueryRef.current = query;
     navigate(`/?q=${encodeURIComponent(query)}`, { replace: true });
+    setSelectedCategory('All');
+    setSelectedBrands([]);
     search(query);
   };
 
@@ -60,8 +122,41 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
     );
   };
 
+  // ── Derived data ────────────────────────────────────────────────────────────
+
+  const prioritizedProducts = useMemo(() => {
+    return [...(response?.products ?? [])].sort((a, b) => {
+      const aIsPriority = PRIORITY_BRANDS.includes(a.brand.toLowerCase());
+      const bIsPriority = PRIORITY_BRANDS.includes(b.brand.toLowerCase());
+      if (aIsPriority && !bIsPriority) return -1;
+      if (!aIsPriority && bIsPriority) return 1;
+      return b.score - a.score;
+    });
+  }, [response?.products]);
+
+  const categories = useMemo(() => {
+    const cats = new Set(prioritizedProducts.map(p => getCategory(decodeHtmlEntities(p.name))));
+    return ['All', ...Array.from(cats).sort()];
+  }, [prioritizedProducts]);
+
+  const brands = useMemo(() => {
+    const b = new Set(prioritizedProducts.map(p => normalizeBrand(p.brand)));
+    return Array.from(b).sort();
+  }, [prioritizedProducts]);
+
+  const filteredProducts = useMemo(() => {
+    return prioritizedProducts.filter(p => {
+      const categoryMatch = selectedCategory === 'All' ||
+        getCategory(decodeHtmlEntities(p.name)) === selectedCategory;
+      const brandMatch = selectedBrands.length === 0 ||
+        selectedBrands.includes(normalizeBrand(p.brand));
+      return categoryMatch && brandMatch;
+    });
+  }, [prioritizedProducts, selectedCategory, selectedBrands]);
+
   const hasResults = response && response.products.length > 0;
   const showEmptyState = !response && !error && !isLoading;
+  const filtersActive = selectedCategory !== 'All' || selectedBrands.length > 0;
 
   return (
     <div className="min-h-screen bg-background">
@@ -180,20 +275,119 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
           {/* Results Gallery */}
           {hasResults && !isLoading && (
             <div className="w-full max-w-3xl space-y-4">
-              <p className="text-sm text-muted-foreground">
-                {response.products.length} result{response.products.length !== 1 ? "s" : ""} for "{response.query}"
-              </p>
+              {/* Filter Bar */}
+              <div className="flex flex-col gap-3">
+                {/* Category pills */}
+                {categories.length > 2 && (
+                  <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                    {categories.map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setSelectedCategory(cat)}
+                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                          selectedCategory === cat
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Brand dropdown + results count + clear */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Brand multiselect */}
+                  {brands.length > 1 && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-1.5 h-8 text-xs">
+                          Brand
+                          {selectedBrands.length > 0 && (
+                            <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                              {selectedBrands.length}
+                            </Badge>
+                          )}
+                          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-56 p-2">
+                        <div className="space-y-1 max-h-60 overflow-y-auto">
+                          {brands.map(brand => (
+                            <label
+                              key={brand}
+                              className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm"
+                            >
+                              <Checkbox
+                                checked={selectedBrands.includes(brand)}
+                                onCheckedChange={(checked) => {
+                                  setSelectedBrands(prev =>
+                                    checked
+                                      ? [...prev, brand]
+                                      : prev.filter(b => b !== brand)
+                                  );
+                                }}
+                              />
+                              {brand}
+                            </label>
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+
+                  {/* Results count */}
+                  <p className="text-sm text-muted-foreground flex-1">
+                    {filtersActive
+                      ? `${filteredProducts.length} of ${prioritizedProducts.length} results for "${response.query}"`
+                      : `${prioritizedProducts.length} result${prioritizedProducts.length !== 1 ? 's' : ''} for "${response.query}"`
+                    }
+                  </p>
+
+                  {/* Clear filters */}
+                  {filtersActive && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        setSelectedCategory('All');
+                        setSelectedBrands([]);
+                      }}
+                    >
+                      <X className="h-3 w-3" />
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Product Grid */}
               <div className="grid gap-3 sm:grid-cols-2">
-                {response.products.map((product, idx) => (
+                {filteredProducts.map((product, idx) => (
                   <ProductCard
                     key={`${product.styleNumber}-${product.brand}-${idx}`}
-                    product={product}
+                    product={{ ...product, name: decodeHtmlEntities(product.name) }}
                     onClick={() =>
                       handleProductClick(product.styleNumber, product.brand, product.distributorSkuMap)
                     }
                   />
                 ))}
               </div>
+
+              {/* No results after filtering */}
+              {filteredProducts.length === 0 && filtersActive && (
+                <p className="text-center text-sm text-muted-foreground py-6">
+                  No products match the selected filters.{' '}
+                  <button
+                    className="underline hover:text-foreground"
+                    onClick={() => { setSelectedCategory('All'); setSelectedBrands([]); }}
+                  >
+                    Clear filters
+                  </button>
+                </p>
+              )}
             </div>
           )}
 
