@@ -118,6 +118,10 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
   const [preWarmRunning, setPreWarmRunning] = useState(false);
   const [preWarmResult, setPreWarmResult] = useState<string | null>(null);
 
+  // Run Sync Now state
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
+
   // Cache overview state
   const [cacheOverview, setCacheOverview] = useState<{
     total: number; expiringSoon: number;
