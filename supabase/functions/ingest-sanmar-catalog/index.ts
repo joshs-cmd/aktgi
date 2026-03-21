@@ -81,6 +81,11 @@ Deno.serve(async (req) => {
 
   const startTime = Date.now();
 
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
+
   try {
     // Accept optional offset parameter to resume from a byte position
     let startOffset = 0;
@@ -254,10 +259,6 @@ Deno.serve(async (req) => {
     }
 
     // Upsert to DB
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
 
     let totalUpserted = 0;
     const errors: string[] = [];
