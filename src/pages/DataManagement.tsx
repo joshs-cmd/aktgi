@@ -211,6 +211,30 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
+  const handleRunSync = async () => {
+    setSyncRunning(true);
+    setSyncResult(null);
+    try {
+      const results = await Promise.allSettled([
+        supabase.functions.invoke("ingest-sanmar-catalog", { body: {} }),
+        supabase.functions.invoke("ingest-ss-catalog", { body: {} }),
+        supabase.functions.invoke("ingest-onestop-catalog", { body: {} }),
+        supabase.functions.invoke("ingest-acc-catalog", { body: {} }),
+      ]);
+      const failed = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && r.value.error));
+      if (failed.length === 0) {
+        setSyncResult({ success: true, message: "All 4 distributor syncs completed successfully." });
+      } else {
+        setSyncResult({ success: false, message: `${failed.length} of 4 syncs failed. Check logs for details.` });
+      }
+      await fetchArchives();
+    } catch (e) {
+      setSyncResult({ success: false, message: e instanceof Error ? e.message : "Unknown error" });
+    } finally {
+      setSyncRunning(false);
+    }
+  };
+
   const handleArchivesRefresh = async () => {
     setArchivesRefreshing(true);
     await fetchArchives();
