@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Download, FileText, RefreshCw, ArrowLeft, AlertCircle, Loader2,
-  HardDrive, Database, Zap, List, BarChart2, Check, X, Edit2,
+  HardDrive, Database, Zap, List, BarChart2, Check, X, Edit2, Play,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -118,6 +118,10 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
   const [preWarmRunning, setPreWarmRunning] = useState(false);
   const [preWarmResult, setPreWarmResult] = useState<string | null>(null);
 
+  // Run Sync Now state
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
+
   // Cache overview state
   const [cacheOverview, setCacheOverview] = useState<{
     total: number; expiringSoon: number;
@@ -206,6 +210,30 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
   }, [fetchArchives, fetchCacheSettings, fetchCacheOverview, fetchCacheStatus, fetchPopularSkus]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const handleRunSync = async () => {
+    setSyncRunning(true);
+    setSyncResult(null);
+    try {
+      const results = await Promise.allSettled([
+        supabase.functions.invoke("ingest-sanmar-catalog", { body: {} }),
+        supabase.functions.invoke("ingest-ss-catalog", { body: {} }),
+        supabase.functions.invoke("ingest-onestop-catalog", { body: {} }),
+        supabase.functions.invoke("ingest-acc-catalog", { body: {} }),
+      ]);
+      const failed = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && r.value.error));
+      if (failed.length === 0) {
+        setSyncResult({ success: true, message: "All 4 distributor syncs completed successfully." });
+      } else {
+        setSyncResult({ success: false, message: `${failed.length} of 4 syncs failed. Check logs for details.` });
+      }
+      await fetchArchives();
+    } catch (e) {
+      setSyncResult({ success: false, message: e instanceof Error ? e.message : "Unknown error" });
+    } finally {
+      setSyncRunning(false);
+    }
+  };
 
   const handleArchivesRefresh = async () => {
     setArchivesRefreshing(true);
@@ -565,20 +593,45 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
             <div>
               <h2 className="text-xl font-semibold">Daily Source Files</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                Raw data files saved during each distributor sync — download to verify accuracy in Excel.
+                Raw data files saved during each distributor sync — catalog syncs monthly on the 1st.
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleArchivesRefresh}
-              disabled={archivesRefreshing || archivesLoading}
-              className="gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${archivesRefreshing ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <Button
+                  size="sm"
+                  onClick={handleRunSync}
+                  disabled={syncRunning}
+                  className="gap-2"
+                >
+                  {syncRunning
+                    ? <><Loader2 className="h-4 w-4 animate-spin" />Running…</>
+                    : <><Play className="h-4 w-4" />Run Sync Now</>
+                  }
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleArchivesRefresh}
+                disabled={archivesRefreshing || archivesLoading}
+                className="gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${archivesRefreshing ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
+
+          {syncResult && (
+            <Alert variant={syncResult.success ? "default" : "destructive"}>
+              {syncResult.success
+                ? <Check className="h-4 w-4" />
+                : <AlertCircle className="h-4 w-4" />
+              }
+              <AlertDescription>{syncResult.message}</AlertDescription>
+            </Alert>
+          )}
 
           {archivesError && (
             <Alert variant="destructive">
