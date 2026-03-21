@@ -593,20 +593,45 @@ export default function DataManagement({ userRole, userEmail, onSignOut }: DataM
             <div>
               <h2 className="text-xl font-semibold">Daily Source Files</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                Raw data files saved during each distributor sync — download to verify accuracy in Excel.
+                Raw data files saved during each distributor sync — catalog syncs monthly on the 1st.
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleArchivesRefresh}
-              disabled={archivesRefreshing || archivesLoading}
-              className="gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${archivesRefreshing ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-2">
+              {isAdmin && (
+                <Button
+                  size="sm"
+                  onClick={handleRunSync}
+                  disabled={syncRunning}
+                  className="gap-2"
+                >
+                  {syncRunning
+                    ? <><Loader2 className="h-4 w-4 animate-spin" />Running…</>
+                    : <><Play className="h-4 w-4" />Run Sync Now</>
+                  }
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleArchivesRefresh}
+                disabled={archivesRefreshing || archivesLoading}
+                className="gap-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${archivesRefreshing ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
+
+          {syncResult && (
+            <Alert variant={syncResult.success ? "default" : "destructive"}>
+              {syncResult.success
+                ? <Check className="h-4 w-4" />
+                : <AlertCircle className="h-4 w-4" />
+              }
+              <AlertDescription>{syncResult.message}</AlertDescription>
+            </Alert>
+          )}
 
           {archivesError && (
             <Alert variant="destructive">
