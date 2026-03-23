@@ -46,7 +46,7 @@ export function PriceCell({
   const isSanMar = distributorCode === "sanmar";
 
   return (
-    <WarehouseTooltip inventory={inventory} distributorName={distributorName} productUrl={productUrl}>
+    <WarehouseTooltip inventory={inventory} distributorName={distributorName} distributorCode={distributorCode} productUrl={productUrl}>
       <button
         className={cn(
           "flex flex-col items-center justify-center rounded-md px-3 py-2 text-center transition-colors",

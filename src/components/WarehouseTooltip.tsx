@@ -11,6 +11,7 @@ interface WarehouseTooltipProps {
   inventory: StandardInventory[];
   children: React.ReactNode;
   distributorName?: string;
+  distributorCode?: string;
   productUrl?: string;
 }
 
