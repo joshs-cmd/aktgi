@@ -134,9 +134,26 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-4 sm:py-6">
           <div className="flex items-center justify-between w-full gap-2">
-            <h1 className="text-lg sm:text-2xl font-bold truncate">
-              AKT Garment Inventory
-            </h1>
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <h1 className="text-lg sm:text-2xl font-bold truncate">
+                AKT Garment Inventory
+              </h1>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-accent transition-colors focus:outline-none shrink-0">
+                    <ChevronDown className="h-4 w-4 sm:h-5 sm:w-5 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem asChild>
+                    <a href="https://calculator.aktenterprises.com" className="flex items-center gap-2">
+                      <Calculator className="h-4 w-4" />
+                      Pricing Calculator
+                    </a>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}
           </div>
         </div>
