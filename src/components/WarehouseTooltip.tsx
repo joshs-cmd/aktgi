@@ -27,7 +27,7 @@ function formatDays(days: number): string {
   return days === 1 ? "1 day" : `${days} days`;
 }
 
-export function WarehouseTooltip({ inventory, children, distributorName, productUrl }: WarehouseTooltipProps) {
+export function WarehouseTooltip({ inventory, children, distributorName, distributorCode, productUrl }: WarehouseTooltipProps) {
   const totalStock = inventory.reduce((sum, inv) => sum + inv.quantity, 0);
   const hasCapped = inventory.some(inv => inv.isCapped);
 
