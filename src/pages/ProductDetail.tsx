@@ -7,6 +7,7 @@ import { AlertCircle, Search, ArrowLeft, RefreshCw, ChevronDown, Calculator } fr
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { UserRole, canViewPrices } from "@/types/auth";
 import { AdminBanner } from "@/components/AdminBanner";
 import { UserMenu } from "@/components/UserMenu";
