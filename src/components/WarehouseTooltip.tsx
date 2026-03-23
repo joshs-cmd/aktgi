@@ -83,7 +83,9 @@ export function WarehouseTooltip({ inventory, children, distributorName, distrib
           </div>
           {hasCapped && (
             <div className="mt-2 text-xs text-muted-foreground italic">
-              + indicates warehouse cap of 3,000 units
+              {distributorCode === "ss-activewear"
+                ? "+ indicates warehouse total is 500 or greater"
+                : "+ indicates warehouse total is 3,000 or greater"}
             </div>
           )}
           {productUrl && distributorName && (
