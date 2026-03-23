@@ -11,6 +11,7 @@ interface WarehouseTooltipProps {
   inventory: StandardInventory[];
   children: React.ReactNode;
   distributorName?: string;
+  distributorCode?: string;
   productUrl?: string;
 }
 
@@ -26,7 +27,7 @@ function formatDays(days: number): string {
   return days === 1 ? "1 day" : `${days} days`;
 }
 
-export function WarehouseTooltip({ inventory, children, distributorName, productUrl }: WarehouseTooltipProps) {
+export function WarehouseTooltip({ inventory, children, distributorName, distributorCode, productUrl }: WarehouseTooltipProps) {
   const totalStock = inventory.reduce((sum, inv) => sum + inv.quantity, 0);
   const hasCapped = inventory.some(inv => inv.isCapped);
 
@@ -82,7 +83,9 @@ export function WarehouseTooltip({ inventory, children, distributorName, product
           </div>
           {hasCapped && (
             <div className="mt-2 text-xs text-muted-foreground italic">
-              + indicates warehouse cap of 3,000 units
+              {distributorCode === "ss-activewear"
+                ? "+ indicates warehouse total is 500 or greater"
+                : "+ indicates warehouse total is 3,000 or greater"}
             </div>
           )}
           {productUrl && distributorName && (

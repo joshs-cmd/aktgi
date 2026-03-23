@@ -336,6 +336,27 @@ export type Database = {
         }
         Relationships: []
       }
+      product_clicks: {
+        Row: {
+          brand: string
+          clicked_at: string
+          id: string
+          style_number: string
+        }
+        Insert: {
+          brand: string
+          clicked_at?: string
+          id?: string
+          style_number: string
+        }
+        Update: {
+          brand?: string
+          clicked_at?: string
+          id?: string
+          style_number?: string
+        }
+        Relationships: []
+      }
       product_sizes: {
         Row: {
           created_at: string
