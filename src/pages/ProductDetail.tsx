@@ -3,7 +3,8 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { ComparisonTable } from "@/components/ComparisonTable";
 import { ProductHeader } from "@/components/ProductHeader";
 import { useSourcingEngine } from "@/hooks/useSourcingEngine";
-import { AlertCircle, Search, ArrowLeft, RefreshCw, ChevronDown, Calculator } from "lucide-react";
+import { AlertCircle, Search, ArrowLeft, RefreshCw, ChevronDown, Calculator, Wrench } from "lucide-react";
+import aktLogo from "@/assets/aktlogo.png";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -135,9 +136,15 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
         <div className="container mx-auto px-4 py-4 sm:py-6">
           <div className="flex items-center justify-between w-full gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <h1 className="text-lg sm:text-2xl font-bold truncate">
-                AKT Garment Inventory
-              </h1>
+              <div
+                className="flex items-center gap-2 sm:gap-3 cursor-pointer min-w-0"
+                onClick={() => navigate("/")}
+              >
+                <img src={aktLogo} alt="AKT" className="h-8 sm:h-11 md:h-14 w-auto shrink-0" />
+                <h1 className="text-lg sm:text-2xl font-bold hover:text-primary transition-colors truncate">
+                  Garment Inventory
+                </h1>
+              </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-accent transition-colors focus:outline-none shrink-0">
@@ -154,7 +161,30 @@ const ProductDetail = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
-            {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              {userRole === "admin" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate("/admin/tools")}
+                  className="gap-2 text-muted-foreground hover:text-foreground hidden lg:inline-flex"
+                >
+                  <Wrench className="h-4 w-4" />
+                  Admin Tools
+                </Button>
+              )}
+              {userRole === "admin" && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => navigate("/admin/tools")}
+                  className="text-muted-foreground hover:text-foreground lg:hidden"
+                >
+                  <Wrench className="h-4 w-4" />
+                </Button>
+              )}
+              {onSignOut && <UserMenu userEmail={userEmail} onSignOut={onSignOut} />}
+            </div>
           </div>
         </div>
       </header>
