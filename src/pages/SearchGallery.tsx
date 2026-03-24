@@ -2,6 +2,7 @@ import { SearchBar } from "@/components/SearchBar";
 import aktLogo from "@/assets/aktlogo.png";
 import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
+import { TrendingSection } from "@/components/TrendingSection";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
 import { AlertCircle, Search, Loader2, ChevronDown, Calculator, Wrench, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -10,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useRef, useState, useMemo } from "react";
@@ -17,6 +19,7 @@ import { UserRole } from "@/types/auth";
 import { AdminBanner } from "@/components/AdminBanner";
 import { UserMenu } from "@/components/UserMenu";
 import { SalesViewBanner } from "@/components/SalesViewBanner";
+import { supabase } from "@/integrations/supabase/client";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -59,11 +62,15 @@ function normalizeBrand(brand: string): string {
 function getCategory(name: string): string {
   const n = name.toLowerCase();
   if (/hoodie|hooded|full.zip hood|half.zip hood/.test(n)) return 'Hoodies';
+  if (/zip|quarter.zip|full.zip/.test(n) && !/hoodie|hooded/.test(n)) return 'Zip-Ups';
   if (/sweatshirt|crewneck fleece|crew fleece|pullover fleece/.test(n)) return 'Sweatshirts';
+  if (/crewneck|crew neck/.test(n) && !/fleece|sweatshirt/.test(n)) return 'Crew Neck';
   if (/polo/.test(n)) return 'Polos';
   if (/jacket|windbreaker|anorak|vest/.test(n)) return 'Outerwear';
+  if (/raglan|baseball tee|3\/4/.test(n)) return 'Raglan';
   if (/long.sleeve|l\/s/.test(n)) return 'Long Sleeve';
   if (/tank|muscle|racerback/.test(n)) return 'Tanks';
+  if (/hat|cap|beanie|visor|bucket/.test(n)) return 'Headwear';
   if (/tote|bag|duffel|backpack|sack/.test(n)) return 'Bags & Totes';
   if (/jogger|pant|\bshorts\b/.test(n)) return 'Bottoms';
   if (/tee|t-shirt|t shirt/.test(n)) return 'T-Shirts';
@@ -89,6 +96,10 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
 
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
+  const [selectedColors, setSelectedColors] = useState<string[]>([]);
+  const [colorSearch, setColorSearch] = useState('');
+  // Map of styleNumber -> color names from catalog cache
+  const [colorCacheMap, setColorCacheMap] = useState<Map<string, string[]>>(new Map());
 
   // On mount: bust the cache for the current ?q= so we always fetch fresh results
   useEffect(() => {
@@ -106,15 +117,46 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
     }
   }, [searchParams, search]);
 
+  // Load color data from catalog cache when results arrive
+  useEffect(() => {
+    if (!response?.products?.length) { setColorCacheMap(new Map()); return; }
+    const styleNumbers = response.products.map(p => p.styleNumber);
+    supabase
+      .from("product_catalog_cache")
+      .select("style_number, colors")
+      .in("style_number", styleNumbers.map(s => s.toUpperCase().replace(/[^A-Z0-9]/g, "")))
+      .gt("expires_at", new Date().toISOString())
+      .then(({ data }) => {
+        if (!data) return;
+        const map = new Map<string, string[]>();
+        for (const row of data) {
+          if (!Array.isArray(row.colors)) continue;
+          const names: string[] = (row.colors as any[])
+            .map((c: any) => c?.name)
+            .filter(Boolean);
+          if (names.length) map.set(row.style_number, names);
+        }
+        setColorCacheMap(map);
+      });
+  }, [response?.products]);
+
   const handleSearch = (query: string) => {
     lastQueryRef.current = query;
     navigate(`/?q=${encodeURIComponent(query)}`, { replace: true });
     setSelectedCategory('All');
     setSelectedBrands([]);
+    setSelectedColors([]);
     search(query);
   };
 
   const handleProductClick = (styleNumber: string, brand: string, distributorSkuMap?: Record<string, string>) => {
+    // Fire-and-forget click tracking
+    void supabase.from("product_clicks").insert({
+      style_number: styleNumber,
+      brand: brand,
+      clicked_at: new Date().toISOString(),
+    });
+
     const q = lastQueryRef.current || searchParams.get("q") || styleNumber;
     const skuMapParam = distributorSkuMap ? `&skuMap=${encodeURIComponent(JSON.stringify(distributorSkuMap))}` : "";
     navigate(
@@ -144,19 +186,41 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
     return Array.from(b).sort();
   }, [prioritizedProducts]);
 
+  // All unique color names from the cache for the current result set
+  const availableColors = useMemo(() => {
+    const colorSet = new Set<string>();
+    for (const [, names] of colorCacheMap) {
+      for (const n of names) colorSet.add(n);
+    }
+    return Array.from(colorSet).sort();
+  }, [colorCacheMap]);
+
+  const filteredColors = useMemo(() =>
+    colorSearch.trim()
+      ? availableColors.filter(c => c.toLowerCase().includes(colorSearch.toLowerCase()))
+      : availableColors,
+    [availableColors, colorSearch]);
+
   const filteredProducts = useMemo(() => {
     return prioritizedProducts.filter(p => {
       const categoryMatch = selectedCategory === 'All' ||
         getCategory(decodeHtmlEntities(p.name)) === selectedCategory;
       const brandMatch = selectedBrands.length === 0 ||
         selectedBrands.includes(normalizeBrand(p.brand));
-      return categoryMatch && brandMatch;
+      if (!categoryMatch || !brandMatch) return false;
+      if (selectedColors.length === 0) return true;
+      // Check if this product's style number has any of the selected colors in cache
+      const cacheKey = p.styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const productColors = colorCacheMap.get(cacheKey) ?? [];
+      return selectedColors.some(sc =>
+        productColors.some(pc => pc.toLowerCase() === sc.toLowerCase())
+      );
     });
-  }, [prioritizedProducts, selectedCategory, selectedBrands]);
+  }, [prioritizedProducts, selectedCategory, selectedBrands, selectedColors, colorCacheMap]);
 
   const hasResults = response && response.products.length > 0;
   const showEmptyState = !response && !error && !isLoading;
-  const filtersActive = selectedCategory !== 'All' || selectedBrands.length > 0;
+  const filtersActive = selectedCategory !== 'All' || selectedBrands.length > 0 || selectedColors.length > 0;
 
   return (
     <div className="min-h-screen bg-background">
@@ -337,6 +401,54 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                     </Popover>
                   )}
 
+                  {/* Color multiselect — only when cache has color data */}
+                  {availableColors.length > 0 && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-1.5 h-8 text-xs">
+                          Color
+                          {selectedColors.length > 0 && (
+                            <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                              {selectedColors.length}
+                            </Badge>
+                          )}
+                          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-60 p-2">
+                        <Input
+                          placeholder="Search colors…"
+                          value={colorSearch}
+                          onChange={e => setColorSearch(e.target.value)}
+                          className="h-7 text-xs mb-2"
+                        />
+                        <div className="space-y-1 max-h-52 overflow-y-auto">
+                          {filteredColors.map(color => (
+                            <label
+                              key={color}
+                              className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm"
+                            >
+                              <Checkbox
+                                checked={selectedColors.includes(color)}
+                                onCheckedChange={(checked) => {
+                                  setSelectedColors(prev =>
+                                    checked
+                                      ? [...prev, color]
+                                      : prev.filter(c => c !== color)
+                                  );
+                                }}
+                              />
+                              {color}
+                            </label>
+                          ))}
+                          {filteredColors.length === 0 && (
+                            <p className="text-xs text-muted-foreground px-2 py-1.5">No colors found</p>
+                          )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+
                   {/* Results count */}
                   <p className="text-sm text-muted-foreground flex-1">
                     {filtersActive
@@ -354,6 +466,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                       onClick={() => {
                         setSelectedCategory('All');
                         setSelectedBrands([]);
+                        setSelectedColors([]);
                       }}
                     >
                       <X className="h-3 w-3" />
@@ -382,7 +495,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                   No products match the selected filters.{' '}
                   <button
                     className="underline hover:text-foreground"
-                    onClick={() => { setSelectedCategory('All'); setSelectedBrands([]); }}
+                    onClick={() => { setSelectedCategory('All'); setSelectedBrands([]); setSelectedColors([]); }}
                   >
                     Clear filters
                   </button>
@@ -391,7 +504,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
             </div>
           )}
 
-          {/* Empty State — Trending Grid */}
+          {/* Empty State — Trending sections */}
           {showEmptyState && (
             <div className="w-full max-w-3xl space-y-6">
               <p className="text-center text-lg text-muted-foreground">
@@ -399,6 +512,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                   ? "Enter a SKU or brand name to compare prices across distributors"
                   : "Enter a SKU or brand name to check inventory across distributors"}
               </p>
+              <TrendingSection onSearch={handleSearch} />
               <TrendingGrid onSearch={handleSearch} />
             </div>
           )}
