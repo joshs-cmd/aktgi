@@ -756,6 +756,33 @@ serve(async (req) => {
       console.warn(`[provider-onestop] Cache write failed:`, cacheErr);
     }
 
+    // Write color data to product_catalog_cache (30-day TTL, no pricing/inventory)
+    try {
+      const catalogColors = product.colors?.map((c: any) => ({
+        name: c.name,
+        code: c.code,
+        hexCode: c.hexCode ?? null,
+        swatchUrl: c.swatchUrl ?? null,
+      })) ?? [];
+      const catalogExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await supabaseClient.from("product_catalog_cache").upsert({
+        distributor: "onestop",
+        style_number: cacheKey,
+        colors: catalogColors,
+        cached_at: new Date().toISOString(),
+        expires_at: catalogExpiresAt,
+      }, { onConflict: "distributor,style_number" });
+      const colorNames = catalogColors.map((c: any) => c.name).filter(Boolean);
+      if (colorNames.length > 0) {
+        await supabaseClient.from("catalog_products")
+          .update({ colors: colorNames })
+          .eq("distributor", "onestop")
+          .eq("style_number", cacheKey);
+      }
+    } catch (e: any) {
+      console.warn(`[provider-onestop] Catalog cache write failed: ${e.message}`);
+    }
+
     return new Response(
       JSON.stringify({ product }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

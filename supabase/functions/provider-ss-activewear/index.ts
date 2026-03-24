@@ -577,6 +577,33 @@ serve(async (req) => {
       console.warn(`[provider-ss-activewear] Cache write failed:`, cacheErr);
     }
 
+    // Write color data to product_catalog_cache (30-day TTL, no pricing/inventory)
+    try {
+      const catalogColors = standardProduct.colors?.map((c: any) => ({
+        name: c.name,
+        code: c.code,
+        hexCode: c.hexCode ?? null,
+        swatchUrl: c.swatchUrl ?? null,
+      })) ?? [];
+      const catalogExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await supabase.from("product_catalog_cache").upsert({
+        distributor: "ss-activewear",
+        style_number: cacheKey,
+        colors: catalogColors,
+        cached_at: new Date().toISOString(),
+        expires_at: catalogExpiresAt,
+      }, { onConflict: "distributor,style_number" });
+      const colorNames = catalogColors.map((c: any) => c.name).filter(Boolean);
+      if (colorNames.length > 0) {
+        await supabase.from("catalog_products")
+          .update({ colors: colorNames })
+          .eq("distributor", "ss-activewear")
+          .eq("style_number", cacheKey);
+      }
+    } catch (e: any) {
+      console.warn(`[provider-ss-activewear] Catalog cache write failed: ${e.message}`);
+    }
+
     return new Response(
       JSON.stringify({ product: standardProduct }),
       {
