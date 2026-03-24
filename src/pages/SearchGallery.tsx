@@ -466,6 +466,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                       onClick={() => {
                         setSelectedCategory('All');
                         setSelectedBrands([]);
+                        setSelectedColors([]);
                       }}
                     >
                       <X className="h-3 w-3" />
