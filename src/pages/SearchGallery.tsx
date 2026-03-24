@@ -2,6 +2,7 @@ import { SearchBar } from "@/components/SearchBar";
 import aktLogo from "@/assets/aktlogo.png";
 import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
+import { TrendingSection } from "@/components/TrendingSection";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
 import { AlertCircle, Search, Loader2, ChevronDown, Calculator, Wrench, X } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -10,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useEffect, useRef, useState, useMemo } from "react";
@@ -17,6 +19,7 @@ import { UserRole } from "@/types/auth";
 import { AdminBanner } from "@/components/AdminBanner";
 import { UserMenu } from "@/components/UserMenu";
 import { SalesViewBanner } from "@/components/SalesViewBanner";
+import { supabase } from "@/integrations/supabase/client";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
