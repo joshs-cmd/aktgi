@@ -57,6 +57,7 @@ export type Database = {
         Row: {
           base_price: number | null
           brand: string
+          colors: string[] | null
           description: string | null
           distributor: string
           id: string
@@ -69,6 +70,7 @@ export type Database = {
         Insert: {
           base_price?: number | null
           brand: string
+          colors?: string[] | null
           description?: string | null
           distributor: string
           id?: string
@@ -81,6 +83,7 @@ export type Database = {
         Update: {
           base_price?: number | null
           brand?: string
+          colors?: string[] | null
           description?: string | null
           distributor?: string
           id?: string
@@ -332,6 +335,33 @@ export type Database = {
           expires_at?: string
           id?: string
           response_data?: Json
+          style_number?: string
+        }
+        Relationships: []
+      }
+      product_catalog_cache: {
+        Row: {
+          cached_at: string
+          colors: Json | null
+          distributor: string
+          expires_at: string
+          id: string
+          style_number: string
+        }
+        Insert: {
+          cached_at?: string
+          colors?: Json | null
+          distributor: string
+          expires_at: string
+          id?: string
+          style_number: string
+        }
+        Update: {
+          cached_at?: string
+          colors?: Json | null
+          distributor?: string
+          expires_at?: string
+          id?: string
           style_number?: string
         }
         Relationships: []
