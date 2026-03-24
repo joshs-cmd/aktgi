@@ -495,7 +495,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                   No products match the selected filters.{' '}
                   <button
                     className="underline hover:text-foreground"
-                    onClick={() => { setSelectedCategory('All'); setSelectedBrands([]); }}
+                    onClick={() => { setSelectedCategory('All'); setSelectedBrands([]); setSelectedColors([]); }}
                   >
                     Clear filters
                   </button>
@@ -504,7 +504,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
             </div>
           )}
 
-          {/* Empty State — Trending Grid */}
+          {/* Empty State — Trending sections */}
           {showEmptyState && (
             <div className="w-full max-w-3xl space-y-6">
               <p className="text-center text-lg text-muted-foreground">
@@ -512,6 +512,7 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                   ? "Enter a SKU or brand name to compare prices across distributors"
                   : "Enter a SKU or brand name to check inventory across distributors"}
               </p>
+              <TrendingSection onSearch={handleSearch} />
               <TrendingGrid onSearch={handleSearch} />
             </div>
           )}
