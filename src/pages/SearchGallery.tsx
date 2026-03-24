@@ -62,11 +62,15 @@ function normalizeBrand(brand: string): string {
 function getCategory(name: string): string {
   const n = name.toLowerCase();
   if (/hoodie|hooded|full.zip hood|half.zip hood/.test(n)) return 'Hoodies';
+  if (/zip|quarter.zip|full.zip/.test(n) && !/hoodie|hooded/.test(n)) return 'Zip-Ups';
   if (/sweatshirt|crewneck fleece|crew fleece|pullover fleece/.test(n)) return 'Sweatshirts';
+  if (/crewneck|crew neck/.test(n) && !/fleece|sweatshirt/.test(n)) return 'Crew Neck';
   if (/polo/.test(n)) return 'Polos';
   if (/jacket|windbreaker|anorak|vest/.test(n)) return 'Outerwear';
+  if (/raglan|baseball tee|3\/4/.test(n)) return 'Raglan';
   if (/long.sleeve|l\/s/.test(n)) return 'Long Sleeve';
   if (/tank|muscle|racerback/.test(n)) return 'Tanks';
+  if (/hat|cap|beanie|visor|bucket/.test(n)) return 'Headwear';
   if (/tote|bag|duffel|backpack|sack/.test(n)) return 'Bags & Totes';
   if (/jogger|pant|\bshorts\b/.test(n)) return 'Bottoms';
   if (/tee|t-shirt|t shirt/.test(n)) return 'T-Shirts';
