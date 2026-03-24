@@ -151,11 +151,11 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
 
   const handleProductClick = (styleNumber: string, brand: string, distributorSkuMap?: Record<string, string>) => {
     // Fire-and-forget click tracking
-    supabase.from("product_clicks").insert({
+    void supabase.from("product_clicks").insert({
       style_number: styleNumber,
       brand: brand,
       clicked_at: new Date().toISOString(),
-    }).then(() => {}).catch(() => {});
+    });
 
     const q = lastQueryRef.current || searchParams.get("q") || styleNumber;
     const skuMapParam = distributorSkuMap ? `&skuMap=${encodeURIComponent(JSON.stringify(distributorSkuMap))}` : "";
