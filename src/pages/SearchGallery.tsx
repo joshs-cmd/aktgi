@@ -401,6 +401,54 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                     </Popover>
                   )}
 
+                  {/* Color multiselect — only when cache has color data */}
+                  {availableColors.length > 0 && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-1.5 h-8 text-xs">
+                          Color
+                          {selectedColors.length > 0 && (
+                            <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                              {selectedColors.length}
+                            </Badge>
+                          )}
+                          <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-60 p-2">
+                        <Input
+                          placeholder="Search colors…"
+                          value={colorSearch}
+                          onChange={e => setColorSearch(e.target.value)}
+                          className="h-7 text-xs mb-2"
+                        />
+                        <div className="space-y-1 max-h-52 overflow-y-auto">
+                          {filteredColors.map(color => (
+                            <label
+                              key={color}
+                              className="flex items-center gap-2 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm"
+                            >
+                              <Checkbox
+                                checked={selectedColors.includes(color)}
+                                onCheckedChange={(checked) => {
+                                  setSelectedColors(prev =>
+                                    checked
+                                      ? [...prev, color]
+                                      : prev.filter(c => c !== color)
+                                  );
+                                }}
+                              />
+                              {color}
+                            </label>
+                          ))}
+                          {filteredColors.length === 0 && (
+                            <p className="text-xs text-muted-foreground px-2 py-1.5">No colors found</p>
+                          )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+
                   {/* Results count */}
                   <p className="text-sm text-muted-foreground flex-1">
                     {filtersActive
