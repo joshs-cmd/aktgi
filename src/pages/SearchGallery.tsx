@@ -96,6 +96,10 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
 
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
+  const [selectedColors, setSelectedColors] = useState<string[]>([]);
+  const [colorSearch, setColorSearch] = useState('');
+  // Map of styleNumber -> color names from catalog cache
+  const [colorCacheMap, setColorCacheMap] = useState<Map<string, string[]>>(new Map());
 
   // On mount: bust the cache for the current ?q= so we always fetch fresh results
   useEffect(() => {
@@ -113,15 +117,46 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
     }
   }, [searchParams, search]);
 
+  // Load color data from catalog cache when results arrive
+  useEffect(() => {
+    if (!response?.products?.length) { setColorCacheMap(new Map()); return; }
+    const styleNumbers = response.products.map(p => p.styleNumber);
+    supabase
+      .from("product_catalog_cache")
+      .select("style_number, colors")
+      .in("style_number", styleNumbers.map(s => s.toUpperCase().replace(/[^A-Z0-9]/g, "")))
+      .gt("expires_at", new Date().toISOString())
+      .then(({ data }) => {
+        if (!data) return;
+        const map = new Map<string, string[]>();
+        for (const row of data) {
+          if (!Array.isArray(row.colors)) continue;
+          const names: string[] = (row.colors as any[])
+            .map((c: any) => c?.name)
+            .filter(Boolean);
+          if (names.length) map.set(row.style_number, names);
+        }
+        setColorCacheMap(map);
+      });
+  }, [response?.products]);
+
   const handleSearch = (query: string) => {
     lastQueryRef.current = query;
     navigate(`/?q=${encodeURIComponent(query)}`, { replace: true });
     setSelectedCategory('All');
     setSelectedBrands([]);
+    setSelectedColors([]);
     search(query);
   };
 
   const handleProductClick = (styleNumber: string, brand: string, distributorSkuMap?: Record<string, string>) => {
+    // Fire-and-forget click tracking
+    supabase.from("product_clicks").insert({
+      style_number: styleNumber,
+      brand: brand,
+      clicked_at: new Date().toISOString(),
+    }).then(() => {}).catch(() => {});
+
     const q = lastQueryRef.current || searchParams.get("q") || styleNumber;
     const skuMapParam = distributorSkuMap ? `&skuMap=${encodeURIComponent(JSON.stringify(distributorSkuMap))}` : "";
     navigate(
@@ -151,19 +186,41 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
     return Array.from(b).sort();
   }, [prioritizedProducts]);
 
+  // All unique color names from the cache for the current result set
+  const availableColors = useMemo(() => {
+    const colorSet = new Set<string>();
+    for (const [, names] of colorCacheMap) {
+      for (const n of names) colorSet.add(n);
+    }
+    return Array.from(colorSet).sort();
+  }, [colorCacheMap]);
+
+  const filteredColors = useMemo(() =>
+    colorSearch.trim()
+      ? availableColors.filter(c => c.toLowerCase().includes(colorSearch.toLowerCase()))
+      : availableColors,
+    [availableColors, colorSearch]);
+
   const filteredProducts = useMemo(() => {
     return prioritizedProducts.filter(p => {
       const categoryMatch = selectedCategory === 'All' ||
         getCategory(decodeHtmlEntities(p.name)) === selectedCategory;
       const brandMatch = selectedBrands.length === 0 ||
         selectedBrands.includes(normalizeBrand(p.brand));
-      return categoryMatch && brandMatch;
+      if (!categoryMatch || !brandMatch) return false;
+      if (selectedColors.length === 0) return true;
+      // Check if this product's style number has any of the selected colors in cache
+      const cacheKey = p.styleNumber.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const productColors = colorCacheMap.get(cacheKey) ?? [];
+      return selectedColors.some(sc =>
+        productColors.some(pc => pc.toLowerCase() === sc.toLowerCase())
+      );
     });
-  }, [prioritizedProducts, selectedCategory, selectedBrands]);
+  }, [prioritizedProducts, selectedCategory, selectedBrands, selectedColors, colorCacheMap]);
 
   const hasResults = response && response.products.length > 0;
   const showEmptyState = !response && !error && !isLoading;
-  const filtersActive = selectedCategory !== 'All' || selectedBrands.length > 0;
+  const filtersActive = selectedCategory !== 'All' || selectedBrands.length > 0 || selectedColors.length > 0;
 
   return (
     <div className="min-h-screen bg-background">
