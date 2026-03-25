@@ -151,10 +151,12 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
 
   const handleProductClick = (styleNumber: string, brand: string, distributorSkuMap?: Record<string, string>) => {
     // Fire-and-forget click tracking
-    void supabase.from("product_clicks").insert({
+    supabase.from("product_clicks").insert({
       style_number: styleNumber,
       brand: brand,
       clicked_at: new Date().toISOString(),
+    }).then(({ error }) => {
+      if (error) console.error("[click-tracking] Insert failed:", error.message, error.code);
     });
 
     const q = lastQueryRef.current || searchParams.get("q") || styleNumber;
