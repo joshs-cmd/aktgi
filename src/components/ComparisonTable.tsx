@@ -74,7 +74,13 @@ function getWarehousesFromSizes(sizes: StandardSize[]): { code: string; name: st
       }
     }
   }
-  return Array.from(warehouseMap.entries()).map(([code, name]) => ({ code, name }));
+  return Array.from(warehouseMap.entries())
+    .map(([code, name]) => ({ code, name }))
+    .sort((a, b) => {
+      const infoA = getWarehouseInfo(a.code);
+      const infoB = getWarehouseInfo(b.code);
+      return (infoA?.etaOrlando ?? 99) - (infoB?.etaOrlando ?? 99);
+    });
 }
 
 export function ComparisonTable({ results, selectedColor, showPrices = true }: ComparisonTableProps) {
