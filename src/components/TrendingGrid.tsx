@@ -36,7 +36,7 @@ export function TrendingGrid({ onSearch }: TrendingGridProps) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-        <TrendingUp className="h-4 w-4" />
+        <Paperclip className="h-4 w-4 text-red-600" />
         <span>Staple Styles</span>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
