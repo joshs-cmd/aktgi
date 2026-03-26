@@ -1,5 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { TrendingUp } from "lucide-react";
+import { Paperclip } from "lucide-react";
 
 interface TrendingGridProps {
   onSearch: (query: string) => void;
