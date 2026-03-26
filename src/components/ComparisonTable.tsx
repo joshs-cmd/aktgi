@@ -206,7 +206,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                   <TableCell className="font-medium sticky left-0 bg-card z-10">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs sm:text-sm">{result.distributorName}</span>
-                      {result.status === "success" && sizes.length > 0 && warehouses.length > 1 && (
+                      {result.status === "success" && sizes.length > 0 && warehouses.length >= 1 && (
                         <button
                           onClick={() => toggleExpanded(result.distributorId)}
                           className="shrink-0 rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold border border-muted-foreground/30 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
