@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Table,
   TableBody,
@@ -12,6 +12,7 @@ import { DistributorResult, StandardSize } from "@/types/sourcing";
 import { DistributorStatusBadge } from "./DistributorStatusBadge";
 import { PriceCell } from "./PriceCell";
 import { cn } from "@/lib/utils";
+import { getWarehouseInfo } from "@/lib/warehouseInfo";
 
 interface ComparisonTableProps {
   results: DistributorResult[];
@@ -21,26 +22,20 @@ interface ComparisonTableProps {
 
 function normalizeColorName(name: string): string {
   let n = name.toLowerCase();
-  // Fix typos
   n = n.replace(/\bheahter\b/g, "heather");
-  // Expand word-bounded abbreviations
   n = n.replace(/\bhthr\b/g, "heather");
   n = n.replace(/\bwht\b/g, "white");
-  n = n.replace(/whte/g, "white");        // not word-bounded — catches "heatherwhte"
+  n = n.replace(/whte/g, "white");
   n = n.replace(/\bblk\b/g, "black");
   n = n.replace(/\bnvy\b/g, "navy");
   n = n.replace(/\bvtg\b/g, "vintage");
-  // Insert spaces before known color words that are concatenated (e.g. "HeatherWhite" → "Heather White")
   n = n.replace(/(?<=[a-z])(heather|white|black|vintage|navy|pink|purple|royal|red|blue|green|grey|gray)/g, " $1");
-  // Expand newly standalone abbreviations
   n = n.replace(/\bvint\b/g, "vintage");
   n = n.replace(/\bheath\b/g, "heather");
   n = n.replace(/\bprem\b/g, "");
-  // Strip qualifiers
   n = n.replace(/\bsleeves?\b/g, "");
   n = n.replace(/\bbody\b/g, "");
   n = n.replace(/\bpremium\b/g, "");
-  // Normalize separators and whitespace
   n = n.replace(/[\/\-]/g, " ");
   n = n.replace(/\s+/g, " ");
   return n.trim();
@@ -51,10 +46,7 @@ const GENERIC_COLOR_WORDS = new Set(['heather', 'white', 'black', 'vintage', 'na
 function colorMatchScore(a: string, b: string): number {
   const normA = normalizeColorName(a);
   const normB = normalizeColorName(b);
-
-  // Exact normalized match
   if (normA === normB) return 3;
-
   const wordsA = normA.split(" ");
   const wordsB = normB.split(" ");
   const setA = new Set(wordsA);
@@ -62,30 +54,41 @@ function colorMatchScore(a: string, b: string): number {
   const specificA = new Set([...setA].filter(w => !GENERIC_COLOR_WORDS.has(w)));
   const specificB = new Set([...setB].filter(w => !GENERIC_COLOR_WORDS.has(w)));
   const sharedSpecific = [...specificA].filter(w => specificB.has(w));
-
   const primaryA = wordsA[0] ?? "";
   const primaryB = wordsB[0] ?? "";
-
-  // Primary word match — only if the primary word is specific (not a generic color word)
   if (primaryA === primaryB && !GENERIC_COLOR_WORDS.has(primaryA) && primaryA.length > 3) return 2;
-
-  // Two-word prefix match — requires at least 1 shared specific word
-  // Prevents 'vintage black/vintage black' falsely matching 'vintage black/heather white'
-  // since both 'vintage' and 'black' are generic — no specific words are shared
   const prefixA = wordsA.slice(0, 2).join(" ");
   const prefixB = wordsB.slice(0, 2).join(" ");
   if (prefixA === prefixB && prefixA.length > 6 && sharedSpecific.length >= 1) return 2;
-
-  // Significant word overlap — must share at least 2 non-generic specific words
   if (sharedSpecific.length >= 2) return 1;
-
-  // Single specific word match only if both colors are simple (1-2 words total)
   if (sharedSpecific.length === 1 && wordsA.length <= 2 && wordsB.length <= 2) return 1;
-
   return 0;
 }
 
+function getWarehousesFromSizes(sizes: StandardSize[]): { code: string; name: string }[] {
+  const warehouseMap = new Map<string, string>();
+  for (const size of sizes) {
+    for (const inv of size.inventory) {
+      if (!warehouseMap.has(inv.warehouseCode)) {
+        warehouseMap.set(inv.warehouseCode, inv.warehouseName);
+      }
+    }
+  }
+  return Array.from(warehouseMap.entries()).map(([code, name]) => ({ code, name }));
+}
+
 export function ComparisonTable({ results, selectedColor, showPrices = true }: ComparisonTableProps) {
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (distributorId: string) => {
+    setExpandedRows(prev => {
+      const next = new Set(prev);
+      if (next.has(distributorId)) next.delete(distributorId);
+      else next.add(distributorId);
+      return next;
+    });
+  };
+
   const getSizesForResult = useMemo(() => {
     return (result: DistributorResult): StandardSize[] => {
       if (!result?.product) return [];
@@ -97,7 +100,6 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
             .filter(({ score }) => score > 0)
             .sort((a, b) => b.score - a.score)[0]?.c;
           if (color?.sizes) return color.sizes;
-          // No match found for this color — return empty so table shows --
           return [];
         }
         return product.colors[0]?.sizes || [];
@@ -106,7 +108,6 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
     };
   }, [selectedColor]);
 
-  // Only use resolved rows for size/price calculations
   const successResults = useMemo(
     () => results.filter(r => r.status === "success"),
     [results]
@@ -162,12 +163,10 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
     return hasCapped ? `${formatted}+` : formatted;
   };
 
-  // Show all rows except pending
   const visibleResults = results.filter(r => r.status !== "pending");
 
   if (visibleResults.length === 0) return null;
 
-  // How many size columns to show (use allSizes if resolved, else 6 placeholder columns)
   const skeletonSizeCols = allSizes.length > 0 ? allSizes : ["S", "M", "L", "XL", "2XL", "3XL"];
 
   return (
@@ -189,76 +188,143 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
           {visibleResults.map((result) => {
             const isLoading = result.status === "loading";
             const sizes = getSizesForResult(result);
+            const warehouses = result.status === "success" && sizes.length > 0 ? getWarehousesFromSizes(sizes) : [];
+            const isExpanded = expandedRows.has(result.distributorId);
 
             return (
-              <TableRow
-                key={result.distributorId}
-                className={cn(isLoading && "animate-pulse")}
-              >
-                <TableCell className="font-medium sticky left-0 bg-card z-10">
-                  <span className="text-xs sm:text-sm">{result.distributorName}</span>
-                </TableCell>
-                <TableCell>
-                  <DistributorStatusBadge status={result.status} />
-                </TableCell>
+              <>
+                <TableRow
+                  key={result.distributorId}
+                  className={cn(isLoading && "animate-pulse")}
+                >
+                  <TableCell className="font-medium sticky left-0 bg-card z-10">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs sm:text-sm">{result.distributorName}</span>
+                      {result.status === "success" && sizes.length > 0 && warehouses.length > 1 && (
+                        <button
+                          onClick={() => toggleExpanded(result.distributorId)}
+                          className="shrink-0 rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold border border-muted-foreground/30 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                        >
+                          {isExpanded ? "−" : "+"}
+                        </button>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <DistributorStatusBadge status={result.status} />
+                  </TableCell>
 
-                {isLoading ? (
-                  // Skeleton cells while API is in-flight
-                  skeletonSizeCols.map((col) => (
-                    <TableCell key={col} className="text-center p-2">
-                      <div className="flex flex-col items-center gap-1">
-                        {showPrices && <Skeleton className="h-4 w-12" />}
-                        <Skeleton className="h-3 w-8" />
-                      </div>
-                    </TableCell>
-                  ))
-                ) : (
-                  skeletonSizeCols.map((sizeCode) => {
-                    const size = sizes.find((s) => s.code === sizeCode);
+                  {isLoading ? (
+                    skeletonSizeCols.map((col) => (
+                      <TableCell key={col} className="text-center p-2">
+                        <div className="flex flex-col items-center gap-1">
+                          {showPrices && <Skeleton className="h-4 w-12" />}
+                          <Skeleton className="h-3 w-8" />
+                        </div>
+                      </TableCell>
+                    ))
+                  ) : (
+                    skeletonSizeCols.map((sizeCode) => {
+                      const size = sizes.find((s) => s.code === sizeCode);
 
-                    if (!size || result.status !== "success") {
+                      if (!size || result.status !== "success") {
+                        return (
+                          <TableCell key={sizeCode} className="text-center w-[80px]">
+                            <span className="text-muted-foreground">--</span>
+                          </TableCell>
+                        );
+                      }
+
+                      const isLowest = size.price > 0 && lowestPrices[sizeCode] === size.price;
+
                       return (
-                        <TableCell key={sizeCode} className="text-center w-[80px]">
-                          <span className="text-muted-foreground">--</span>
+                        <TableCell key={sizeCode} className="text-center w-[80px] p-1">
+                          <PriceCell
+                            price={size.price}
+                            inventory={size.inventory}
+                            isLowest={isLowest}
+                            showPrice={showPrices}
+                            isProgramPrice={size.isProgramPrice}
+                            distributorCode={result.distributorCode}
+                            distributorName={result.distributorName}
+                            productUrl={result.product?.productUrl}
+                          />
                         </TableCell>
                       );
-                    }
-
-                    const isLowest = size.price > 0 && lowestPrices[sizeCode] === size.price;
-
-                    return (
-                      <TableCell key={sizeCode} className="text-center w-[80px] p-1">
-                        <PriceCell
-                          price={size.price}
-                          inventory={size.inventory}
-                          isLowest={isLowest}
-                          showPrice={showPrices}
-                          isProgramPrice={size.isProgramPrice}
-                          distributorCode={result.distributorCode}
-                          distributorName={result.distributorName}
-                          productUrl={result.product?.productUrl}
-                        />
-                      </TableCell>
-                    );
-                  })
-                )}
-
-                <TableCell className="text-right">
-                  {isLoading ? (
-                    <Skeleton className="h-4 w-14 ml-auto" />
-                  ) : result.status === "success" && sizes.length > 0 ? (
-                    <span className="font-semibold tabular-nums">
-                      {formatTotalStock(sizes, result.distributorCode)}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">--</span>
+                    })
                   )}
-                </TableCell>
-              </TableRow>
+
+                  <TableCell className="text-right">
+                    {isLoading ? (
+                      <Skeleton className="h-4 w-14 ml-auto" />
+                    ) : result.status === "success" && sizes.length > 0 ? (
+                      <span className="font-semibold tabular-nums">
+                        {formatTotalStock(sizes, result.distributorCode)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">--</span>
+                    )}
+                  </TableCell>
+                </TableRow>
+
+                {/* Expanded warehouse rows */}
+                {isExpanded && result.status === "success" && warehouses.map(warehouse => {
+                  const info = getWarehouseInfo(warehouse.code);
+                  const locationLabel = info
+                    ? `${info.city}${info.state ? `, ${info.state}` : ""}`
+                    : warehouse.name.split("(")[0].trim();
+                  return (
+                    <TableRow key={`${result.distributorId}-${warehouse.code}`} className="bg-muted/20 border-t-0">
+                      <TableCell className="sticky left-0 bg-muted/20 z-10 py-1.5">
+                        <div className="pl-4 flex flex-col">
+                          <span className="text-xs text-muted-foreground">↳ {locationLabel}</span>
+                          {info && !info.isDropship && (
+                            <span className="text-[10px] text-muted-foreground/60">
+                              ORL {info.etaOrlando}d · LAS {info.etaLasVegas}d
+                            </span>
+                          )}
+                          {info?.isDropship && (
+                            <span className="text-[10px] text-muted-foreground/60">
+                              Dropship ~14 days
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell />
+                      {skeletonSizeCols.map(sizeCode => {
+                        const size = sizes.find(s => s.code === sizeCode);
+                        const inv = size?.inventory.find(i => i.warehouseCode === warehouse.code);
+                        const qty = inv?.quantity ?? 0;
+                        const capped = inv?.isCapped ?? false;
+                        return (
+                          <TableCell key={sizeCode} className="text-center w-[80px] py-1.5">
+                            {qty > 0 ? (
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {qty.toLocaleString()}{capped ? "+" : ""}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground/40">--</span>
+                            )}
+                          </TableCell>
+                        );
+                      })}
+                      <TableCell className="text-right py-1.5">
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {sizes.reduce((sum, s) => {
+                            const inv = s.inventory.find(i => i.warehouseCode === warehouse.code);
+                            return sum + (inv?.quantity ?? 0);
+                          }, 0).toLocaleString()}
+                          {sizes.some(s => s.inventory.find(i => i.warehouseCode === warehouse.code)?.isCapped) ? "+" : ""}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </>
             );
           })}
 
-          {/* Aggregate Total Row — only shown once all active distributors have resolved */}
+          {/* Aggregate Total Row */}
           {successResults.length > 0 && results.filter(r => r.status === "loading").length === 0 && (
             <TableRow className="bg-muted/50 font-semibold border-t-2">
               <TableCell className="font-bold sticky left-0 bg-muted/50 z-10">Total</TableCell>
