@@ -41,7 +41,14 @@ function normalizeColorName(name: string): string {
   return n.trim();
 }
 
-const GENERIC_COLOR_WORDS = new Set(['heather', 'white', 'black', 'vintage', 'navy', 'grey', 'gray', 'solid', 'blend']);
+const GENERIC_COLOR_WORDS = new Set([
+  'heather', 'white', 'black', 'vintage', 'navy', 'grey', 'gray',
+  'solid', 'blend',
+  'antique',
+  'light',
+  'neon',
+  'safety',
+]);
 
 function colorMatchScore(a: string, b: string): number {
   const normA = normalizeColorName(a);
