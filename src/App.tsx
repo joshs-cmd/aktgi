@@ -105,6 +105,18 @@ const App = () => {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Load AKT widget on authenticated pages
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const script = document.createElement("script");
+    script.src = "https://apps.aktenterprises.com/api/public/widget.js";
+    script.defer = true;
+    document.body.appendChild(script);
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, [isAuthenticated]);
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     setIsAuthenticated(false);
