@@ -4,8 +4,7 @@ import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
 import { TrendingSection } from "@/components/TrendingSection";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
-import { AlertCircle, Search, Loader2, ChevronDown, Calculator, Wrench, X } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { AlertCircle, Search, Loader2, ChevronDown, Wrench, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -246,21 +245,6 @@ const SearchGallery = ({ userRole, userEmail, onSignOut, salesViewMode = false, 
                   Garment Inventory
                 </h1>
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="inline-flex items-center justify-center rounded-md p-1 hover:bg-accent transition-colors focus:outline-none shrink-0">
-                    <ChevronDown className="h-4 w-4 sm:h-5 sm:w-5 text-muted-foreground" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem asChild>
-                    <a href="https://calculator.aktenterprises.com" className="flex items-center gap-2">
-                      <Calculator className="h-4 w-4" />
-                      Pricing Calculator
-                    </a>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               {role === "admin" && (
