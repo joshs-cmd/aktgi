@@ -4,7 +4,7 @@ import { ProductCard } from "@/components/ProductCard";
 import { TrendingGrid } from "@/components/TrendingGrid";
 import { TrendingSection } from "@/components/TrendingSection";
 import { useCatalogSearch } from "@/hooks/useCatalogSearch";
-import { AlertCircle, Search, Loader2, X } from "lucide-react";
+import { AlertCircle, Search, Loader2, ChevronDown, Wrench, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
