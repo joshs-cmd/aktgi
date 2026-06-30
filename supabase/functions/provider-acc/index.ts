@@ -192,11 +192,17 @@ function getAccProductId(styleNumber: string, brand: string): string {
 
   const prefix = ACC_REPREF_MAP[normalBrand];
   if (prefix) {
-    // Only prepend if not already starting with this prefix
+    // Brands whose style numbers legitimately begin with their own prefix letters
+    // (e.g. BAGedge "BE007" → ACC "BEBE007") must always have the prefix prepended.
+    const ALWAYS_PREFIX = new Set(["BAGEDGE"]);
+    if (ALWAYS_PREFIX.has(normalBrand)) {
+      return `${prefix}${sn}`;
+    }
+    // Default idempotent behavior: only prepend if not already prefixed
     if (!sn.startsWith(prefix)) {
       return `${prefix}${sn}`;
     }
-    return sn; // already prefixed — return as-is (idempotent)
+    return sn;
   }
 
   // No known prefix for this brand — return unchanged
