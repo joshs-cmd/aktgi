@@ -67,6 +67,7 @@ const BRAND_ALIASES: [RegExp, string][] = [
   [/independent\s*trading(\s*co\.?)?/i,           "INDEPENDENT TRADING"],
   [/alternative(\s*apparel)?/i,                   "ALTERNATIVE"],
   [/atlantic\s*coast\s*cotton/i,                  "ATLANTIC COAST COTTON"],
+  [/bag\s*edge|bagedge/i,                          "BAGEDGE"],
 ];
 
 const BRAND_PREFIX_MAP: Record<string, string[]> = {
@@ -108,6 +109,7 @@ const BRAND_PREFIX_MAP: Record<string, string[]> = {
   "BIG ACCESSORIES":       ["BA", "BIG"],
   "AMERICAN APPAREL":      ["AA", "AAF", "AAR"],
   "JUST HOODS BY AWDIS":   ["JH", "JHA", "JHY"],
+  "BAGEDGE":               ["BE"],
 };
 
 /**
@@ -154,6 +156,7 @@ const ACC_REPREF_MAP: Record<string, string> = {
   "BIG ACCESSORIES":       "BA",
   "AMERICAN APPAREL":      "AA",
   "JUST HOODS BY AWDIS":   "JH",
+  "BAGEDGE":               "BE",
 };
 
 function normalizeBrandName(brand: string): string {
