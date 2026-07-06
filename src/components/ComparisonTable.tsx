@@ -56,6 +56,23 @@ function colorMatchScore(a: string, b: string): number {
   if (normA === normB) return 3;
   const wordsA = normA.split(" ");
   const wordsB = normB.split(" ");
+
+  // Heather-family veto: heathered colorways are distinct colors —
+  // "Athletic Heather" ≠ "Athletic Heather Navy". Grey/gray are deliberately
+  // excluded from the comparison because heather with no color word IS grey
+  // ("Dark Heather" == "Dark Heather Grey" must still match).
+  const COLOR_BEARING_WORDS = new Set([
+    "white", "black", "navy", "red", "blue", "green", "pink", "purple", "royal",
+    "orange", "yellow", "maroon", "charcoal", "brown", "teal", "gold", "silver",
+  ]);
+  if (wordsA.includes("heather") || wordsB.includes("heather")) {
+    const colorsA = new Set(wordsA.filter(w => COLOR_BEARING_WORDS.has(w)));
+    const colorsB = new Set(wordsB.filter(w => COLOR_BEARING_WORDS.has(w)));
+    if (colorsA.size !== colorsB.size || [...colorsA].some(w => !colorsB.has(w))) {
+      return 0;
+    }
+  }
+
   const setA = new Set(wordsA);
   const setB = new Set(wordsB);
   const specificA = new Set([...setA].filter(w => !GENERIC_COLOR_WORDS.has(w)));
