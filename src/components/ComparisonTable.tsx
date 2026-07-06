@@ -312,7 +312,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                       </TableCell>
                       <TableCell />
                       {skeletonSizeCols.map(sizeCode => {
-                        const size = sizes.find(s => s.code === sizeCode);
+                        const size = sizes.find(s => normalizeSizeCode(s.code) === sizeCode);
                         const inv = size?.inventory.find(i => i.warehouseCode === warehouse.code);
                         const qty = inv?.quantity ?? 0;
                         const capped = inv?.isCapped ?? false;
