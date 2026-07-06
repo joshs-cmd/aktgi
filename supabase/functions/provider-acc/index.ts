@@ -723,7 +723,7 @@ function buildStandardProduct(
     // If product info has part metadata use it; otherwise try to parse the partId itself.
     const info = productInfo?.parts.get(entry.partId);
     if (info) {
-      partMeta.set(entry.partId, { colorName: info.colorName, sizeName: info.sizeName });
+      partMeta.set(entry.partId, { colorName: info.colorName, sizeName: normalizeAccSizeName(info.sizeName) });
     } else {
       // Attempt to split partId by common delimiter (e.g. "WHITE-S", "NAVY-2XL")
       const dashIdx = entry.partId.lastIndexOf("-");
@@ -742,7 +742,7 @@ function buildStandardProduct(
     if (!partMeta.has(partId)) {
       const info = productInfo?.parts.get(partId);
       if (info) {
-        partMeta.set(partId, { colorName: info.colorName, sizeName: info.sizeName });
+        partMeta.set(partId, { colorName: info.colorName, sizeName: normalizeAccSizeName(info.sizeName) });
       } else {
         const dashIdx = partId.lastIndexOf("-");
         if (dashIdx > 0) {
