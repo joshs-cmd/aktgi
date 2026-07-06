@@ -153,7 +153,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
       let minPrice = Infinity;
       successResults.forEach((result) => {
         const sizes = getSizesForResult(result);
-        const size = sizes.find((s) => s.code === sizeCode);
+        const size = sizes.find((s) => normalizeSizeCode(s.code) === sizeCode);
         if (size && size.price > 0 && size.price < minPrice) minPrice = size.price;
       });
       if (minPrice !== Infinity) lowest[sizeCode] = minPrice;
