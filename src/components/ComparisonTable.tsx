@@ -245,7 +245,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                     ))
                   ) : (
                     skeletonSizeCols.map((sizeCode) => {
-                      const size = sizes.find((s) => s.code === sizeCode);
+                      const size = sizes.find((s) => normalizeSizeCode(s.code) === sizeCode);
 
                       if (!size || result.status !== "success") {
                         return (
