@@ -917,7 +917,14 @@ serve(async (req) => {
       }
     }
 
-    const productId = rawBrand ? getAccProductId(rawQuery, rawBrand) : rawQuery;
+    // Strip any foreign prefix (e.g. SanMar's "G2400") to the canonical base before
+    // applying ACC's own prefix. Skip for ALWAYS_PREFIX brands (BAGEDGE) whose style
+    // numbers legitimately begin with their prefix letters — stripping would corrupt them.
+    const CANONICALIZE_SKIP = new Set(["BAGEDGE"]);
+    const baseForAcc = rawBrand && !CANONICALIZE_SKIP.has(normalizeBrandName(rawBrand))
+      ? getCanonicalBase(rawQuery, rawBrand)
+      : rawQuery;
+    const productId = rawBrand ? getAccProductId(baseForAcc, rawBrand) : rawQuery;
 
     console.log(
       `[provider-acc] Mapping incoming ${query} (${rawBrand || "unknown brand"}) -> Outgoing API ID: ${productId}`
