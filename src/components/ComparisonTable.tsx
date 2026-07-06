@@ -72,6 +72,13 @@ function colorMatchScore(a: string, b: string): number {
   return 0;
 }
 
+// Providers emit different labels for one-size products (OS, One Size, OSFA, O/S).
+// Normalize to a single display key so they share one column.
+const ONE_SIZE_SYNONYMS = new Set(["OS", "ONE SIZE", "OSFA", "O/S"]);
+function normalizeSizeCode(code: string): string {
+  return ONE_SIZE_SYNONYMS.has(code.trim().toUpperCase()) ? "One Size" : code;
+}
+
 function getWarehousesFromSizes(sizes: StandardSize[]): { code: string; name: string }[] {
   const warehouseMap = new Map<string, string>();
   for (const size of sizes) {
@@ -130,8 +137,8 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
     const sizeMap = new Map<string, number>();
     successResults.forEach((result) => {
       getSizesForResult(result).forEach((size) => {
-        if (!sizeMap.has(size.code) || sizeMap.get(size.code)! > size.order) {
-          sizeMap.set(size.code, size.order);
+        if (!sizeMap.has(normalizeSizeCode(size.code)) || sizeMap.get(normalizeSizeCode(size.code))! > size.order) {
+          sizeMap.set(normalizeSizeCode(size.code), size.order);
         }
       });
     });
@@ -146,7 +153,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
       let minPrice = Infinity;
       successResults.forEach((result) => {
         const sizes = getSizesForResult(result);
-        const size = sizes.find((s) => s.code === sizeCode);
+        const size = sizes.find((s) => normalizeSizeCode(s.code) === sizeCode);
         if (size && size.price > 0 && size.price < minPrice) minPrice = size.price;
       });
       if (minPrice !== Infinity) lowest[sizeCode] = minPrice;
@@ -238,7 +245,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                     ))
                   ) : (
                     skeletonSizeCols.map((sizeCode) => {
-                      const size = sizes.find((s) => s.code === sizeCode);
+                      const size = sizes.find((s) => normalizeSizeCode(s.code) === sizeCode);
 
                       if (!size || result.status !== "success") {
                         return (
@@ -305,7 +312,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
                       </TableCell>
                       <TableCell />
                       {skeletonSizeCols.map(sizeCode => {
-                        const size = sizes.find(s => s.code === sizeCode);
+                        const size = sizes.find(s => normalizeSizeCode(s.code) === sizeCode);
                         const inv = size?.inventory.find(i => i.warehouseCode === warehouse.code);
                         const qty = inv?.quantity ?? 0;
                         const capped = inv?.isCapped ?? false;
@@ -349,7 +356,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
 
                 successResults.forEach((result) => {
                   const sizes = getSizesForResult(result);
-                  const size = sizes.find((s) => s.code === sizeCode);
+                  const size = sizes.find((s) => normalizeSizeCode(s.code) === sizeCode);
                   if (!size) return;
                   const sizeTotal = size.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
                   total += sizeTotal;
