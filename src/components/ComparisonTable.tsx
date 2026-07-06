@@ -130,8 +130,8 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
     const sizeMap = new Map<string, number>();
     successResults.forEach((result) => {
       getSizesForResult(result).forEach((size) => {
-        if (!sizeMap.has(size.code) || sizeMap.get(size.code)! > size.order) {
-          sizeMap.set(size.code, size.order);
+        if (!sizeMap.has(normalizeSizeCode(size.code)) || sizeMap.get(normalizeSizeCode(size.code))! > size.order) {
+          sizeMap.set(normalizeSizeCode(size.code), size.order);
         }
       });
     });
