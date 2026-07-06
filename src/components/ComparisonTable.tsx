@@ -356,7 +356,7 @@ export function ComparisonTable({ results, selectedColor, showPrices = true }: C
 
                 successResults.forEach((result) => {
                   const sizes = getSizesForResult(result);
-                  const size = sizes.find((s) => s.code === sizeCode);
+                  const size = sizes.find((s) => normalizeSizeCode(s.code) === sizeCode);
                   if (!size) return;
                   const sizeTotal = size.inventory.reduce((sum, inv) => sum + inv.quantity, 0);
                   total += sizeTotal;
