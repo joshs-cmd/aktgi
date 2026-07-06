@@ -224,6 +224,20 @@ function getSizeOrder(sizeCode: string): number {
   return SIZE_ORDER[n] ?? 99;
 }
 
+// Normalize ACC's one-size label variants to "OS" so ComparisonTable merges
+// them into the same column as SanMar/S&S (which both emit "OS").
+const ACC_ONE_SIZE_SYNONYMS = new Set(["CUSTOM", "ONE SIZE", "OSFA", "O/S", "OS"]);
+function normalizeAccSizeName(sizeName: string): string {
+  const upper = sizeName.trim().toUpperCase();
+  if (ACC_ONE_SIZE_SYNONYMS.has(upper)) {
+    if (upper !== "OS") {
+      console.log(`[provider-acc] Normalized size "${sizeName}" -> "OS"`);
+    }
+    return "OS";
+  }
+  return sizeName;
+}
+
 // ---------------------------------------------------------------------------
 // XML helpers
 // ---------------------------------------------------------------------------
@@ -709,7 +723,7 @@ function buildStandardProduct(
     // If product info has part metadata use it; otherwise try to parse the partId itself.
     const info = productInfo?.parts.get(entry.partId);
     if (info) {
-      partMeta.set(entry.partId, { colorName: info.colorName, sizeName: info.sizeName });
+      partMeta.set(entry.partId, { colorName: info.colorName, sizeName: normalizeAccSizeName(info.sizeName) });
     } else {
       // Attempt to split partId by common delimiter (e.g. "WHITE-S", "NAVY-2XL")
       const dashIdx = entry.partId.lastIndexOf("-");
@@ -728,7 +742,7 @@ function buildStandardProduct(
     if (!partMeta.has(partId)) {
       const info = productInfo?.parts.get(partId);
       if (info) {
-        partMeta.set(partId, { colorName: info.colorName, sizeName: info.sizeName });
+        partMeta.set(partId, { colorName: info.colorName, sizeName: normalizeAccSizeName(info.sizeName) });
       } else {
         const dashIdx = partId.lastIndexOf("-");
         if (dashIdx > 0) {
