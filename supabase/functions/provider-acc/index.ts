@@ -224,6 +224,20 @@ function getSizeOrder(sizeCode: string): number {
   return SIZE_ORDER[n] ?? 99;
 }
 
+// Normalize ACC's one-size label variants to "OS" so ComparisonTable merges
+// them into the same column as SanMar/S&S (which both emit "OS").
+const ACC_ONE_SIZE_SYNONYMS = new Set(["CUSTOM", "ONE SIZE", "OSFA", "O/S", "OS"]);
+function normalizeAccSizeName(sizeName: string): string {
+  const upper = sizeName.trim().toUpperCase();
+  if (ACC_ONE_SIZE_SYNONYMS.has(upper)) {
+    if (upper !== "OS") {
+      console.log(`[provider-acc] Normalized size "${sizeName}" -> "OS"`);
+    }
+    return "OS";
+  }
+  return sizeName;
+}
+
 // ---------------------------------------------------------------------------
 // XML helpers
 // ---------------------------------------------------------------------------
