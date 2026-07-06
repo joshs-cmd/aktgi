@@ -72,6 +72,13 @@ function colorMatchScore(a: string, b: string): number {
   return 0;
 }
 
+// Providers emit different labels for one-size products (OS, One Size, OSFA, O/S).
+// Normalize to a single display key so they share one column.
+const ONE_SIZE_SYNONYMS = new Set(["OS", "ONE SIZE", "OSFA", "O/S"]);
+function normalizeSizeCode(code: string): string {
+  return ONE_SIZE_SYNONYMS.has(code.trim().toUpperCase()) ? "One Size" : code;
+}
+
 function getWarehousesFromSizes(sizes: StandardSize[]): { code: string; name: string }[] {
   const warehouseMap = new Map<string, string>();
   for (const size of sizes) {
