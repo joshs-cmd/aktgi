@@ -80,7 +80,8 @@ Deno.serve(async (req) => {
   // Deduplicate by mill_style_code (manufacturer SKU), fall back to OneStop style_code
   const styleMap = new Map<string, Record<string, unknown>>();
   let totalFetched = 0;
-  let nextUrl: string | null = `${ONESTOP_API_BASE}/items/?flat=Y&page_size=${PAGE_SIZE}`;
+  const CATALOG_BASE_URL = `${ONESTOP_API_BASE}/items/?flat=Y&page_size=${PAGE_SIZE}`;
+  let nextUrl: string | null = CATALOG_BASE_URL;
 
   try {
     let pageNum = 0;
