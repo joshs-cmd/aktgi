@@ -192,7 +192,16 @@ Deno.serve(async (req) => {
         break;
       }
 
-      nextUrl = data.next ?? null;
+      const totalPages = Number(data.total_pages ?? 0);
+      if (typeof data.next === "string" && data.next.length > 0) {
+        nextUrl = data.next;
+        console.log(`[ingest-onestop] Advancing via next-url to page ${pageNum + 1} of ${totalPages || "?"}`);
+      } else if (totalPages > pageNum) {
+        nextUrl = `${CATALOG_BASE_URL}&page=${pageNum + 1}`;
+        console.log(`[ingest-onestop] Advancing via total_pages to page ${pageNum + 1} of ${totalPages}`);
+      } else {
+        nextUrl = null;
+      }
 
       if (nextUrl) {
         await new Promise(r => setTimeout(r, REQUEST_DELAY_MS));
