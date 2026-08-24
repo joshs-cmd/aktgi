@@ -585,6 +585,28 @@ serve(async (req) => {
       }
       const rawInvData = await invRes.json();
       const directItems: OneStopItem[] = Array.isArray(rawInvData.results) ? rawInvData.results : [];
+      const directTotalPages = Number(rawInvData.total_pages ?? 1);
+      if (directTotalPages > 1) {
+        console.warn(`[provider-onestop] Style ${resolvedStyleCode} spans ${directTotalPages} pages — fetching remaining pages`);
+        const maxPages = Math.min(directTotalPages, 10);
+        if (directTotalPages > 10) {
+          console.warn(`[provider-onestop] Page cap of 10 hit for ${resolvedStyleCode} (total_pages=${directTotalPages})`);
+        }
+        for (let p = 2; p <= maxPages; p++) {
+          try {
+            const pageRes = await fetchWithTimeout(`${directInvUrl}&page=${p}`, 20_000);
+            if (!pageRes.ok) {
+              console.error(`[provider-onestop] Page ${p} fetch failed: ${pageRes.status} — proceeding with collected items`);
+              break;
+            }
+            const pageData = await pageRes.json();
+            if (Array.isArray(pageData.results)) directItems.push(...pageData.results);
+          } catch (e) {
+            console.error(`[provider-onestop] Page ${p} error: ${e} — proceeding with collected items`);
+            break;
+          }
+        }
+      }
       if (directItems.length === 0) {
         return new Response(JSON.stringify({ product: null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
