@@ -8,3 +8,5 @@ verify_jwt = false
 
 [functions.provider-acc]
 verify_jwt = false
+[functions.check-stock]
+verify_jwt = false
