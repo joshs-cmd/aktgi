@@ -53,9 +53,15 @@ function validate(body: any): InDesign[] | string {
   return body.designs as InDesign[];
 }
 
-async function callProvider(url: string, key: string, code: string, body: unknown): Promise<{ ok: boolean; product: any }> {
+const STYLE_CONCURRENCY = 3;
+const RETRY_DELAYS_MS = [500, 1500];
+const CALL_TIMEOUT_MS = 20000;
+
+type CallResult = { ok: boolean; product: any; retryable: boolean };
+
+async function callProviderOnce(url: string, key: string, code: string, body: unknown): Promise<CallResult> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 20000);
+  const t = setTimeout(() => ctrl.abort(), CALL_TIMEOUT_MS);
   try {
     const res = await fetch(`${url}/functions/v1/provider-${code}`, {
       method: "POST",
@@ -63,15 +69,39 @@ async function callProvider(url: string, key: string, code: string, body: unknow
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    if (!res.ok) { await res.body?.cancel(); return { ok: false, product: null }; }
-    const data = await res.json().catch(() => null);
-    if (!data || data.error) return { ok: false, product: null };
-    return { ok: true, product: data.product ?? null };
+    if (!res.ok) {
+      await res.body?.cancel();
+      return { ok: false, product: null, retryable: res.status === 429 || res.status >= 500 };
+    }
+    const data = await res.json().catch(() => undefined);
+    if (data === undefined || data === null) return { ok: false, product: null, retryable: true };
+    if (data.error) return { ok: false, product: null, retryable: false };
+    return { ok: true, product: data.product ?? null, retryable: false };
   } catch {
-    return { ok: false, product: null };
+    return { ok: false, product: null, retryable: true };
   } finally {
     clearTimeout(t);
   }
+}
+
+async function callProvider(url: string, key: string, code: string, body: unknown, stats: { calls: number; retries: number }): Promise<{ ok: boolean; product: any }> {
+  let r = await callProviderOnce(url, key, code, body);
+  stats.calls++;
+  for (let i = 0; !r.ok && r.retryable && i < RETRY_DELAYS_MS.length; i++) {
+    await new Promise((res) => setTimeout(res, RETRY_DELAYS_MS[i]));
+    stats.retries++;
+    stats.calls++;
+    r = await callProviderOnce(url, key, code, body);
+  }
+  return { ok: r.ok, product: r.product };
+}
+
+async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) { const item = items[i++]; await fn(item); }
+  });
+  await Promise.all(workers);
 }
 
 Deno.serve(async (req) => {
@@ -121,15 +151,19 @@ Deno.serve(async (req) => {
 
     type DistResult = { code: string; name: string; ok: boolean; product: any; sku: string };
     const fetched = new Map<string, DistResult[]>();
-    await Promise.all([...styles.entries()].map(async ([sk, { brand, style }]) => {
+    const stats = { calls: 0, retries: 0 };
+    const t0 = Date.now();
+    await runPool([...styles.entries()], STYLE_CONCURRENCY, async ([sk, { brand, style }]) => {
       const skuMap = await resolveDistributorSkus(supabase, brand, style).catch(() => ({} as Record<string, string>));
       const results = await Promise.all(dists.map(async (d) => {
         const sku = skuMap[d.code] ?? style;
-        const r = await callProvider(url, key, d.code, { query: sku, distributorId: `${d.code}-001`, brand, force_refresh: false });
+        const r = await callProvider(url, key, d.code, { query: sku, distributorId: `${d.code}-001`, brand, force_refresh: false }, stats);
         return { code: d.code, name: d.name, ok: r.ok, product: r.product, sku };
       }));
       fetched.set(sk, results);
-    }));
+    });
+    const unanswered = [...fetched.values()].filter((rs) => rs.length > 0 && rs.every((r) => !r.ok)).length;
+    console.log(`[check-stock] summary: styles=${styles.size} garments=${garments.size} provider_calls=${stats.calls} retries=${stats.retries} styles_unanswered=${unanswered} ms=${Date.now() - t0}`);
 
     const out = [...garments.values()].map((g) => {
       const results = fetched.get(styleKey(g.brand, g.style)) ?? [];
