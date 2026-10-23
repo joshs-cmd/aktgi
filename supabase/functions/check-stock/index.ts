@@ -91,7 +91,7 @@ async function callProviderOnce(url: string, key: string, code: string, body: un
   }
 }
 
-type Stats = { calls: number; retries: number; cacheHits: number; rateLimited: number; budgetSkipped: number };
+type Stats = { calls: number; retries: number; cacheHits: number; rateLimited: number; budgetSkipped: number; catalogSkipped: number };
 async function callProvider(url: string, key: string, code: string, body: unknown, stats: Stats): Promise<{ ok: boolean; product: any }> {
   if (stats.calls >= CALL_BUDGET) { stats.budgetSkipped++; return { ok: false, product: null }; }
   let r = await callProviderOnce(url, key, code, body);
@@ -162,7 +162,7 @@ Deno.serve(async (req) => {
 
     type DistResult = { code: string; name: string; ok: boolean; product: any; sku: string };
     const fetched = new Map<string, DistResult[]>();
-    const stats: Stats = { calls: 0, retries: 0, cacheHits: 0, rateLimited: 0, budgetSkipped: 0 };
+    const stats: Stats = { calls: 0, retries: 0, cacheHits: 0, rateLimited: 0, budgetSkipped: 0, catalogSkipped: 0 };
     const t0 = Date.now();
     // Resolve SKUs for every style, then read the providers' own fresh cache rows directly
     // (same table/key/payload each provider returns on a cache hit) so only cold lookups cost a call.
@@ -184,6 +184,12 @@ Deno.serve(async (req) => {
       const skuMap = skuMaps.get(sk) ?? {};
       const results = await Promise.all(dists.map(async (d) => {
         const sku = skuMap[d.code] ?? style;
+        // Catalog knows which distributors carry this style; skip the ones it says don't
+        // (reported as style not found) so the limited call budget goes to real lookups.
+        if (Object.keys(skuMap).length > 0 && !(d.code in skuMap)) {
+          stats.catalogSkipped++;
+          return { code: d.code, name: d.name, ok: true, product: null, sku };
+        }
         const hit = cache.get(`${d.code}|${cacheKeyOf(sku)}`);
         if (hit) {
           stats.cacheHits++;
@@ -195,7 +201,7 @@ Deno.serve(async (req) => {
       fetched.set(sk, results);
     });
     const unanswered = [...fetched.values()].filter((rs) => rs.length > 0 && rs.every((r) => !r.ok)).length;
-    console.log(`[check-stock] summary: styles=${styles.size} garments=${garments.size} cache_hits=${stats.cacheHits} provider_calls=${stats.calls} retries=${stats.retries} rate_limited=${stats.rateLimited} budget_skipped=${stats.budgetSkipped} styles_unanswered=${unanswered} ms=${Date.now() - t0}`);
+    console.log(`[check-stock] summary: styles=${styles.size} garments=${garments.size} cache_hits=${stats.cacheHits} catalog_skipped=${stats.catalogSkipped} provider_calls=${stats.calls} retries=${stats.retries} rate_limited=${stats.rateLimited} budget_skipped=${stats.budgetSkipped} styles_unanswered=${unanswered} ms=${Date.now() - t0}`);
 
     const out = [...garments.values()].map((g) => {
       const results = fetched.get(styleKey(g.brand, g.style)) ?? [];
