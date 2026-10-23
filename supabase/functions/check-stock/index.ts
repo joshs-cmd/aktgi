@@ -35,7 +35,7 @@ interface InDesign { name?: string; rms?: string; brand: string; style: string; 
 
 function validate(body: any): InDesign[] | string {
   if (!body || !Array.isArray(body.designs)) return "designs must be an array";
-  if (body.designs.length === 0 || body.designs.length > 40) return "designs must have 1-40 items";
+  if (body.designs.length === 0 || body.designs.length > 100) return "designs must have 1-100 items";
   for (const [i, d] of body.designs.entries()) {
     if (!d || typeof d !== "object") return `designs[${i}] invalid`;
     for (const f of ["brand", "style", "color"]) {
@@ -53,9 +53,17 @@ function validate(body: any): InDesign[] | string {
   return body.designs as InDesign[];
 }
 
-async function callProvider(url: string, key: string, code: string, body: unknown): Promise<{ ok: boolean; product: any }> {
+const STYLE_CONCURRENCY = 3;
+const RETRY_DELAYS_MS = [500, 1500];
+const CALL_TIMEOUT_MS = 20000;
+
+type CallResult = { ok: boolean; product: any; retryable: boolean; rateLimited?: boolean };
+// Platform caps edge-function-to-edge-function calls at 30 per trace per 60s; stay under it.
+const CALL_BUDGET = 28;
+
+async function callProviderOnce(url: string, key: string, code: string, body: unknown): Promise<CallResult> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 20000);
+  const t = setTimeout(() => ctrl.abort(), CALL_TIMEOUT_MS);
   try {
     const res = await fetch(`${url}/functions/v1/provider-${code}`, {
       method: "POST",
@@ -63,15 +71,48 @@ async function callProvider(url: string, key: string, code: string, body: unknow
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    if (!res.ok) { await res.body?.cancel(); return { ok: false, product: null }; }
-    const data = await res.json().catch(() => null);
-    if (!data || data.error) return { ok: false, product: null };
-    return { ok: true, product: data.product ?? null };
-  } catch {
-    return { ok: false, product: null };
+    if (!res.ok) {
+      const txt = (await res.text().catch(() => "")).slice(0, 120);
+      console.warn(`[check-stock] provider-${code} HTTP ${res.status}: ${txt}`);
+      return { ok: false, product: null, retryable: res.status === 429 || res.status >= 500 };
+    }
+    const data = await res.json().catch(() => undefined);
+    if (data === undefined || data === null) return { ok: false, product: null, retryable: true };
+    if (data.error) return { ok: false, product: null, retryable: false };
+    return { ok: true, product: data.product ?? null, retryable: false };
+  } catch (e) {
+    const name = (e as Error).name;
+    console.warn(`[check-stock] provider-${code} fetch failed: ${name}`);
+    // Platform per-trace budget (30 fn-to-fn calls / 60s): retrying inside this request cannot succeed.
+    if (name === "RateLimitError") return { ok: false, product: null, retryable: false, rateLimited: true };
+    return { ok: false, product: null, retryable: true };
   } finally {
     clearTimeout(t);
   }
+}
+
+type Stats = { calls: number; retries: number; cacheHits: number; rateLimited: number; budgetSkipped: number; catalogSkipped: number };
+async function callProvider(url: string, key: string, code: string, body: unknown, stats: Stats): Promise<{ ok: boolean; product: any }> {
+  if (stats.calls >= CALL_BUDGET) { stats.budgetSkipped++; return { ok: false, product: null }; }
+  let r = await callProviderOnce(url, key, code, body);
+  stats.calls++;
+  if (r.rateLimited) stats.rateLimited++;
+  for (let i = 0; !r.ok && r.retryable && i < RETRY_DELAYS_MS.length; i++) {
+    await new Promise((res) => setTimeout(res, RETRY_DELAYS_MS[i]));
+    if (stats.calls >= CALL_BUDGET) { stats.budgetSkipped++; break; }
+    stats.retries++;
+    stats.calls++;
+    r = await callProviderOnce(url, key, code, body);
+  }
+  return { ok: r.ok, product: r.product };
+}
+
+async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) { const item = items[i++]; await fn(item); }
+  });
+  await Promise.all(workers);
 }
 
 Deno.serve(async (req) => {
@@ -121,15 +162,46 @@ Deno.serve(async (req) => {
 
     type DistResult = { code: string; name: string; ok: boolean; product: any; sku: string };
     const fetched = new Map<string, DistResult[]>();
-    await Promise.all([...styles.entries()].map(async ([sk, { brand, style }]) => {
-      const skuMap = await resolveDistributorSkus(supabase, brand, style).catch(() => ({} as Record<string, string>));
+    const stats: Stats = { calls: 0, retries: 0, cacheHits: 0, rateLimited: 0, budgetSkipped: 0, catalogSkipped: 0 };
+    const t0 = Date.now();
+    // Resolve SKUs for every style, then read the providers' own fresh cache rows directly
+    // (same table/key/payload each provider returns on a cache hit) so only cold lookups cost a call.
+    const styleList = [...styles.entries()];
+    const skuMaps = new Map<string, Record<string, string>>();
+    await runPool(styleList, 5, async ([sk, { brand, style }]) => {
+      skuMaps.set(sk, await resolveDistributorSkus(supabase, brand, style).catch(() => ({} as Record<string, string>)));
+    });
+    const cacheKeyOf = (q: string) => q.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const cache = new Map<string, any>();
+    const wantKeys = new Set<string>();
+    for (const [sk, { style }] of styleList) for (const d of dists) wantKeys.add(cacheKeyOf(skuMaps.get(sk)?.[d.code] ?? style));
+    if (wantKeys.size) {
+      const { data: rows } = await supabase.from("product_cache").select("distributor, style_number, response_data")
+        .in("distributor", dists.map((d) => d.code)).in("style_number", [...wantKeys]).gt("expires_at", new Date().toISOString());
+      for (const r of rows ?? []) if (r.response_data) cache.set(`${r.distributor}|${r.style_number}`, r.response_data);
+    }
+    await runPool(styleList, STYLE_CONCURRENCY, async ([sk, { brand, style }]) => {
+      const skuMap = skuMaps.get(sk) ?? {};
       const results = await Promise.all(dists.map(async (d) => {
         const sku = skuMap[d.code] ?? style;
-        const r = await callProvider(url, key, d.code, { query: sku, distributorId: `${d.code}-001`, brand, force_refresh: false });
+        // Catalog knows which distributors carry this style; skip the ones it says don't
+        // (reported as style not found) so the limited call budget goes to real lookups.
+        if (Object.keys(skuMap).length > 0 && !(d.code in skuMap)) {
+          stats.catalogSkipped++;
+          return { code: d.code, name: d.name, ok: true, product: null, sku };
+        }
+        const hit = cache.get(`${d.code}|${cacheKeyOf(sku)}`);
+        if (hit) {
+          stats.cacheHits++;
+          return { code: d.code, name: d.name, ok: !hit.error, product: hit.error ? null : (hit.product ?? null), sku };
+        }
+        const r = await callProvider(url, key, d.code, { query: sku, distributorId: `${d.code}-001`, brand, force_refresh: false }, stats);
         return { code: d.code, name: d.name, ok: r.ok, product: r.product, sku };
       }));
       fetched.set(sk, results);
-    }));
+    });
+    const unanswered = [...fetched.values()].filter((rs) => rs.length > 0 && rs.every((r) => !r.ok)).length;
+    console.log(`[check-stock] summary: styles=${styles.size} garments=${garments.size} cache_hits=${stats.cacheHits} catalog_skipped=${stats.catalogSkipped} provider_calls=${stats.calls} retries=${stats.retries} rate_limited=${stats.rateLimited} budget_skipped=${stats.budgetSkipped} styles_unanswered=${unanswered} ms=${Date.now() - t0}`);
 
     const out = [...garments.values()].map((g) => {
       const results = fetched.get(styleKey(g.brand, g.style)) ?? [];

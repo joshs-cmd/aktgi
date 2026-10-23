@@ -1,3 +1,4 @@
 
 - Distributor edge functions (provider-*, sourcing-engine) must call `authorize()` from supabase/functions/_shared/authGuard.ts before reading the body; internal callers must send the service role key as an explicit Bearer header, because the guard rejects anon/public callers.
 - Style canonicalization and distributor SKU resolution live in supabase/functions/_shared/catalogResolve.ts; catalog-search and check-stock import it so other AKT apps get identical matching without copying logic.
+- check-stock reads providers' fresh product_cache rows directly, skips distributors the catalog says do not carry a style, and caps live provider calls per request (CALL_BUDGET) — the platform allows only ~30 function-to-function calls per request trace per 60s, so fan-out beyond that fails with RateLimitError.
