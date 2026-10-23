@@ -70,14 +70,16 @@ async function callProviderOnce(url: string, key: string, code: string, body: un
       signal: ctrl.signal,
     });
     if (!res.ok) {
-      await res.body?.cancel();
+      const txt = (await res.text().catch(() => "")).slice(0, 120);
+      console.warn(`[check-stock] provider-${code} HTTP ${res.status}: ${txt}`);
       return { ok: false, product: null, retryable: res.status === 429 || res.status >= 500 };
     }
     const data = await res.json().catch(() => undefined);
     if (data === undefined || data === null) return { ok: false, product: null, retryable: true };
     if (data.error) return { ok: false, product: null, retryable: false };
     return { ok: true, product: data.product ?? null, retryable: false };
-  } catch {
+  } catch (e) {
+    console.warn(`[check-stock] provider-${code} fetch failed: ${(e as Error).name}`);
     return { ok: false, product: null, retryable: true };
   } finally {
     clearTimeout(t);
