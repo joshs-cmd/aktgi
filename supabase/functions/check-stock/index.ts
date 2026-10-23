@@ -35,7 +35,7 @@ interface InDesign { name?: string; rms?: string; brand: string; style: string; 
 
 function validate(body: any): InDesign[] | string {
   if (!body || !Array.isArray(body.designs)) return "designs must be an array";
-  if (body.designs.length === 0 || body.designs.length > 40) return "designs must have 1-40 items";
+  if (body.designs.length === 0 || body.designs.length > 100) return "designs must have 1-100 items";
   for (const [i, d] of body.designs.entries()) {
     if (!d || typeof d !== "object") return `designs[${i}] invalid`;
     for (const f of ["brand", "style", "color"]) {
